@@ -23,6 +23,7 @@ from blackreach.llm import LLM, LLMConfig
 from blackreach.stealth import StealthConfig
 from blackreach.resilience import RetryConfig
 from blackreach.memory import SessionMemory, PersistentMemory
+from blackreach.logging import SessionLogger
 
 
 @dataclass
@@ -88,6 +89,12 @@ class Agent:
             "elements": None,
         }
 
+        # Stuck detection - track recent URLs to detect when we're not making progress
+        self._recent_urls = []
+        self._max_stuck_count = 3  # How many times on same page before "stuck"
+        self._consecutive_failures = 0
+        self._max_consecutive_failures = 3
+
     def _emit(self, event: str, *args, **kwargs):
         """Emit a callback event if handler is set."""
         handler = getattr(self.callbacks, event, None)
@@ -142,6 +149,34 @@ class Agent:
             return urlparse(self.hand.get_url()).netloc
         return ""
 
+    def _is_stuck(self) -> bool:
+        """Check if agent is stuck on the same page."""
+        if len(self._recent_urls) < self._max_stuck_count:
+            return False
+        # Check if the last N URLs are the same
+        last_urls = self._recent_urls[-self._max_stuck_count:]
+        return len(set(last_urls)) == 1
+
+    def _track_url(self, url: str):
+        """Track current URL for stuck detection."""
+        self._recent_urls.append(url)
+        # Keep only recent history
+        if len(self._recent_urls) > 10:
+            self._recent_urls.pop(0)
+
+    def _get_stuck_hint(self) -> str:
+        """Get a hint for the LLM when stuck."""
+        if not self._is_stuck():
+            return ""
+        return (
+            "\n\nWARNING: You appear to be stuck on the same page. "
+            "Try a DIFFERENT action:\n"
+            "- If clicking failed, try typing or navigating directly\n"
+            "- If typing failed, try clicking a button instead\n"
+            "- Try scrolling to reveal hidden elements\n"
+            "- Navigate directly to your target URL if you know it"
+        )
+
     def run(self, goal: str, quiet: bool = False) -> Dict[str, Any]:
         """
         Run the agent to accomplish a goal.
@@ -171,6 +206,9 @@ class Agent:
         # Start a new session in persistent memory
         self.session_id = self.persistent_memory.start_session(goal)
         log(f"Session #{self.session_id} started\n")
+
+        # Initialize session logger for structured logging
+        self._logger = SessionLogger(self.session_id, goal)
 
         # Ensure download dir exists
         self.config.download_dir.mkdir(parents=True, exist_ok=True)
@@ -225,6 +263,15 @@ class Agent:
             )
             log(f"Session #{self.session_id} ended (success={success})")
 
+            # Log session end
+            if hasattr(self, '_logger'):
+                self._logger.session_end(
+                    success=success,
+                    steps=len(self.session_memory.actions_taken),
+                    downloads=len(self.session_memory.downloaded_files),
+                    failures=len(self.session_memory.failures)
+                )
+
         result = {
             "goal": goal,
             "success": success,
@@ -245,6 +292,14 @@ class Agent:
             if not quiet:
                 print(msg, end=end, flush=True)
 
+        # Track current URL for stuck detection
+        current_url = self.hand.get_url()
+        self._track_url(current_url)
+
+        # Log step start
+        if hasattr(self, '_logger'):
+            self._logger.step_start(step_num)
+
         # 1. OBSERVE
         log("  OBSERVE: ", end="")
         self._emit("on_step", step_num, self.config.max_steps, "observe", "Analyzing page...")
@@ -253,20 +308,52 @@ class Agent:
         log(obs_short)
         self._emit("on_observe", observation)
 
-        # 2. THINK
+        # Log observation
+        if hasattr(self, '_logger'):
+            self._logger.observe(step_num, observation, current_url)
+
+        # 2. THINK (with stuck detection)
         log("  THINK: ", end="")
         self._emit("on_step", step_num, self.config.max_steps, "think", "Reasoning...")
-        thought = self._think(goal, observation)
+        stuck_hint = self._get_stuck_hint()
+        if stuck_hint and not quiet:
+            log(f"\n  [STUCK DETECTED]", end="")
+        thought = self._think(goal, observation, stuck_hint)
         log(thought)
         self._emit("on_think", thought)
+
+        # Log thought
+        if hasattr(self, '_logger'):
+            self._logger.think(step_num, thought, stuck=bool(stuck_hint))
 
         # 3. ACT
         log("  ACT: ", end="")
         self._emit("on_step", step_num, self.config.max_steps, "act", "Executing...")
         result = self._act(thought, observation)
         action_name = result.get("action", "unknown")
-        log(action_name)
+
+        # Track consecutive failures
+        if result.get("error"):
+            self._consecutive_failures += 1
+            if not quiet:
+                log(f" (failure {self._consecutive_failures}/{self._max_consecutive_failures})")
+            # Log error
+            if hasattr(self, '_logger'):
+                self._logger.error(step_num, result.get("error"), action_name)
+        else:
+            self._consecutive_failures = 0
+            log(action_name)
+            # Log successful action
+            if hasattr(self, '_logger'):
+                self._logger.act(step_num, action_name, result, success=True)
+
         self._emit("on_action", action_name, result)
+
+        # If too many consecutive failures, suggest giving up on current approach
+        if self._consecutive_failures >= self._max_consecutive_failures:
+            if not quiet:
+                log(f"  [TOO MANY FAILURES - trying different approach]")
+            self._consecutive_failures = 0  # Reset counter
 
         return result
 
@@ -308,7 +395,7 @@ class Agent:
         self._record_visit(url, title=title)
         return response.strip()
 
-    def _think(self, goal: str, observation: str) -> str:
+    def _think(self, goal: str, observation: str, stuck_hint: str = "") -> str:
         """Think about what to do next."""
         # Get learned patterns for the current domain
         domain = self._get_domain()
@@ -330,6 +417,10 @@ class Agent:
         # Add learned patterns if available
         if learned_patterns:
             prompt += learned_patterns
+
+        # Add stuck hint if detected
+        if stuck_hint:
+            prompt += stuck_hint
 
         response = self.llm.generate(
             "You are a reasoning agent. Think step by step about what to do next.",

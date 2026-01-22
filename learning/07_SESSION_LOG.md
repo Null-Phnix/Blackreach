@@ -144,11 +144,103 @@ The code review identified several categories of problems:
 
 ---
 
-## Entry 4: Documentation Phase
+## Entry 4: Error Recovery and Logging
 
-**Time:** Current
+**Time:** After documentation
 
-**Goal:** Create comprehensive learning documentation
+**Goal:** Add better error recovery and structured logging
+
+### Stuck Detection
+
+Added a system to detect when the agent is stuck on the same page:
+- Tracks last 10 URLs visited
+- If the same URL appears 3 times in a row, agent is "stuck"
+- Provides hint to LLM suggesting alternative approaches
+
+### Consecutive Failure Tracking
+
+Added tracking for consecutive action failures:
+- If 3 actions fail in a row, agent tries a different approach
+- Prevents infinite loops of failing the same way
+
+### Structured Logging
+
+Created `blackreach/logging.py` with:
+- JSON Lines format for machine readability
+- Logs to `~/.blackreach/logs/session_<id>_<timestamp>.jsonl`
+- Captures: session start/end, each step, observations, thoughts, actions, errors
+
+**Example log entry:**
+```json
+{
+  "timestamp": "2026-01-22T07:09:52.651635",
+  "level": "INFO",
+  "event": "observe",
+  "session_id": 22,
+  "step": 1,
+  "data": {
+    "observation": "This is the Wikipedia homepage...",
+    "url": "https://www.wikipedia.org/"
+  }
+}
+```
+
+### Changes Made
+
+**agent.py:**
+- Added stuck detection (`_is_stuck()`, `_track_url()`, `_get_stuck_hint()`)
+- Added consecutive failure tracking
+- Integrated SessionLogger for structured logging
+
+**logging.py (new file):**
+- SessionLogger class for per-session logging
+- LogEntry dataclass for structured log entries
+- Helper functions for reading/cleaning logs
+
+---
+
+## Entry 5: Final Status
+
+**Time:** End of session
+
+**Goal:** Summarize all work done
+
+### Summary of Changes This Session
+
+| Category | Changes |
+|----------|---------|
+| Bug Fixes | Null locator crash, silent callbacks, bare except, false success |
+| Performance | HTML caching, combined stealth scripts |
+| Features | submit:true for search, press action, stuck detection, structured logging |
+| Polish | Command aliases, default URL changed to Google |
+| Documentation | Session log, errors guide, search/type guide |
+
+### Test Results
+
+| Test | Result |
+|------|--------|
+| Wikipedia search | SUCCESS (2 steps) |
+| Google search | SUCCESS (2 steps) |
+| DuckDuckGo search | FAILED (bot detection) |
+
+### Files Modified
+
+- `blackreach/agent.py` - Major improvements
+- `blackreach/browser.py` - Performance fix
+- `blackreach/cli.py` - Aliases, success fix
+- `blackreach/ui.py` - Help text, completer
+- `blackreach/llm.py` - Better done handling
+- `blackreach/logging.py` - NEW: Structured logging
+- `prompts/act.txt` - Search improvements
+- `prompts/think.txt` - Decision guide update
+
+### Next Session TODO
+
+1. [ ] Add Planner module for complex multi-step goals
+2. [ ] Add progress checkpointing (resume interrupted sessions)
+3. [ ] Add `/logs` command to view recent logs from CLI
+4. [ ] Test download functionality end-to-end
+5. [ ] Add more sites to test compatibility
 
 ---
 
