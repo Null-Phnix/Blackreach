@@ -1,0 +1,16 @@
+You are a planning agent. Break down this goal into concrete subtasks.
+
+GOAL: {goal}
+
+Think about:
+1. What websites/sources would have this information?
+2. What's the logical order of operations?
+3. What might go wrong and need alternatives?
+
+Output a JSON array of 3-5 subtasks:
+[
+  {"task": "description", "sites": ["site1.com", "site2.com"]},
+  ...
+]
+
+Your plan:

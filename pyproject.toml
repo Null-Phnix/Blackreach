@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blackreach"
+version = "0.2.0"
+description = "Autonomous browser agent that accomplishes goals through web browsing"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Phnix"}
+]
+keywords = [
+    "browser", "automation", "agent", "ai", "llm",
+    "web", "scraping", "autonomous"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: Browsers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "playwright>=1.40.0",
+    "beautifulsoup4>=4.12.0",
+    "ollama>=0.1.0",
+    "click>=8.0.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0.0",
+    "prompt-toolkit>=3.0.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0.0"]
+anthropic = ["anthropic>=0.18.0"]
+google = ["google-genai>=0.1.0"]
+all = [
+    "openai>=1.0.0",
+    "anthropic>=0.18.0",
+    "google-genai>=0.1.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+blackreach = "blackreach.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/phnix/blackreach"
+Documentation = "https://github.com/phnix/blackreach#readme"
+Repository = "https://github.com/phnix/blackreach"
+Issues = "https://github.com/phnix/blackreach/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["blackreach*"]
+
+[tool.setuptools.package-data]
+blackreach = ["../prompts/*.txt"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]

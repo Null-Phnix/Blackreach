@@ -1,0 +1,10 @@
+URL: {url}
+Title: {title}
+
+ELEMENTS:
+{elements}
+
+TEXT CONTENT:
+{text_content}
+
+Describe in 1-2 sentences: What page is this and what can you interact with?

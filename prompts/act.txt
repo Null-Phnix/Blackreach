@@ -1,0 +1,52 @@
+Based on your reasoning: {thought}
+
+OUTPUT ONLY VALID JSON. No text before or after. No markdown code blocks.
+
+ACTIONS (pick exactly one):
+
+1. TYPE and SEARCH (use submit:true to press Enter after typing):
+{{"action": "type", "args": {{"selector": "input", "text": "cats", "submit": true}}}}
+
+2. TYPE without submitting (just fill the field):
+{{"action": "type", "args": {{"selector": "input", "text": "your text"}}}}
+
+3. PRESS a key (Enter, Tab, Escape, etc.):
+{{"action": "press", "args": {{"key": "Enter"}}}}
+
+4. CLICK link or button BY TEXT (ALWAYS use this for clicking):
+{{"action": "click", "args": {{"text": "Alpha Coders"}}}}
+{{"action": "click", "args": {{"text": "Download"}}}}
+
+5. CLICK with BOTH text and selector (for reliability):
+{{"action": "click", "args": {{"text": "Raiden Shogun", "selector": "a"}}}}
+
+6. NAVIGATE directly to URL (use when stuck or need specific site):
+{{"action": "navigate", "args": {{"url": "https://example.com"}}}}
+
+7. SCROLL page:
+{{"action": "scroll", "args": {{"direction": "down"}}}}
+
+8. DOWNLOAD file (by URL):
+{{"action": "download", "args": {{"url": "https://example.com/file.pdf"}}}}
+
+9. DOWNLOAD file (by clicking):
+{{"action": "download", "args": {{"selector": "a.download-btn"}}}}
+
+10. GO BACK:
+{{"action": "back", "args": {{}}}}
+
+11. TASK COMPLETE:
+{{"action": "done", "args": {{"reason": "Downloaded 5 files successfully"}}}}
+
+AVAILABLE ELEMENTS ON PAGE:
+{elements}
+
+CRITICAL RULES:
+- For SEARCH: use type with submit:true to type AND press Enter
+- CLICK MUST include "text" field with the visible link/button text
+- WRONG: {{"action": "click", "args": {{"selector": "a"}}}}
+- RIGHT: {{"action": "click", "args": {{"text": "Alpha Coders"}}}}
+- If clicking fails, use NAVIGATE to go directly to the URL
+- Use DOWNLOAD for files, output DONE when goal achieved
+
+JSON:

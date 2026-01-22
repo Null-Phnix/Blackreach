@@ -1,0 +1,22 @@
+# Blackreach Dependencies
+
+# Browser automation
+playwright>=1.40.0
+
+# HTML parsing
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# LLM providers
+ollama>=0.1.0
+
+# CLI interface
+click>=8.0.0
+rich>=13.0.0
+pyyaml>=6.0.0
+prompt-toolkit>=3.0.0
+
+# Optional LLM providers (uncomment as needed)
+# openai>=1.0.0      # For GPT-4, GPT-3.5
+# anthropic>=0.18.0  # For Claude
+# google-genai>=0.3.0  # For Gemini
