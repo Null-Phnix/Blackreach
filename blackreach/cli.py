@@ -555,6 +555,32 @@ def interactive_mode():
             elif cmd_lower in ['/status', '/s', 'status']:
                 status()
 
+            elif cmd_lower.startswith('/plan '):
+                # Preview a plan without executing
+                goal = cmd[6:].strip()
+                if not goal:
+                    ui.print_error("Usage: /plan <goal>")
+                else:
+                    from blackreach.planner import Planner
+                    from blackreach.llm import LLMConfig
+
+                    with ui.spinner("Planning..."):
+                        llm_config = LLMConfig(
+                            provider=provider,
+                            model=model,
+                            api_key=config_manager.get_api_key(provider) if provider != "ollama" else None
+                        )
+                        planner = Planner(llm_config)
+
+                        if planner.is_simple_goal(goal):
+                            ui.print_info(f"Goal is simple - will run directly without planning")
+                        else:
+                            plan = planner.plan(goal)
+                            if plan:
+                                console.print(f"\n[bold]Plan Preview:[/bold]")
+                                console.print(planner.format_plan(plan))
+                                console.print(f"\n[dim]Run the goal directly to execute this plan[/dim]")
+
             elif cmd_lower in ['/logs', '/l', 'logs']:
                 # Show recent session logs
                 from blackreach.logging import get_recent_logs, read_log
