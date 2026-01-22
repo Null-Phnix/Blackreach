@@ -555,6 +555,29 @@ def interactive_mode():
             elif cmd_lower in ['/status', '/s', 'status']:
                 status()
 
+            elif cmd_lower in ['/logs', '/l', 'logs']:
+                # Show recent session logs
+                from blackreach.logging import get_recent_logs, read_log
+                logs = get_recent_logs(5)
+                if not logs:
+                    ui.print_info("No logs yet")
+                else:
+                    console.print("\n[bold]Recent Sessions:[/bold]")
+                    for log_file in logs:
+                        entries = read_log(log_file)
+                        if entries:
+                            start = entries[0]
+                            end = entries[-1] if entries[-1].get("event") == "session_end" else None
+                            goal = start.get("data", {}).get("goal", "Unknown")[:50]
+                            session_id = start.get("session_id", "?")
+                            if end:
+                                success = "[green]OK[/green]" if end.get("data", {}).get("success") else "[red]FAIL[/red]"
+                                duration = end.get("data", {}).get("duration_seconds", "?")
+                                console.print(f"  #{session_id}: {goal}... {success} ({duration}s)")
+                            else:
+                                console.print(f"  #{session_id}: {goal}... [yellow]incomplete[/yellow]")
+                    console.print(f"\n  [dim]Logs: ~/.blackreach/logs/[/dim]")
+
             elif cmd_lower in ['/provider', '/p', 'provider']:
                 # Interactive provider selection menu
                 result = ui.show_provider_menu(provider)
