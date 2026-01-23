@@ -125,3 +125,123 @@ class TestConfigManager:
         manager = ConfigManager.__new__(ConfigManager)
         manager._config = Config()
         assert manager.get_api_key("unknown_provider") == ""
+
+
+class TestConfigManagerMethods:
+    """Tests for ConfigManager methods with file operations."""
+
+    def test_config_to_dict_structure(self):
+        """_config_to_dict returns proper structure."""
+        manager = ConfigManager.__new__(ConfigManager)
+        config = Config()
+        config.default_provider = "openai"
+        config.openai.api_key = "test-key"
+        config.max_steps = 50
+
+        result = manager._config_to_dict(config)
+
+        assert "default_provider" in result
+        assert "providers" in result
+        assert "agent" in result
+        assert result["default_provider"] == "openai"
+        assert result["providers"]["openai"]["api_key"] == "test-key"
+        assert result["agent"]["max_steps"] == 50
+
+    def test_dict_to_config_conversion(self):
+        """_dict_to_config converts dict to Config."""
+        manager = ConfigManager.__new__(ConfigManager)
+        data = {
+            "default_provider": "anthropic",
+            "providers": {
+                "anthropic": {"api_key": "test-key", "default_model": "claude-3"}
+            },
+            "agent": {"max_steps": 100, "headless": True},
+            "ui": {"verbose": False}
+        }
+
+        config = manager._dict_to_config(data)
+
+        assert config.default_provider == "anthropic"
+        assert config.anthropic.api_key == "test-key"
+        assert config.max_steps == 100
+        assert config.headless is True
+
+    def test_dict_to_config_handles_missing_fields(self):
+        """_dict_to_config handles missing fields gracefully."""
+        manager = ConfigManager.__new__(ConfigManager)
+        data = {}
+
+        config = manager._dict_to_config(data)
+
+        assert config.default_provider == "ollama"  # Default
+        assert isinstance(config.openai, ProviderConfig)
+
+    def test_get_current_provider(self):
+        """get_current_provider returns default provider."""
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = Config()
+        manager._config.default_provider = "google"
+
+        assert manager.get_current_provider() == "google"
+
+
+class TestConfigValidation:
+    """Tests for config validation."""
+
+    def test_has_google_config(self):
+        """Config has google provider config."""
+        config = Config()
+        assert hasattr(config, 'google')
+        assert isinstance(config.google, ProviderConfig)
+
+    def test_has_xai_config(self):
+        """Config has xai provider config."""
+        config = Config()
+        assert hasattr(config, 'xai')
+        assert isinstance(config.xai, ProviderConfig)
+
+    def test_provider_config_has_base_url(self):
+        """ProviderConfig has base_url field."""
+        config = ProviderConfig()
+        assert hasattr(config, 'base_url')
+
+    def test_config_has_verbose(self):
+        """Config has verbose setting."""
+        config = Config()
+        assert hasattr(config, 'verbose')
+        assert isinstance(config.verbose, bool)
+
+    def test_config_has_show_thinking(self):
+        """Config has show_thinking setting."""
+        config = Config()
+        assert hasattr(config, 'show_thinking')
+        assert isinstance(config.show_thinking, bool)
+
+
+class TestAvailableModelsContent:
+    """Tests for available models content."""
+
+    def test_has_google(self):
+        """AVAILABLE_MODELS includes Google."""
+        assert "google" in AVAILABLE_MODELS
+
+    def test_has_xai(self):
+        """AVAILABLE_MODELS includes xAI."""
+        assert "xai" in AVAILABLE_MODELS
+
+    def test_anthropic_has_claude_models(self):
+        """Anthropic has Claude models."""
+        models = AVAILABLE_MODELS.get("anthropic", [])
+        model_str = " ".join(models).lower()
+        assert "claude" in model_str
+
+    def test_openai_has_gpt_models(self):
+        """OpenAI has GPT models."""
+        models = AVAILABLE_MODELS.get("openai", [])
+        model_str = " ".join(models).lower()
+        assert "gpt" in model_str
+
+    def test_ollama_has_local_models(self):
+        """Ollama has local model options."""
+        models = AVAILABLE_MODELS.get("ollama", [])
+        assert len(models) > 0
