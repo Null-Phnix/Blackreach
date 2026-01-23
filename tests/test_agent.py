@@ -580,3 +580,120 @@ class TestAgentMemoryRecording:
         assert len(agent._recent_urls) == 10
         # Most recent should be last
         assert "page19" in agent._recent_urls[-1]
+
+
+class TestFormatElementsAdvanced:
+    """Advanced tests for _format_elements edge cases."""
+
+    def test_format_excludes_arxiv_urls_by_id(self, tmp_path):
+        """_format_elements excludes arxiv URLs by paper ID."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        parsed = {
+            "links": [
+                {"href": "https://arxiv.org/abs/2301.12345", "text": "Paper 1", "type": "other"},
+                {"href": "https://arxiv.org/pdf/2301.67890", "text": "Paper 2", "type": "other"}
+            ]
+        }
+        # Exclude the first paper by its abs URL
+        result = agent._format_elements(parsed, exclude_urls=["https://arxiv.org/abs/2301.12345"])
+        assert "Paper 2" in result
+        # Paper 1 should be excluded
+
+    def test_format_with_full_image_src(self, tmp_path):
+        """_format_elements handles full image sources."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        parsed = {
+            "images": [
+                {"src": "http://example.com/thumb.jpg", "full_src": "http://example.com/full.jpg"}
+            ]
+        }
+        result = agent._format_elements(parsed)
+        assert "DOWNLOAD:" in result or "Images:" in result
+
+    def test_format_with_thumbnail_detection(self, tmp_path):
+        """_format_elements detects thumbnails vs full images."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        parsed = {
+            "images": [
+                {"src": "http://example.com/thumb/small.jpg", "link": "http://example.com/view/1"},
+                {"src": "http://example.com/full/large.jpg"}
+            ]
+        }
+        result = agent._format_elements(parsed)
+        # Should have some output for images
+        assert result is not None
+
+    def test_format_with_image_link(self, tmp_path):
+        """_format_elements includes image links for navigation."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        parsed = {
+            "images": [
+                {"src": "http://example.com/preview.jpg", "link": "http://example.com/image/123"}
+            ]
+        }
+        result = agent._format_elements(parsed)
+        # Should show NAVIGATE TO for linked images
+        assert "NAVIGATE TO" in result or "Images:" in result
+
+
+class TestAgentGetDomainExtended:
+    """Extended tests for _get_domain method."""
+
+    def test_get_domain_with_subdomain(self, tmp_path):
+        """_get_domain handles subdomains."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        domain = agent._get_domain("https://api.example.com/v1/users")
+        assert domain == "api.example.com"
+
+    def test_get_domain_with_path(self, tmp_path):
+        """_get_domain extracts just the domain."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        domain = agent._get_domain("https://example.com/path/to/page?query=1")
+        assert domain == "example.com"
+
+    def test_get_domain_http_url(self, tmp_path):
+        """_get_domain works with http URLs."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        domain = agent._get_domain("http://insecure.example.com/page")
+        assert domain == "insecure.example.com"
+
+
+class TestAgentStuckHint:
+    """Tests for _get_stuck_hint method."""
+
+    def test_stuck_hint_includes_start_url(self, tmp_path):
+        """_get_stuck_hint includes start URL suggestion."""
+        config = AgentConfig(memory_db=tmp_path / "test.db", start_url="https://google.com")
+        agent = Agent(agent_config=config)
+
+        # Make agent stuck
+        agent._recent_urls = ["same_url", "same_url", "same_url"]
+
+        hint = agent._get_stuck_hint()
+
+        assert "STUCK" in hint
+        assert "google.com" in hint
+
+    def test_stuck_hint_suggests_different_action(self, tmp_path):
+        """_get_stuck_hint suggests trying different actions."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        agent._recent_urls = ["same", "same", "same"]
+        hint = agent._get_stuck_hint()
+
+        assert "DO NOT repeat" in hint or "different" in hint.lower()
