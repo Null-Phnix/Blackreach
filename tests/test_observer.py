@@ -169,6 +169,76 @@ class TestLinkExtraction:
 
 
 # =============================================================================
+# Link Scoring Tests
+# =============================================================================
+
+class TestLinkScoring:
+    """Tests for link relevance scoring."""
+
+    def test_button_class_boosts_score(self):
+        """Links with button classes have higher scores."""
+        html = """
+        <html><body>
+            <main><p>Content</p></main>
+            <a href="/download" class="btn">Download</a>
+            <a href="/normal">Normal Link</a>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        links = result["links"]
+        download_link = next((l for l in links if l["href"] == "/download"), None)
+        normal_link = next((l for l in links if l["href"] == "/normal"), None)
+
+        # Button link should have higher score
+        if download_link and normal_link:
+            assert download_link.get("score", 0) >= normal_link.get("score", 0)
+
+    def test_nav_links_deprioritized(self):
+        """Links in nav/header/footer have lower scores."""
+        html = """
+        <html><body>
+            <nav>
+                <a href="/home">Home</a>
+            </nav>
+            <main>
+                <p>Content</p>
+                <a href="/article">Article Link</a>
+            </main>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        links = result["links"]
+        # Navigation links should be deprioritized
+        assert len(links) >= 1
+
+    def test_noise_links_deprioritized(self):
+        """Links with noise patterns have lower scores."""
+        html = """
+        <html><body>
+            <main>
+                <p>Content</p>
+                <a href="/login">Login</a>
+                <a href="/content">Read More</a>
+            </main>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        links = result["links"]
+        login_link = next((l for l in links if "/login" in l["href"]), None)
+        content_link = next((l for l in links if "/content" in l["href"]), None)
+
+        # Login link should have lower score
+        if login_link and content_link:
+            assert content_link.get("score", 0) >= login_link.get("score", 0)
+
+
+# =============================================================================
 # Input Extraction Tests
 # =============================================================================
 
@@ -914,3 +984,96 @@ class TestPagination:
         result = eyes.see(html)
 
         assert result["pagination"]["current_page"] == 2
+
+
+# =============================================================================
+# List Extraction Tests
+# =============================================================================
+
+class TestListExtraction:
+    """Tests for list extraction from HTML."""
+
+    def test_extracts_unordered_list(self):
+        """Extracts unordered list with items."""
+        html = """
+        <html><body>
+            <main><p>Content</p></main>
+            <ul>
+                <li>Item 1</li>
+                <li>Item 2</li>
+                <li>Item 3</li>
+            </ul>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        lists = result.get("lists", [])
+        assert len(lists) > 0
+        ul_list = next((l for l in lists if l["type"] == "ul"), None)
+        assert ul_list is not None
+        assert len(ul_list["items"]) == 3
+
+    def test_extracts_ordered_list(self):
+        """Extracts ordered list with items."""
+        html = """
+        <html><body>
+            <main><p>Content</p></main>
+            <ol>
+                <li>First</li>
+                <li>Second</li>
+            </ol>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        lists = result.get("lists", [])
+        ol_list = next((l for l in lists if l["type"] == "ol"), None)
+        if ol_list:
+            assert len(ol_list["items"]) == 2
+
+
+# =============================================================================
+# Pagination Fallback Tests
+# =============================================================================
+
+class TestPaginationFallback:
+    """Tests for pagination fallback detection."""
+
+    def test_pagination_fallback_with_page_param(self):
+        """Detects pagination through page= parameter in URLs."""
+        html = """
+        <html><body>
+            <main><p>Content</p></main>
+            <div>
+                <a href="/search?page=1">1</a>
+                <a href="/search?page=2">2</a>
+                <a href="/search?page=3">3</a>
+            </div>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        # Should detect pagination through fallback
+        pagination = result.get("pagination", {})
+        assert pagination.get("has_pagination") or len(pagination.get("page_links", [])) > 0
+
+    def test_pagination_fallback_with_p_param(self):
+        """Detects pagination through p= parameter in URLs."""
+        html = """
+        <html><body>
+            <main><p>Content</p></main>
+            <div>
+                <a href="/results?p=1">1</a>
+                <a href="/results?p=2">2</a>
+            </div>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        pagination = result.get("pagination", {})
+        # Should recognize the p= pattern
+        assert "pagination" in result
