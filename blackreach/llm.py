@@ -152,6 +152,10 @@ class LLM:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
             ],
+            options={
+                "temperature": self.config.temperature,
+                "num_predict": self.config.max_tokens,
+            }
         )
         return response["message"]["content"]
 
