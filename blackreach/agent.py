@@ -24,7 +24,7 @@ from blackreach.stealth import StealthConfig
 from blackreach.resilience import RetryConfig
 from blackreach.memory import SessionMemory, PersistentMemory
 from blackreach.logging import SessionLogger
-from blackreach.exceptions import InvalidActionArgsError, UnknownActionError
+from blackreach.exceptions import InvalidActionArgsError, UnknownActionError, SessionNotFoundError
 from blackreach.knowledge import reason_about_goal, extract_subject, get_working_url, get_all_urls_for_source
 
 
@@ -232,7 +232,7 @@ class Agent:
         # Load saved state
         state = self.persistent_memory.load_session_state(session_id)
         if not state:
-            raise ValueError(f"No resumable session found with ID {session_id}")
+            raise SessionNotFoundError(str(session_id))
 
         # Restore state
         self.session_id = state["session_id"]

@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field, asdict
 
+from blackreach.exceptions import InvalidConfigError
+
 
 CONFIG_DIR = Path.home() / ".blackreach"
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
@@ -218,7 +220,7 @@ class ConfigManager:
             getattr(config, provider).api_key = key
             self.save()
         else:
-            raise ValueError(f"Unknown provider: {provider}")
+            raise InvalidConfigError("provider", provider, "one of: anthropic, openai, google, ollama, xai")
 
     def set_default_provider(self, provider: str):
         """Set the default provider."""
@@ -227,7 +229,7 @@ class ConfigManager:
             config.default_provider = provider
             self.save()
         else:
-            raise ValueError(f"Unknown provider: {provider}")
+            raise InvalidConfigError("provider", provider, f"one of: {', '.join(AVAILABLE_MODELS.keys())}")
 
     def set_default_model(self, provider: str, model: str):
         """Set default model for a provider."""
@@ -236,7 +238,7 @@ class ConfigManager:
             getattr(config, provider).default_model = model
             self.save()
         else:
-            raise ValueError(f"Unknown provider: {provider}")
+            raise InvalidConfigError("provider", provider, "one of: anthropic, openai, google, ollama, xai")
 
     def get_current_provider(self) -> str:
         """Get current default provider."""

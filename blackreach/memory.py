@@ -45,14 +45,20 @@ class SessionMemory:
         if url and url not in self.downloaded_urls:
             self.downloaded_urls.append(url)
 
-    def add_visit(self, url: str):
-        """Record a visited URL (no duplicates)."""
+    def add_visit(self, url: str, max_urls: int = 500):
+        """Record a visited URL (no duplicates, with limit to prevent memory issues)."""
         if url not in self.visited_urls:
             self.visited_urls.append(url)
+            # Prevent unbounded growth - keep only recent URLs
+            if len(self.visited_urls) > max_urls:
+                self.visited_urls = self.visited_urls[-max_urls:]
 
-    def add_action(self, action: Dict[str, Any]):
-        """Record an action taken."""
+    def add_action(self, action: Dict[str, Any], max_actions: int = 200):
+        """Record an action taken (with limit to prevent memory issues)."""
         self.actions_taken.append(action)
+        # Prevent unbounded growth - keep only recent actions
+        if len(self.actions_taken) > max_actions:
+            self.actions_taken = self.actions_taken[-max_actions:]
 
     def add_failure(self, error: str):
         """Record a failure."""
@@ -554,3 +560,16 @@ class PersistentMemory:
         if self._conn:
             self._conn.close()
             self._conn = None
+
+    def __del__(self):
+        """Ensure database connection is closed on garbage collection."""
+        self.close()
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensures connection is closed."""
+        self.close()
+        return False

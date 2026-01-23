@@ -232,6 +232,7 @@ def run(goal: str, provider: str, model: str, headless: bool, steps: int, resume
     Example: blackreach run "go to wikipedia and search for AI"
     Resume:  blackreach run --resume 42
     """
+    global _active_agent
     from blackreach.agent import Agent, AgentConfig
     from blackreach.llm import LLMConfig
 
@@ -272,7 +273,6 @@ def run(goal: str, provider: str, model: str, headless: bool, steps: int, resume
                 download_dir=Path(config.download_dir)
             )
 
-            global _active_agent
             agent = Agent(llm_config=llm_config, agent_config=agent_config)
             _active_agent = agent
             result = agent.resume(resume)
@@ -319,7 +319,6 @@ def run(goal: str, provider: str, model: str, headless: bool, steps: int, resume
             download_dir=Path(config.download_dir)
         )
 
-        global _active_agent
         agent = Agent(llm_config=llm_config, agent_config=agent_config)
         _active_agent = agent
         result = agent.run(goal)
@@ -612,6 +611,7 @@ def doctor():
 
 def interactive_mode():
     """Interactive REPL mode with full polish."""
+    global _active_agent
     from blackreach.agent import Agent, AgentConfig
     from blackreach.llm import LLMConfig
     from blackreach import ui
@@ -784,7 +784,6 @@ def interactive_mode():
                             download_dir=Path(cfg.download_dir)
                         )
 
-                        global _active_agent
                         agent = Agent(llm_config=llm_config, agent_config=agent_config)
                         _active_agent = agent
 
@@ -910,6 +909,7 @@ def interactive_mode():
 
 def run_agent_with_ui(goal: str, provider: str, model: str, cfg):
     """Run agent with polished UI output."""
+    global _active_agent
     from blackreach.agent import Agent, AgentConfig, AgentCallbacks
     from blackreach.llm import LLMConfig
     from blackreach import ui
@@ -955,7 +955,6 @@ def run_agent_with_ui(goal: str, provider: str, model: str, cfg):
                 download_dir=Path(cfg.download_dir)
             )
 
-            global _active_agent
             agent = Agent(
                 llm_config=llm_config,
                 agent_config=agent_config,
