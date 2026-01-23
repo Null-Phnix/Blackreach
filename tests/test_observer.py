@@ -520,6 +520,40 @@ class TestOutputFormats:
 
         assert len(short) < len(long)
 
+    def test_see_for_llm_with_forms(self):
+        """see_for_llm() includes forms in output."""
+        html = '''
+        <html><body>
+        <form action="/search">
+            <input type="text" name="q" placeholder="Search..." />
+            <button type="submit">Search</button>
+        </form>
+        </body></html>
+        '''
+        eyes = Eyes()
+        output = eyes.see_for_llm(html)
+
+        assert "## Forms" in output
+        assert "/search" in output
+
+    def test_see_for_llm_with_form_fields(self):
+        """see_for_llm() includes form field details."""
+        html = '''
+        <html><body>
+        <form action="/login">
+            <input type="text" name="username" placeholder="Username" />
+            <input type="password" name="password" placeholder="Password" />
+            <button type="submit">Login</button>
+        </form>
+        </body></html>
+        '''
+        eyes = Eyes()
+        output = eyes.see_for_llm(html)
+
+        assert "## Forms" in output
+        # Check that fields are included
+        assert "Username" in output or "username" in output
+
 
 # =============================================================================
 # Caching Tests
