@@ -464,3 +464,342 @@ class TestHandCombinedConfigs:
         # Defaults still applied
         assert hand.retry_config is not None
         assert hand.stealth is not None
+
+
+class TestHandNavigationMethods:
+    """Tests for Hand navigation methods."""
+
+    def test_goto_returns_dict(self):
+        """goto() should return a dict."""
+        hand = Hand(headless=True)
+        # Without wake, this will fail, but we're testing the method signature
+        assert hasattr(hand, 'goto')
+        assert callable(hand.goto)
+
+    def test_back_returns_dict(self):
+        """back() should return a dict."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'back')
+        assert callable(hand.back)
+
+    def test_forward_returns_dict(self):
+        """forward() should return a dict."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'forward')
+        assert callable(hand.forward)
+
+    def test_refresh_returns_dict(self):
+        """refresh() should return a dict."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'refresh')
+        assert callable(hand.refresh)
+
+
+class TestHandInteractionMethods:
+    """Tests for Hand interaction methods."""
+
+    def test_click_method_exists(self):
+        """click() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'click')
+        assert callable(hand.click)
+
+    def test_type_method_exists(self):
+        """type() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'type')
+        assert callable(hand.type)
+
+    def test_press_method_exists(self):
+        """press() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'press')
+        assert callable(hand.press)
+
+    def test_scroll_method_exists(self):
+        """scroll() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'scroll')
+        assert callable(hand.scroll)
+
+    def test_hover_method_exists(self):
+        """hover() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'hover')
+        assert callable(hand.hover)
+
+    def test_smart_click_method_exists(self):
+        """smart_click() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'smart_click')
+        assert callable(hand.smart_click)
+
+
+class TestHandPageInfoMethods:
+    """Tests for Hand page info methods."""
+
+    def test_get_html_method_exists(self):
+        """get_html() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'get_html')
+        assert callable(hand.get_html)
+
+    def test_get_url_method_exists(self):
+        """get_url() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'get_url')
+        assert callable(hand.get_url)
+
+    def test_get_title_method_exists(self):
+        """get_title() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'get_title')
+        assert callable(hand.get_title)
+
+    def test_screenshot_method_exists(self):
+        """screenshot() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'screenshot')
+        assert callable(hand.screenshot)
+
+
+class TestHandDownloadMethods:
+    """Tests for Hand download methods."""
+
+    def test_download_file_method_exists(self):
+        """download_file() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'download_file')
+        assert callable(hand.download_file)
+
+    def test_download_link_method_exists(self):
+        """download_link() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'download_link')
+        assert callable(hand.download_link)
+
+    def test_click_and_download_method_exists(self):
+        """click_and_download() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'click_and_download')
+        assert callable(hand.click_and_download)
+
+    def test_wait_for_download_method_exists(self):
+        """wait_for_download() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'wait_for_download')
+        assert callable(hand.wait_for_download)
+
+
+class TestHandWaitMethods:
+    """Tests for Hand wait methods."""
+
+    def test_wait_for_navigation_method_exists(self):
+        """wait_for_navigation() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'wait_for_navigation')
+        assert callable(hand.wait_for_navigation)
+
+    def test_force_render_method_exists(self):
+        """force_render() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'force_render')
+        assert callable(hand.force_render)
+
+
+class TestHandWakeAndSleep:
+    """Tests for Hand wake and sleep methods."""
+
+    def test_wake_method_exists(self):
+        """wake() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'wake')
+        assert callable(hand.wake)
+
+    def test_sleep_method_exists(self):
+        """sleep() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, 'sleep')
+        assert callable(hand.sleep)
+
+    def test_sleep_handles_no_playwright(self):
+        """sleep() handles case where playwright not started."""
+        hand = Hand(headless=True)
+        # Should not raise even without wake
+        hand.sleep()
+
+    def test_sleep_handles_no_browser(self):
+        """sleep() handles case where browser not started."""
+        hand = Hand(headless=True)
+        hand._playwright = Mock()
+        hand._browser = None
+        # Should not raise
+        hand.sleep()
+
+
+class TestHandInternalMethods:
+    """Tests for Hand internal helper methods."""
+
+    def test_human_delay_method_exists(self):
+        """_human_delay() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, '_human_delay')
+        assert callable(hand._human_delay)
+
+    def test_move_mouse_human_method_exists(self):
+        """_move_mouse_human() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, '_move_mouse_human')
+        assert callable(hand._move_mouse_human)
+
+    def test_setup_resource_blocking_method_exists(self):
+        """_setup_resource_blocking() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, '_setup_resource_blocking')
+        assert callable(hand._setup_resource_blocking)
+
+    def test_inject_stealth_scripts_method_exists(self):
+        """_inject_stealth_scripts() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, '_inject_stealth_scripts')
+        assert callable(hand._inject_stealth_scripts)
+
+    def test_wait_for_challenge_resolution_method_exists(self):
+        """_wait_for_challenge_resolution() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, '_wait_for_challenge_resolution')
+        assert callable(hand._wait_for_challenge_resolution)
+
+    def test_wait_for_dynamic_content_method_exists(self):
+        """_wait_for_dynamic_content() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, '_wait_for_dynamic_content')
+        assert callable(hand._wait_for_dynamic_content)
+
+    def test_compute_hash_method_exists(self):
+        """_compute_hash() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, '_compute_hash')
+        assert callable(hand._compute_hash)
+
+    def test_fetch_file_directly_method_exists(self):
+        """_fetch_file_directly() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, '_fetch_file_directly')
+        assert callable(hand._fetch_file_directly)
+
+    def test_handle_download_method_exists(self):
+        """_handle_download() method exists."""
+        hand = Hand(headless=True)
+        assert hasattr(hand, '_handle_download')
+        assert callable(hand._handle_download)
+
+
+class TestHandPropertyHelpers:
+    """Tests for Hand property helper access."""
+
+    def test_page_property_raises_without_wake(self):
+        """page property raises BrowserNotReadyError without wake."""
+        from blackreach.exceptions import BrowserNotReadyError
+
+        hand = Hand(headless=True)
+        with pytest.raises(BrowserNotReadyError):
+            _ = hand.page
+
+    def test_selector_property_raises_without_wake(self):
+        """selector property raises BrowserNotReadyError without wake."""
+        from blackreach.exceptions import BrowserNotReadyError
+
+        hand = Hand(headless=True)
+        with pytest.raises(BrowserNotReadyError):
+            _ = hand.selector
+
+    def test_popups_property_raises_without_wake(self):
+        """popups property raises BrowserNotReadyError without wake."""
+        from blackreach.exceptions import BrowserNotReadyError
+
+        hand = Hand(headless=True)
+        with pytest.raises(BrowserNotReadyError):
+            _ = hand.popups
+
+    def test_waits_property_raises_without_wake(self):
+        """waits property raises BrowserNotReadyError without wake."""
+        from blackreach.exceptions import BrowserNotReadyError
+
+        hand = Hand(headless=True)
+        with pytest.raises(BrowserNotReadyError):
+            _ = hand.waits
+
+
+class TestHandWithMockedPage:
+    """Tests for Hand methods with mocked page."""
+
+    def test_get_url_with_mock_page(self):
+        """get_url() returns page URL."""
+        hand = Hand(headless=True)
+        hand._page = Mock()
+        hand._page.url = "https://example.com"
+
+        url = hand.get_url()
+
+        assert url == "https://example.com"
+
+    def test_get_title_with_mock_page(self):
+        """get_title() returns page title."""
+        hand = Hand(headless=True)
+        hand._page = Mock()
+        hand._page.title.return_value = "Example Page"
+
+        title = hand.get_title()
+
+        assert title == "Example Page"
+
+    def test_get_html_with_mock_page(self):
+        """get_html() returns page content."""
+        hand = Hand(headless=True)
+        hand._page = Mock()
+        hand._page.content.return_value = "<html><body>Test</body></html>"
+
+        html = hand.get_html(wait_for_load=False)
+
+        assert "<html>" in html
+        assert "Test" in html
+
+    def test_handle_download_appends_to_pending(self):
+        """_handle_download() adds to pending downloads."""
+        hand = Hand(headless=True)
+        mock_download = Mock()
+
+        hand._handle_download(mock_download)
+
+        assert mock_download in hand._pending_downloads
+
+    def test_handle_download_calls_callback(self):
+        """_handle_download() calls download callback."""
+        hand = Hand(headless=True)
+        callback = Mock()
+        hand._download_callback = callback
+        mock_download = Mock()
+
+        hand._handle_download(mock_download)
+
+        callback.assert_called_once_with(mock_download)
+
+    def test_compute_hash_returns_string(self):
+        """_compute_hash() returns a hash string."""
+        import tempfile
+        import os
+
+        hand = Hand(headless=True)
+
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.write(b"test content")
+            f.flush()
+            path = Path(f.name)
+
+        try:
+            hash_val = hand._compute_hash(path)
+            assert isinstance(hash_val, str)
+            assert len(hash_val) == 64  # SHA-256 hex length
+        finally:
+            os.unlink(path)

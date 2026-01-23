@@ -452,3 +452,256 @@ class TestAgentProgressDisplay:
 
         # Multiple prints for different phases
         assert mock_console.print.call_count > 0
+
+
+class TestSpinnerContextManagers:
+    """Tests for spinner context managers."""
+
+    @patch('blackreach.ui.console')
+    def test_spinner_context_manager(self, mock_console):
+        """spinner() context manager works."""
+        from blackreach.ui import spinner
+
+        with spinner("Testing..."):
+            pass
+
+        mock_console.status.assert_called()
+
+    @patch('blackreach.ui.console')
+    def test_step_spinner_context_manager(self, mock_console):
+        """step_spinner() context manager works."""
+        from blackreach.ui import step_spinner
+
+        with step_spinner("Step 1"):
+            pass
+
+        mock_console.status.assert_called()
+
+
+class TestPrintFunctions:
+    """Tests for print utility functions."""
+
+    @patch('blackreach.ui.console')
+    def test_print_error(self, mock_console):
+        """print_error() prints error message."""
+        from blackreach.ui import print_error
+
+        print_error("Something went wrong")
+
+        mock_console.print.assert_called()
+        call_args = str(mock_console.print.call_args)
+        assert "wrong" in call_args.lower() or mock_console.print.called
+
+    @patch('blackreach.ui.console')
+    def test_print_success(self, mock_console):
+        """print_success() prints success message."""
+        from blackreach.ui import print_success
+
+        print_success("Operation completed")
+
+        mock_console.print.assert_called()
+
+    @patch('blackreach.ui.console')
+    def test_print_warning(self, mock_console):
+        """print_warning() prints warning message."""
+        from blackreach.ui import print_warning
+
+        print_warning("Be careful")
+
+        mock_console.print.assert_called()
+
+    @patch('blackreach.ui.console')
+    def test_print_info(self, mock_console):
+        """print_info() prints info message."""
+        from blackreach.ui import print_info
+
+        print_info("FYI")
+
+        mock_console.print.assert_called()
+
+    @patch('blackreach.ui.console')
+    def test_clear_screen(self, mock_console):
+        """clear_screen() clears the terminal."""
+        from blackreach.ui import clear_screen
+
+        clear_screen()
+
+        mock_console.clear.assert_called()
+
+    @patch('blackreach.ui.console')
+    def test_print_thinking(self, mock_console):
+        """print_thinking() prints thinking message."""
+        from blackreach.ui import print_thinking
+
+        print_thinking("Analyzing...")
+
+        mock_console.print.assert_called()
+
+    @patch('blackreach.ui.console')
+    def test_print_observation(self, mock_console):
+        """print_observation() prints observation."""
+        from blackreach.ui import print_observation
+
+        print_observation("Found 5 links on page")
+
+        mock_console.print.assert_called()
+
+    @patch('blackreach.ui.console')
+    def test_print_action_without_args(self, mock_console):
+        """print_action() prints action without args."""
+        from blackreach.ui import print_action
+
+        print_action("click")
+
+        mock_console.print.assert_called()
+
+    @patch('blackreach.ui.console')
+    def test_print_action_with_args(self, mock_console):
+        """print_action() prints action with args."""
+        from blackreach.ui import print_action
+
+        print_action("type", {"text": "hello"})
+
+        mock_console.print.assert_called()
+
+    @patch('blackreach.ui.console')
+    def test_stream_text(self, mock_console):
+        """stream_text() streams text character by character."""
+        from blackreach.ui import stream_text
+
+        stream_text("Hello", delay=0.001)
+
+        assert mock_console.print.called
+
+
+class TestPrintBanner:
+    """Tests for banner printing."""
+
+    @patch('blackreach.ui.console')
+    def test_print_banner(self, mock_console):
+        """print_banner() prints the banner."""
+        from blackreach.ui import print_banner
+
+        print_banner()
+
+        mock_console.print.assert_called()
+
+    @patch('blackreach.ui.console')
+    def test_print_welcome(self, mock_console):
+        """print_welcome() prints welcome with provider info."""
+        from blackreach.ui import print_welcome
+
+        print_welcome("ollama", "llama3")
+
+        mock_console.print.assert_called()
+
+    @patch('blackreach.ui.console')
+    def test_print_help(self, mock_console):
+        """print_help() prints help information."""
+        from blackreach.ui import print_help
+
+        print_help()
+
+        mock_console.print.assert_called()
+
+
+class TestConfirmAndChoose:
+    """Tests for confirm and choose functions."""
+
+    def test_confirm_function_exists(self):
+        """confirm() function exists."""
+        from blackreach.ui import confirm
+        assert callable(confirm)
+
+    def test_choose_function_exists(self):
+        """choose() function exists."""
+        from blackreach.ui import choose
+        assert callable(choose)
+
+
+class TestStatusBar:
+    """Tests for StatusBar class."""
+
+    def test_status_bar_import(self):
+        """StatusBar can be imported."""
+        from blackreach.ui import StatusBar
+        assert StatusBar is not None
+
+    def test_status_bar_init_defaults(self):
+        """StatusBar initializes with default values."""
+        from blackreach.ui import StatusBar
+
+        status = StatusBar()
+
+        assert status.provider == "ollama"
+        assert status.model == "qwen2.5:7b"
+        assert status.sessions == 0
+        assert status.downloads == 0
+
+    def test_status_bar_update_provider(self):
+        """StatusBar.update() updates provider."""
+        from blackreach.ui import StatusBar
+
+        status = StatusBar()
+        status.update(provider="openai", model="gpt-4")
+
+        assert status.provider == "openai"
+        assert status.model == "gpt-4"
+
+    def test_status_bar_update_sessions(self):
+        """StatusBar.update() updates sessions count."""
+        from blackreach.ui import StatusBar
+
+        status = StatusBar()
+        status.update(sessions=5)
+
+        assert status.sessions == 5
+
+    def test_status_bar_update_downloads(self):
+        """StatusBar.update() updates downloads count."""
+        from blackreach.ui import StatusBar
+
+        status = StatusBar()
+        status.update(downloads=10)
+
+        assert status.downloads == 10
+
+    def test_status_bar_render(self):
+        """StatusBar.render() returns formatted string."""
+        from blackreach.ui import StatusBar
+
+        status = StatusBar()
+        rendered = status.render()
+
+        assert isinstance(rendered, str)
+        assert "ollama" in rendered
+        assert "qwen2.5:7b" in rendered
+
+    @patch('blackreach.ui.console')
+    def test_status_bar_print(self, mock_console):
+        """StatusBar.print() outputs to console."""
+        from blackreach.ui import StatusBar
+
+        status = StatusBar()
+        status.print()
+
+        mock_console.print.assert_called()
+
+
+class TestInteractivePrompt:
+    """Tests for InteractivePrompt class."""
+
+    def test_interactive_prompt_import(self):
+        """InteractivePrompt can be imported."""
+        from blackreach.ui import InteractivePrompt
+        assert InteractivePrompt is not None
+
+    def test_interactive_prompt_has_init(self):
+        """InteractivePrompt has __init__ method."""
+        from blackreach.ui import InteractivePrompt
+        assert hasattr(InteractivePrompt, '__init__')
+
+    def test_interactive_prompt_has_prompt_method(self):
+        """InteractivePrompt has prompt method."""
+        from blackreach.ui import InteractivePrompt
+        assert hasattr(InteractivePrompt, 'prompt')

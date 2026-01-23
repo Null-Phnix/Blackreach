@@ -501,3 +501,589 @@ class TestWaitConditionsBasic:
         """WaitConditions has wait_for_navigation method."""
         from blackreach.resilience import WaitConditions
         assert hasattr(WaitConditions, 'wait_for_navigation')
+
+
+# =============================================================================
+# SmartSelector Method Tests (with mocks)
+# =============================================================================
+
+class TestSmartSelectorMethods:
+    """Tests for SmartSelector methods with mocked Playwright objects."""
+
+    def test_find_with_single_selector(self):
+        """find() works with a single selector string."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.count.return_value = 1
+        mock_locator.first = mock_locator
+        mock_locator.filter.return_value = mock_locator
+        mock_locator.wait_for.return_value = None
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page, timeout=1000)
+        result = selector.find("button.submit")
+
+        assert result is not None
+        mock_page.locator.assert_called()
+
+    def test_find_with_list_of_selectors(self):
+        """find() works with a list of selectors."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.count.return_value = 1
+        mock_locator.first = mock_locator
+        mock_locator.filter.return_value = mock_locator
+        mock_locator.wait_for.return_value = None
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page, timeout=1000)
+        result = selector.find(["#id1", "#id2", "#id3"])
+
+        assert result is not None
+
+    def test_find_returns_none_when_no_match(self):
+        """find() returns None when no element matches."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.count.return_value = 0
+        mock_locator.first = mock_locator
+        mock_locator.filter.return_value = mock_locator
+        mock_locator.wait_for.side_effect = Exception("Timeout")
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page, timeout=100)
+        result = selector.find("nonexistent")
+
+        assert result is None
+
+    def test_find_input_by_name(self):
+        """find_input() finds input by name."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.count.return_value = 1
+        mock_locator.first = mock_locator
+        mock_locator.filter.return_value = mock_locator
+        mock_locator.wait_for.return_value = None
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page)
+        result = selector.find_input(name="email")
+
+        assert result is not None
+
+    def test_find_input_by_placeholder(self):
+        """find_input() finds input by placeholder."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.count.return_value = 1
+        mock_locator.first = mock_locator
+        mock_locator.filter.return_value = mock_locator
+        mock_locator.wait_for.return_value = None
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page)
+        result = selector.find_input(placeholder="Enter email")
+
+        assert result is not None
+
+    def test_find_input_by_label(self):
+        """find_input() finds input by label."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.count.return_value = 1
+        mock_locator.first = mock_locator
+        mock_locator.filter.return_value = mock_locator
+        mock_locator.wait_for.return_value = None
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page)
+        result = selector.find_input(label="Username")
+
+        assert result is not None
+
+    def test_find_input_by_type(self):
+        """find_input() finds input by type."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.count.return_value = 1
+        mock_locator.first = mock_locator
+        mock_locator.filter.return_value = mock_locator
+        mock_locator.wait_for.return_value = None
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page)
+        result = selector.find_input(input_type="password")
+
+        assert result is not None
+
+    def test_find_input_returns_none_without_params(self):
+        """find_input() returns None when no parameters given."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        selector = SmartSelector(mock_page)
+        result = selector.find_input()
+
+        assert result is None
+
+    def test_find_button_by_text(self):
+        """find_button() finds button by text."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.count.return_value = 1
+        mock_locator.first = mock_locator
+        mock_locator.filter.return_value = mock_locator
+        mock_locator.wait_for.return_value = None
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page)
+        result = selector.find_button(text="Submit")
+
+        assert result is not None
+
+    def test_find_button_submit(self):
+        """find_button() finds submit button."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.count.return_value = 1
+        mock_locator.first = mock_locator
+        mock_locator.filter.return_value = mock_locator
+        mock_locator.wait_for.return_value = None
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page)
+        result = selector.find_button(submit=True)
+
+        assert result is not None
+
+    def test_find_button_returns_none_without_params(self):
+        """find_button() returns None when no parameters given."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        selector = SmartSelector(mock_page)
+        result = selector.find_button()
+
+        assert result is None
+
+
+class TestSmartSelectorFindByText:
+    """Tests for SmartSelector.find_by_text method."""
+
+    def test_find_by_text_exact_match(self):
+        """find_by_text() with exact=True."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.first = mock_locator
+        mock_locator.wait_for.return_value = None
+        mock_page.get_by_text.return_value = mock_locator
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page, timeout=1000)
+        result = selector.find_by_text("Click Here", exact=True)
+
+        assert result is not None
+        mock_page.get_by_text.assert_called_with("Click Here", exact=True)
+
+    def test_find_by_text_partial_match(self):
+        """find_by_text() with exact=False (default)."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.first = mock_locator
+        mock_locator.wait_for.return_value = None
+        mock_page.get_by_text.return_value = mock_locator
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page, timeout=1000)
+        result = selector.find_by_text("Click")
+
+        assert result is not None
+        mock_page.get_by_text.assert_called_with("Click", exact=False)
+
+    def test_find_by_text_with_tag_filter(self):
+        """find_by_text() filters by tag."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.first = mock_locator
+        mock_locator.filter.return_value = mock_locator
+        mock_locator.wait_for.return_value = None
+        mock_page.get_by_text.return_value = mock_locator
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page, timeout=1000)
+        result = selector.find_by_text("Click", tag="button")
+
+        assert result is not None
+        mock_page.locator.assert_called_with("button")
+
+    def test_find_by_text_timeout_returns_none(self):
+        """find_by_text() returns None on timeout."""
+        from blackreach.resilience import SmartSelector
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.first = mock_locator
+        mock_locator.wait_for.side_effect = PlaywrightTimeout("Timeout")
+        mock_page.get_by_text.return_value = mock_locator
+
+        selector = SmartSelector(mock_page, timeout=100)
+        result = selector.find_by_text("Nonexistent")
+
+        assert result is None
+
+    def test_find_by_text_fallback_on_error(self):
+        """find_by_text() falls back to CSS selector on error."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.first = mock_locator
+        mock_locator.wait_for.return_value = None
+
+        # First call raises, second (fallback) succeeds
+        mock_page.get_by_text.side_effect = Exception("Error")
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page, timeout=1000)
+        result = selector.find_by_text("Test")
+
+        assert result is not None
+        mock_page.locator.assert_called()
+
+
+# =============================================================================
+# SmartSelector Link Finding Tests
+# =============================================================================
+
+class TestSmartSelectorFindLink:
+    """Tests for SmartSelector.find_link method."""
+
+    def test_find_link_by_text(self):
+        """find_link() finds link by text."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.count.return_value = 1
+        mock_locator.first = mock_locator
+        mock_locator.filter.return_value = mock_locator
+        mock_locator.wait_for.return_value = None
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page)
+        result = selector.find_link(text="Download")
+
+        assert result is not None
+
+    def test_find_link_by_href_contains(self):
+        """find_link() finds link by href pattern."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.count.return_value = 1
+        mock_locator.first = mock_locator
+        mock_locator.filter.return_value = mock_locator
+        mock_locator.wait_for.return_value = None
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page)
+        result = selector.find_link(href_contains="/download")
+
+        assert result is not None
+
+    def test_find_link_with_download_attr(self):
+        """find_link() finds download links."""
+        from blackreach.resilience import SmartSelector
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.count.return_value = 1
+        mock_locator.first = mock_locator
+        mock_locator.filter.return_value = mock_locator
+        mock_locator.wait_for.return_value = None
+        mock_page.locator.return_value = mock_locator
+
+        selector = SmartSelector(mock_page)
+        result = selector.find_link(download=True)
+
+        assert result is not None
+
+
+# =============================================================================
+# PopupHandler Tests (with mocks)
+# =============================================================================
+
+class TestPopupHandlerMethods:
+    """Tests for PopupHandler methods with mocked Playwright objects."""
+
+    def test_popup_handler_init(self):
+        """PopupHandler initializes correctly."""
+        from blackreach.resilience import PopupHandler
+
+        mock_page = Mock()
+        handler = PopupHandler(mock_page)
+
+        assert handler.page == mock_page
+
+    def test_close_popups_no_popups(self):
+        """close_popups() handles no popups gracefully."""
+        from blackreach.resilience import PopupHandler
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.is_visible.return_value = False
+        mock_locator.first = mock_locator
+        mock_page.locator.return_value = mock_locator
+
+        handler = PopupHandler(mock_page)
+        count = handler.close_popups()
+
+        assert count == 0
+
+    def test_close_popups_clicks_close_buttons(self):
+        """close_popups() clicks close buttons when visible."""
+        from blackreach.resilience import PopupHandler
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.is_visible.return_value = True
+        mock_locator.click.return_value = None
+        mock_locator.first = mock_locator
+        mock_page.locator.return_value = mock_locator
+
+        handler = PopupHandler(mock_page)
+        count = handler.close_popups()
+
+        assert count > 0
+        mock_locator.click.assert_called()
+
+    def test_dismiss_cookie_banner_success(self):
+        """dismiss_cookie_banner() clicks accept buttons when visible."""
+        from blackreach.resilience import PopupHandler
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.is_visible.return_value = True
+        mock_locator.click.return_value = None
+        mock_locator.first = mock_locator
+        mock_page.locator.return_value = mock_locator
+        mock_page.frames = []
+
+        handler = PopupHandler(mock_page)
+        result = handler.dismiss_cookie_banner()
+
+        assert result is True
+
+    def test_dismiss_cookie_banner_no_banner(self):
+        """dismiss_cookie_banner() returns False when no banner found."""
+        from blackreach.resilience import PopupHandler
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.is_visible.return_value = False
+        mock_locator.first = mock_locator
+        mock_page.locator.return_value = mock_locator
+        mock_page.frames = []
+        mock_page.keyboard = Mock()
+
+        handler = PopupHandler(mock_page)
+        result = handler.dismiss_cookie_banner()
+
+        assert result is False
+
+    def test_handle_all_returns_dict(self):
+        """handle_all() returns dictionary with results."""
+        from blackreach.resilience import PopupHandler
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.is_visible.return_value = False
+        mock_locator.first = mock_locator
+        mock_page.locator.return_value = mock_locator
+        mock_page.frames = []
+        mock_page.keyboard = Mock()
+
+        handler = PopupHandler(mock_page)
+        result = handler.handle_all()
+
+        assert isinstance(result, dict)
+        assert "cookies_dismissed" in result
+        assert "popups_closed" in result
+
+
+# =============================================================================
+# WaitConditions Tests (with mocks)
+# =============================================================================
+
+class TestWaitConditionsMethods:
+    """Tests for WaitConditions methods with mocked Playwright objects."""
+
+    def test_wait_conditions_init(self):
+        """WaitConditions initializes correctly."""
+        from blackreach.resilience import WaitConditions
+
+        mock_page = Mock()
+        waits = WaitConditions(mock_page)
+
+        assert waits.page == mock_page
+
+    def test_wait_for_url_success(self):
+        """wait_for_url() waits for URL pattern."""
+        from blackreach.resilience import WaitConditions
+
+        mock_page = Mock()
+        mock_page.wait_for_url.return_value = None
+
+        waits = WaitConditions(mock_page)
+        result = waits.wait_for_url("**/success**")
+
+        assert result is True
+        mock_page.wait_for_url.assert_called()
+
+    def test_wait_for_url_timeout(self):
+        """wait_for_url() returns False on timeout."""
+        from blackreach.resilience import WaitConditions
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        mock_page = Mock()
+        mock_page.wait_for_url.side_effect = PlaywrightTimeout("Timeout")
+
+        waits = WaitConditions(mock_page)
+        result = waits.wait_for_url("**/never**", timeout=100)
+
+        assert result is False
+
+    def test_wait_for_text_success(self):
+        """wait_for_text() waits for text to appear."""
+        from blackreach.resilience import WaitConditions
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.wait_for.return_value = None
+        mock_page.get_by_text.return_value = mock_locator
+
+        waits = WaitConditions(mock_page)
+        result = waits.wait_for_text("Welcome")
+
+        assert result is True
+
+    def test_wait_for_text_timeout(self):
+        """wait_for_text() returns False on timeout."""
+        from blackreach.resilience import WaitConditions
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.wait_for.side_effect = PlaywrightTimeout("Timeout")
+        mock_page.get_by_text.return_value = mock_locator
+
+        waits = WaitConditions(mock_page)
+        result = waits.wait_for_text("Never", timeout=100)
+
+        assert result is False
+
+    def test_wait_for_element_success(self):
+        """wait_for_element() waits for element."""
+        from blackreach.resilience import WaitConditions
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.wait_for.return_value = None
+        mock_page.locator.return_value = mock_locator
+
+        waits = WaitConditions(mock_page)
+        result = waits.wait_for_element("#submit-btn")
+
+        assert result is True
+
+    def test_wait_for_element_timeout(self):
+        """wait_for_element() returns False on timeout."""
+        from blackreach.resilience import WaitConditions
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        mock_page = Mock()
+        mock_locator = Mock()
+        mock_locator.wait_for.side_effect = PlaywrightTimeout("Timeout")
+        mock_page.locator.return_value = mock_locator
+
+        waits = WaitConditions(mock_page)
+        result = waits.wait_for_element("#nonexistent", timeout=100)
+
+        assert result is False
+
+    def test_wait_for_network_idle_success(self):
+        """wait_for_network_idle() waits for network to settle."""
+        from blackreach.resilience import WaitConditions
+
+        mock_page = Mock()
+        mock_page.wait_for_load_state.return_value = None
+
+        waits = WaitConditions(mock_page)
+        result = waits.wait_for_network_idle()
+
+        assert result is True
+        mock_page.wait_for_load_state.assert_called_with("networkidle", timeout=30000)
+
+    def test_wait_for_network_idle_timeout(self):
+        """wait_for_network_idle() returns False on timeout."""
+        from blackreach.resilience import WaitConditions
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        mock_page = Mock()
+        mock_page.wait_for_load_state.side_effect = PlaywrightTimeout("Timeout")
+
+        waits = WaitConditions(mock_page)
+        result = waits.wait_for_network_idle(timeout=100)
+
+        assert result is False
+
+    def test_wait_for_navigation_success(self):
+        """wait_for_navigation() waits for page navigation."""
+        from blackreach.resilience import WaitConditions
+
+        mock_page = Mock()
+        mock_page.wait_for_load_state.return_value = None
+
+        waits = WaitConditions(mock_page)
+        result = waits.wait_for_navigation()
+
+        assert result is True
+
+    def test_wait_for_navigation_timeout(self):
+        """wait_for_navigation() returns False on timeout."""
+        from blackreach.resilience import WaitConditions
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        mock_page = Mock()
+        mock_page.wait_for_load_state.side_effect = PlaywrightTimeout("Timeout")
+
+        waits = WaitConditions(mock_page)
+        result = waits.wait_for_navigation(timeout=100)
+
+        assert result is False

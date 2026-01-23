@@ -536,3 +536,191 @@ class TestRunCommandOptions:
         run_cmd = cli.commands.get('run')
         param_names = [p.name for p in run_cmd.params]
         assert 'model' in param_names
+
+
+class TestCheckOllamaRunning:
+    """Tests for check_ollama_running function."""
+
+    def test_function_exists(self):
+        """check_ollama_running function exists."""
+        from blackreach.cli import check_ollama_running
+        assert callable(check_ollama_running)
+
+    def test_ollama_running_returns_bool(self):
+        """check_ollama_running returns a boolean."""
+        from blackreach.cli import check_ollama_running
+        result = check_ollama_running()
+        assert isinstance(result, bool)
+
+
+class TestShowResults:
+    """Tests for _show_results function."""
+
+    @patch('blackreach.cli.console')
+    def test_show_results_success(self, mock_console):
+        """_show_results displays success result."""
+        from blackreach.cli import _show_results
+
+        result = {
+            "success": True,
+            "downloads": ["/tmp/file1.pdf"],
+            "pages_visited": 5,
+            "steps_taken": 10,
+            "failures": 0
+        }
+
+        _show_results(result)
+
+        assert mock_console.print.called
+
+    @patch('blackreach.cli.console')
+    def test_show_results_failure(self, mock_console):
+        """_show_results displays failure result."""
+        from blackreach.cli import _show_results
+
+        result = {
+            "success": False,
+            "downloads": [],
+            "pages_visited": 2,
+            "steps_taken": 3,
+            "failures": 2
+        }
+
+        _show_results(result)
+
+        assert mock_console.print.called
+
+
+class TestCLIEntryPoints:
+    """Tests for CLI entry points."""
+
+    def test_main_function_exists(self):
+        """main() function exists."""
+        from blackreach.cli import main
+        assert callable(main)
+
+    def test_interactive_mode_function_exists(self):
+        """interactive_mode() function exists."""
+        from blackreach.cli import interactive_mode
+        assert callable(interactive_mode)
+
+    def test_show_help_function_exists(self):
+        """show_help() function exists."""
+        from blackreach.cli import show_help
+        assert callable(show_help)
+
+    def test_run_agent_with_ui_function_exists(self):
+        """run_agent_with_ui() function exists."""
+        from blackreach.cli import run_agent_with_ui
+        assert callable(run_agent_with_ui)
+
+
+class TestCLIAllCommands:
+    """Tests for all CLI commands structure."""
+
+    def test_all_commands_have_help(self):
+        """All CLI commands have help text."""
+        from blackreach.cli import cli
+
+        for name, cmd in cli.commands.items():
+            assert cmd.help is not None or cmd.short_help is not None, \
+                f"Command {name} missing help"
+
+    def test_run_command_params(self):
+        """run command has expected parameters."""
+        from blackreach.cli import cli
+
+        run_cmd = cli.commands.get('run')
+        param_names = [p.name for p in run_cmd.params]
+
+        expected = ['goal', 'provider', 'model', 'headless', 'steps', 'resume']
+        for param in expected:
+            assert param in param_names, f"Missing param: {param}"
+
+    def test_config_command_exists(self):
+        """config command exists and is callable."""
+        from blackreach.cli import cli
+
+        config_cmd = cli.commands.get('config')
+        assert config_cmd is not None
+
+    def test_models_command_has_provider_option(self):
+        """models command has provider option."""
+        from blackreach.cli import cli
+
+        models_cmd = cli.commands.get('models')
+        param_names = [p.name for p in models_cmd.params]
+        assert 'provider' in param_names
+
+    def test_setup_command_has_reset_option(self):
+        """setup command has reset option."""
+        from blackreach.cli import cli
+
+        setup_cmd = cli.commands.get('setup')
+        param_names = [p.name for p in setup_cmd.params]
+        assert 'reset' in param_names
+
+
+class TestCLIConstants:
+    """Tests for CLI constants and globals."""
+
+    def test_version_format(self):
+        """Version has correct format."""
+        from blackreach.cli import __version__
+
+        parts = __version__.split('.')
+        assert len(parts) == 3
+        for part in parts:
+            assert part.isdigit()
+
+    def test_banner_not_empty(self):
+        """Banner is not empty."""
+        from blackreach.cli import BANNER
+
+        assert BANNER is not None
+        assert len(BANNER) > 0
+
+    def test_config_file_path_defined(self):
+        """CONFIG_FILE path is defined."""
+        from blackreach.cli import CONFIG_FILE
+
+        assert CONFIG_FILE is not None
+
+    def test_active_agent_exists(self):
+        """_active_agent variable exists in cli module."""
+        import blackreach.cli as cli_module
+
+        # Just verify it exists (may not be None if tests ran agent)
+        assert hasattr(cli_module, '_active_agent')
+
+
+class TestRunFirstTimeSetup:
+    """Tests for run_first_time_setup function."""
+
+    def test_function_exists(self):
+        """run_first_time_setup function exists."""
+        from blackreach.cli import run_first_time_setup
+        assert callable(run_first_time_setup)
+
+
+class TestCLIGroupBehavior:
+    """Tests for CLI group behavior."""
+
+    def test_cli_invokes_without_command_shows_help(self):
+        """CLI without command shows help or runs interactive."""
+        from blackreach.cli import cli
+        runner = CliRunner()
+
+        # Without arguments, it should either show help or start interactive
+        # (depending on whether terminal)
+        result = runner.invoke(cli, [])
+        # May start interactive mode or show help
+        assert result.exit_code in [0, 1, 2]
+
+    def test_cli_unknown_command_fails(self):
+        """CLI with unknown command fails."""
+        from blackreach.cli import cli
+        runner = CliRunner()
+
+        result = runner.invoke(cli, ['unknown_cmd'])
+        assert result.exit_code != 0
