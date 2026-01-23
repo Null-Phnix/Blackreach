@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 from dataclasses import asdict
 from blackreach.agent import Agent, AgentConfig, AgentCallbacks
+from blackreach.exceptions import SessionNotFoundError
 
 
 class TestAgentConfig:
@@ -432,3 +433,42 @@ class TestLoadPrompts:
             # Should have fallback message
             assert "react" in prompts
             assert "not found" in prompts["react"].lower()
+
+
+class TestSaveState:
+    """Tests for save_state method."""
+
+    def test_save_state_returns_early_without_session(self):
+        """save_state returns early if no session_id."""
+        agent = Agent.__new__(Agent)
+        agent.session_id = None
+        agent._current_goal = "test"
+        agent.persistent_memory = MagicMock()
+
+        # Should return without calling save_session_state
+        agent.save_state()
+        agent.persistent_memory.save_session_state.assert_not_called()
+
+    def test_save_state_returns_early_without_goal(self):
+        """save_state returns early if no current goal."""
+        agent = Agent.__new__(Agent)
+        agent.session_id = 123
+        agent._current_goal = None
+        agent.persistent_memory = MagicMock()
+
+        # Should return without calling save_session_state
+        agent.save_state()
+        agent.persistent_memory.save_session_state.assert_not_called()
+
+
+class TestResumeSession:
+    """Tests for resume method."""
+
+    def test_resume_raises_when_session_not_found(self):
+        """resume raises SessionNotFoundError when session doesn't exist."""
+        agent = Agent.__new__(Agent)
+        agent.persistent_memory = MagicMock()
+        agent.persistent_memory.load_session_state.return_value = None
+
+        with pytest.raises(SessionNotFoundError):
+            agent.resume(999)
