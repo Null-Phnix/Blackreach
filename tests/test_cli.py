@@ -386,3 +386,153 @@ class TestIsFirstRun:
         result = is_first_run()
 
         assert result is False
+
+
+class TestCheckPlaywrightBrowsers:
+    """Tests for check_playwright_browsers function."""
+
+    @patch('subprocess.run')
+    def test_returns_true_when_installed(self, mock_run):
+        """check_playwright_browsers returns True when browsers installed."""
+        mock_run.return_value = MagicMock(returncode=0)
+
+        from blackreach.cli import check_playwright_browsers
+        result = check_playwright_browsers()
+
+        assert result is True
+
+    @patch('subprocess.run')
+    def test_returns_false_when_not_installed(self, mock_run):
+        """check_playwright_browsers returns False when not installed."""
+        mock_run.return_value = MagicMock(returncode=1)
+
+        from blackreach.cli import check_playwright_browsers
+        result = check_playwright_browsers()
+
+        assert result is False
+
+    @patch('subprocess.run')
+    def test_handles_file_not_found(self, mock_run):
+        """check_playwright_browsers handles FileNotFoundError."""
+        mock_run.side_effect = FileNotFoundError("Command not found")
+
+        from blackreach.cli import check_playwright_browsers
+        result = check_playwright_browsers()
+
+        assert result is False
+
+
+class TestInstallPlaywrightBrowsers:
+    """Tests for install_playwright_browsers function."""
+
+    @patch('subprocess.run')
+    @patch('blackreach.cli.console')
+    def test_install_success(self, mock_console, mock_run):
+        """install_playwright_browsers returns True on success."""
+        mock_run.return_value = MagicMock(returncode=0)
+
+        from blackreach.cli import install_playwright_browsers
+        result = install_playwright_browsers()
+
+        assert result is True
+
+    @patch('subprocess.run')
+    @patch('blackreach.cli.console')
+    def test_install_failure(self, mock_console, mock_run):
+        """install_playwright_browsers returns False on CalledProcessError."""
+        import subprocess
+        mock_run.side_effect = subprocess.CalledProcessError(1, "cmd", stderr="error")
+
+        from blackreach.cli import install_playwright_browsers
+        result = install_playwright_browsers()
+
+        assert result is False
+
+
+class TestCleanupKeyboard:
+    """Tests for _cleanup_keyboard function."""
+
+    def test_cleanup_with_no_agent(self):
+        """_cleanup_keyboard handles no active agent."""
+        import blackreach.cli as cli_module
+        original_agent = cli_module._active_agent
+        cli_module._active_agent = None
+
+        from blackreach.cli import _cleanup_keyboard
+        # Should not raise
+        _cleanup_keyboard()
+
+        cli_module._active_agent = original_agent
+
+    def test_cleanup_with_agent_no_hand(self):
+        """_cleanup_keyboard handles agent without hand."""
+        import blackreach.cli as cli_module
+        original_agent = cli_module._active_agent
+
+        mock_agent = MagicMock()
+        mock_agent.hand = None
+        cli_module._active_agent = mock_agent
+
+        from blackreach.cli import _cleanup_keyboard
+        _cleanup_keyboard()
+
+        cli_module._active_agent = original_agent
+
+    def test_cleanup_with_agent_and_hand(self):
+        """_cleanup_keyboard calls release_all_keys when available."""
+        import blackreach.cli as cli_module
+        original_agent = cli_module._active_agent
+
+        mock_hand = MagicMock()
+        mock_agent = MagicMock()
+        mock_agent.hand = mock_hand
+        cli_module._active_agent = mock_agent
+
+        from blackreach.cli import _cleanup_keyboard
+        _cleanup_keyboard()
+
+        mock_hand._release_all_keys.assert_called_once()
+        cli_module._active_agent = original_agent
+
+
+class TestCLIVersionInfo:
+    """Tests for CLI version information."""
+
+    def test_version_is_semantic(self):
+        """Version follows semantic versioning."""
+        from blackreach.cli import __version__
+        parts = __version__.split(".")
+        assert len(parts) == 3
+        # All parts should be numeric
+        for part in parts:
+            assert part.isdigit()
+
+    def test_banner_contains_version(self):
+        """Banner includes version number."""
+        from blackreach.cli import BANNER, __version__
+        assert __version__ in BANNER
+
+
+class TestRunCommandOptions:
+    """Extended tests for run command options."""
+
+    def test_run_has_provider_option(self):
+        """Run command has provider option."""
+        from blackreach.cli import cli
+        run_cmd = cli.commands.get('run')
+        param_names = [p.name for p in run_cmd.params]
+        assert 'provider' in param_names
+
+    def test_run_has_goal_argument(self):
+        """Run command has goal argument."""
+        from blackreach.cli import cli
+        run_cmd = cli.commands.get('run')
+        param_names = [p.name for p in run_cmd.params]
+        assert 'goal' in param_names
+
+    def test_run_has_model_option(self):
+        """Run command has model option."""
+        from blackreach.cli import cli
+        run_cmd = cli.commands.get('run')
+        param_names = [p.name for p in run_cmd.params]
+        assert 'model' in param_names
