@@ -364,3 +364,91 @@ class TestSlashCompleterShortcuts:
         completer = SlashCompleter()
         cmd_names = [cmd for cmd, desc in completer.commands]
         assert "/config" in cmd_names or "/cfg" in cmd_names
+
+    def test_has_history_command(self):
+        """SlashCompleter has /history command."""
+        completer = SlashCompleter()
+        cmd_names = [cmd for cmd, desc in completer.commands]
+        assert "/history" in cmd_names
+
+    def test_has_clear_command(self):
+        """SlashCompleter has /clear command."""
+        completer = SlashCompleter()
+        cmd_names = [cmd for cmd, desc in completer.commands]
+        assert "/clear" in cmd_names or "/cls" in cmd_names
+
+    def test_has_models_command(self):
+        """SlashCompleter has /models command."""
+        completer = SlashCompleter()
+        cmd_names = [cmd for cmd, desc in completer.commands]
+        assert "/models" in cmd_names
+
+
+class TestSlashCompleterCompletions:
+    """Tests for SlashCompleter completion behavior."""
+
+    def test_completions_for_partial_slash(self):
+        """get_completions handles partial /."""
+        completer = SlashCompleter()
+        document = MagicMock()
+        document.text_before_cursor = "/"
+
+        completions = list(completer.get_completions(document, None))
+        assert len(completions) > 0
+
+    def test_completions_for_model(self):
+        """get_completions handles /mo prefix."""
+        completer = SlashCompleter()
+        document = MagicMock()
+        document.text_before_cursor = "/mo"
+
+        completions = list(completer.get_completions(document, None))
+        cmd_texts = [c.text for c in completions]
+        assert "/model" in cmd_texts or "/models" in cmd_texts
+
+    def test_completions_for_status(self):
+        """get_completions handles /st prefix."""
+        completer = SlashCompleter()
+        document = MagicMock()
+        document.text_before_cursor = "/st"
+
+        completions = list(completer.get_completions(document, None))
+        cmd_texts = [c.text for c in completions]
+        assert "/status" in cmd_texts
+
+
+class TestAgentProgressDisplay:
+    """Tests for AgentProgress display methods."""
+
+    @patch('blackreach.ui.console')
+    def test_start_prints_goal(self, mock_console):
+        """start() prints the goal in a panel."""
+        progress = AgentProgress()
+        progress.start("Download all images", 50)
+
+        # Console.print was called
+        assert mock_console.print.called
+
+    @patch('blackreach.ui.console')
+    def test_update_step_prints_progress_bar(self, mock_console):
+        """update_step() prints progress bar for new steps."""
+        progress = AgentProgress()
+        progress.max_steps = 10
+
+        progress.update_step(5, "observe")
+
+        # Console.print was called for progress bar
+        assert mock_console.print.called
+
+    @patch('blackreach.ui.console')
+    def test_update_step_different_phases(self, mock_console):
+        """update_step() handles different phases."""
+        progress = AgentProgress()
+        progress.max_steps = 10
+
+        for phase in ["observe", "think", "act", "error"]:
+            progress._step_shown.clear()  # Reset to allow printing
+            progress.update_step(1, phase)
+
+        # Multiple prints for different phases
+        assert mock_console.print.call_count > 0
