@@ -319,3 +319,145 @@ class TestConfigManagerFileOps:
             data = yaml.safe_load(f)
         assert data["default_provider"] == "google"
         assert data["agent"]["max_steps"] == 75
+
+    def test_save_creates_default_config_when_none(self, tmp_path, monkeypatch):
+        """save() creates default config when _config is None."""
+        config_file = tmp_path / "config.yml"
+        monkeypatch.setattr("blackreach.config.CONFIG_FILE", config_file)
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = None  # No config loaded
+
+        manager.save()
+
+        assert config_file.exists()
+
+    def test_load_env_keys_returns_when_no_config(self):
+        """_load_env_keys returns early when _config is None."""
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = None
+
+        # Should not raise
+        manager._load_env_keys()
+
+    def test_load_handles_corrupt_config_file(self, tmp_path, monkeypatch):
+        """load() handles corrupt config file gracefully."""
+        config_file = tmp_path / "config.yml"
+        # Write invalid YAML
+        with open(config_file, 'w') as f:
+            f.write("{{{{invalid yaml content::::")
+
+        monkeypatch.setattr("blackreach.config.CONFIG_FILE", config_file)
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = None
+
+        config = manager.load()
+
+        # Should return default config
+        assert config is not None
+        assert isinstance(config, Config)
+
+
+class TestConfigManagerSetters:
+    """Tests for ConfigManager setter methods."""
+
+    def test_set_api_key_valid_provider(self, tmp_path, monkeypatch):
+        """set_api_key sets key for valid provider."""
+        from blackreach.config import ConfigManager
+
+        config_file = tmp_path / "config.yml"
+        monkeypatch.setattr("blackreach.config.CONFIG_FILE", config_file)
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = None
+
+        manager.set_api_key("openai", "test-api-key")
+
+        assert manager._config.openai.api_key == "test-api-key"
+
+    def test_set_api_key_invalid_provider(self, tmp_path, monkeypatch):
+        """set_api_key raises for invalid provider."""
+        from blackreach.config import ConfigManager
+        from blackreach.exceptions import InvalidConfigError
+
+        config_file = tmp_path / "config.yml"
+        monkeypatch.setattr("blackreach.config.CONFIG_FILE", config_file)
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = None
+
+        with pytest.raises(InvalidConfigError):
+            manager.set_api_key("invalid_provider", "key")
+
+    def test_set_default_provider_valid(self, tmp_path, monkeypatch):
+        """set_default_provider sets valid provider."""
+        from blackreach.config import ConfigManager
+
+        config_file = tmp_path / "config.yml"
+        monkeypatch.setattr("blackreach.config.CONFIG_FILE", config_file)
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = None
+
+        manager.set_default_provider("openai")
+
+        assert manager._config.default_provider == "openai"
+
+    def test_set_default_provider_invalid(self, tmp_path, monkeypatch):
+        """set_default_provider raises for invalid provider."""
+        from blackreach.config import ConfigManager
+        from blackreach.exceptions import InvalidConfigError
+
+        config_file = tmp_path / "config.yml"
+        monkeypatch.setattr("blackreach.config.CONFIG_FILE", config_file)
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = None
+
+        with pytest.raises(InvalidConfigError):
+            manager.set_default_provider("invalid_provider")
+
+    def test_set_default_model_valid(self, tmp_path, monkeypatch):
+        """set_default_model sets model for valid provider."""
+        from blackreach.config import ConfigManager
+
+        config_file = tmp_path / "config.yml"
+        monkeypatch.setattr("blackreach.config.CONFIG_FILE", config_file)
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = None
+
+        manager.set_default_model("openai", "gpt-4o")
+
+        assert manager._config.openai.default_model == "gpt-4o"
+
+    def test_set_default_model_invalid_provider(self, tmp_path, monkeypatch):
+        """set_default_model raises for invalid provider."""
+        from blackreach.config import ConfigManager
+        from blackreach.exceptions import InvalidConfigError
+
+        config_file = tmp_path / "config.yml"
+        monkeypatch.setattr("blackreach.config.CONFIG_FILE", config_file)
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = None
+
+        with pytest.raises(InvalidConfigError):
+            manager.set_default_model("invalid_provider", "model")
+
+    def test_get_current_model(self, tmp_path, monkeypatch):
+        """get_current_model returns model for current provider."""
+        from blackreach.config import ConfigManager
+
+        config_file = tmp_path / "config.yml"
+        monkeypatch.setattr("blackreach.config.CONFIG_FILE", config_file)
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = Config()
+        manager._config.default_provider = "anthropic"
+        manager._config.anthropic.default_model = "claude-3"
+
+        model = manager.get_current_model()
+
+        assert model == "claude-3"
