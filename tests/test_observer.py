@@ -680,3 +680,203 @@ class TestEdgeCases:
         result = eyes.see(html)
 
         assert "Deep content" in result["text"]
+
+
+# =============================================================================
+# Debug HTML Tests
+# =============================================================================
+
+class TestDebugHtml:
+    """Tests for debug_html method."""
+
+    def test_returns_dict(self):
+        """debug_html returns a dictionary."""
+        html = "<html><body><p>Test</p></body></html>"
+        eyes = Eyes()
+        result = eyes.debug_html(html)
+
+        assert isinstance(result, dict)
+
+    def test_counts_raw_elements(self):
+        """debug_html counts raw elements."""
+        html = """
+        <html>
+        <body>
+            <a href="/1">Link 1</a>
+            <a href="/2">Link 2</a>
+            <button>Click</button>
+            <input type="text">
+        </body>
+        </html>
+        """
+        eyes = Eyes()
+        result = eyes.debug_html(html)
+
+        assert result["raw_links"] == 2
+        assert result["raw_buttons"] >= 1
+        assert result["raw_inputs"] >= 1
+
+    def test_detects_react_spa(self):
+        """debug_html detects React SPA."""
+        html = '<html><body><div id="root" data-reactroot></div></body></html>'
+        eyes = Eyes()
+        result = eyes.debug_html(html)
+
+        assert result["is_spa"] is True
+        assert result["spa_framework"] == "React"
+
+    def test_detects_vue_spa(self):
+        """debug_html detects Vue SPA."""
+        html = '<html><body><div data-v-12345 id="app"></div></body></html>'
+        eyes = Eyes()
+        result = eyes.debug_html(html)
+
+        assert result["is_spa"] is True
+        assert result["spa_framework"] == "Vue"
+
+    def test_detects_angular_spa(self):
+        """debug_html detects Angular SPA."""
+        html = '<html><body><app-root ng-version="15"></app-root></body></html>'
+        eyes = Eyes()
+        result = eyes.debug_html(html)
+
+        assert result["is_spa"] is True
+        assert result["spa_framework"] == "Angular"
+
+    def test_detects_empty_root(self):
+        """debug_html detects empty root element."""
+        html = '<html><body><div id="root"></div></body></html>'
+        eyes = Eyes()
+        result = eyes.debug_html(html)
+
+        assert result["empty_root"] is True
+
+    def test_detects_challenge_page(self):
+        """debug_html detects DDoS challenge page."""
+        html = '<html><body>Checking your browser before accessing...</body></html>'
+        eyes = Eyes()
+        result = eyes.debug_html(html)
+
+        assert result["is_challenge_page"] is True
+
+    def test_meaningful_content_detection(self):
+        """debug_html detects meaningful content."""
+        # Need > 200 chars of text and > 3 links for meaningful content
+        long_text = "This is some meaningful text content. " * 10  # ~400 chars
+        html = f"""
+        <html><body>
+            <p>{long_text}</p>
+            <a href="/1">Link 1</a>
+            <a href="/2">Link 2</a>
+            <a href="/3">Link 3</a>
+            <a href="/4">Link 4</a>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.debug_html(html)
+
+        assert result["has_meaningful_content"] is True
+
+
+# =============================================================================
+# Pagination Tests
+# =============================================================================
+
+class TestPagination:
+    """Tests for pagination extraction.
+
+    Note: Pagination extraction requires <main> content to preserve the
+    .pagination element from being decomposed as noise during text extraction.
+    """
+
+    def test_no_pagination_by_default(self):
+        """Pages without pagination return has_pagination=False."""
+        html = "<html><body><main><p>Simple page</p></main></body></html>"
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        assert result["pagination"]["has_pagination"] is False
+
+    def test_detects_pagination_class(self):
+        """Detects pagination by class."""
+        html = """
+        <html><body>
+            <main><p>Main content</p></main>
+            <div class="pagination">
+                <a href="?page=1">1</a>
+                <a href="?page=2">2</a>
+                <a href="?page=3" class="next">Next</a>
+            </div>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        assert result["pagination"]["has_pagination"] is True
+
+    def test_extracts_next_page_link(self):
+        """Extracts next page link."""
+        html = """
+        <html><body>
+            <main><p>Main content</p></main>
+            <div class="pagination">
+                <a href="?page=1">1</a>
+                <a href="?page=2" class="next">Next »</a>
+            </div>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        assert result["pagination"]["next_page"] == "?page=2"
+
+    def test_extracts_prev_page_link(self):
+        """Extracts previous page link."""
+        html = """
+        <html><body>
+            <main><p>Main content</p></main>
+            <div class="pagination">
+                <a href="?page=1" class="prev">« Prev</a>
+                <a href="?page=2">2</a>
+            </div>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        assert result["pagination"]["prev_page"] == "?page=1"
+
+    def test_extracts_numbered_pages(self):
+        """Extracts numbered page links."""
+        html = """
+        <html><body>
+            <main><p>Main content</p></main>
+            <div class="pagination">
+                <a href="?page=1">1</a>
+                <a href="?page=2">2</a>
+                <a href="?page=3">3</a>
+            </div>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        assert len(result["pagination"]["page_links"]) == 3
+        assert result["pagination"]["total_pages"] == 3
+
+    def test_detects_current_page(self):
+        """Detects current active page."""
+        html = """
+        <html><body>
+            <main><p>Main content</p></main>
+            <div class="pagination">
+                <a href="?page=1">1</a>
+                <a href="?page=2" class="active">2</a>
+                <a href="?page=3">3</a>
+            </div>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        assert result["pagination"]["current_page"] == 2
