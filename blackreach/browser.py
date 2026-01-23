@@ -145,8 +145,26 @@ class Hand:
             combined = "\n".join(scripts)
             self._page.add_init_script(combined)
     
+    def _release_all_keys(self) -> None:
+        """Release all modifier keys to prevent stuck keys on the host system."""
+        if not self._page:
+            return
+        try:
+            # Release all common modifier keys that might be stuck
+            for key in ["Control", "Alt", "Shift", "Meta"]:
+                try:
+                    self._page.keyboard.up(key)
+                except Exception:
+                    pass
+        except Exception:
+            pass  # Page might already be closed
+
     def sleep(self) -> None:
-        """Close the browser."""
+        """Close the browser safely, releasing any stuck keys."""
+        # IMPORTANT: Release all modifier keys before closing
+        # This prevents the host keyboard from getting stuck
+        self._release_all_keys()
+
         if self._context:
             self._context.close()
         if self._browser:
@@ -618,10 +636,15 @@ class Hand:
                 self._human_delay(0.05, 0.15)
 
                 # Clear existing content if requested
+                # Use triple-click to select all (safer than Ctrl+A which can leave keys stuck)
                 if clear:
-                    self.page.keyboard.press("Control+a")
-                    self.page.keyboard.press("Backspace")
-                    self._human_delay(0.05, 0.1)
+                    try:
+                        locator.click(click_count=3)  # Triple-click to select all
+                        self._human_delay(0.05, 0.1)
+                    except Exception:
+                        # Fallback: use fill to clear first, then type
+                        locator.fill("")
+                        self._human_delay(0.05, 0.1)
 
                 # Type character by character
                 for char in text:
@@ -639,13 +662,20 @@ class Hand:
                 locator.fill(text)
             except Exception:
                 raise e
+        finally:
+            # Always release modifier keys after typing operations
+            self._release_all_keys()
 
         return {"action": "type", "selector": used_selector, "text": text}
 
     def press(self, key: str) -> dict:
         """Press a key (e.g., 'Enter', 'Escape')."""
         self._human_delay(0.1, 0.2)
-        self.page.keyboard.press(key)
+        try:
+            self.page.keyboard.press(key)
+        finally:
+            # Release any modifier keys that might have gotten stuck
+            self._release_all_keys()
         self._human_delay(0.2, 0.5)
         return {"action": "press", "key": key}
 

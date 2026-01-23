@@ -20,8 +20,36 @@ from pathlib import Path
 import subprocess
 import sys
 import shutil
+import signal
+import atexit
 
 from blackreach.config import config_manager, AVAILABLE_MODELS, CONFIG_FILE
+
+# Global reference to active agent for cleanup
+_active_agent = None
+
+def _cleanup_keyboard():
+    """Release all keyboard keys on exit to prevent stuck keys."""
+    global _active_agent
+    if _active_agent and hasattr(_active_agent, 'hand') and _active_agent.hand:
+        try:
+            _active_agent.hand._release_all_keys()
+        except Exception:
+            pass
+
+def _signal_handler(signum, frame):
+    """Handle termination signals by cleaning up keyboard state."""
+    _cleanup_keyboard()
+    sys.exit(0)
+
+# Register cleanup handlers
+atexit.register(_cleanup_keyboard)
+signal.signal(signal.SIGTERM, _signal_handler)
+# SIGINT is handled by KeyboardInterrupt, but register anyway for safety
+try:
+    signal.signal(signal.SIGINT, _signal_handler)
+except ValueError:
+    pass  # Can't set SIGINT handler in some contexts
 
 console = Console()
 
@@ -244,7 +272,9 @@ def run(goal: str, provider: str, model: str, headless: bool, steps: int, resume
                 download_dir=Path(config.download_dir)
             )
 
+            global _active_agent
             agent = Agent(llm_config=llm_config, agent_config=agent_config)
+            _active_agent = agent
             result = agent.resume(resume)
 
             # Show results
@@ -289,7 +319,9 @@ def run(goal: str, provider: str, model: str, headless: bool, steps: int, resume
             download_dir=Path(config.download_dir)
         )
 
+        global _active_agent
         agent = Agent(llm_config=llm_config, agent_config=agent_config)
+        _active_agent = agent
         result = agent.run(goal)
 
         # Show results
@@ -752,7 +784,9 @@ def interactive_mode():
                             download_dir=Path(cfg.download_dir)
                         )
 
+                        global _active_agent
                         agent = Agent(llm_config=llm_config, agent_config=agent_config)
+                        _active_agent = agent
 
                     result = agent.resume(session_id, quiet=False)
 
@@ -921,11 +955,13 @@ def run_agent_with_ui(goal: str, provider: str, model: str, cfg):
                 download_dir=Path(cfg.download_dir)
             )
 
+            global _active_agent
             agent = Agent(
                 llm_config=llm_config,
                 agent_config=agent_config,
                 callbacks=callbacks
             )
+            _active_agent = agent
 
         # Start progress display
         progress.start(goal, cfg.max_steps)

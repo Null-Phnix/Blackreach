@@ -453,6 +453,9 @@ class Agent:
 
         except KeyboardInterrupt:
             log(f"\n⏸ INTERRUPTED at step {self._current_step}")
+            # IMPORTANT: Immediately release any stuck keyboard keys
+            if self.hand:
+                self.hand._release_all_keys()
             # Save state for potential resume
             self.persistent_memory.save_session_state(
                 session_id=self.session_id,
