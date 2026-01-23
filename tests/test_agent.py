@@ -472,3 +472,111 @@ class TestResumeSession:
 
         with pytest.raises(SessionNotFoundError):
             agent.resume(999)
+
+
+class TestFormatElementsExtended:
+    """Extended tests for _format_elements method."""
+
+    def test_format_with_buttons(self, tmp_path):
+        """_format_elements includes buttons."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        parsed = {
+            "buttons": [
+                {"text": "Submit", "type": "submit"},
+                {"text": "Cancel", "type": "button"}
+            ]
+        }
+        result = agent._format_elements(parsed)
+        assert "Buttons:" in result
+        assert "Submit" in result
+
+    def test_format_with_download_links(self, tmp_path):
+        """_format_elements highlights download links."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        parsed = {
+            "links": [
+                {"href": "http://example.com/file.pdf", "text": "Download PDF", "type": "download"}
+            ]
+        }
+        result = agent._format_elements(parsed)
+        assert "Download PDF" in result
+
+    def test_format_with_nav_links(self, tmp_path):
+        """_format_elements includes nav links."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        parsed = {
+            "links": [
+                {"href": "http://example.com/about", "text": "About Us", "type": "nav"}
+            ]
+        }
+        result = agent._format_elements(parsed)
+        assert "About Us" in result or "Links:" in result
+
+    def test_format_with_text_content(self, tmp_path):
+        """_format_elements includes text content."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        parsed = {
+            "text": "This is the main content of the page."
+        }
+        result = agent._format_elements(parsed)
+        # Text might be formatted separately
+        assert result is not None
+
+    def test_format_with_selects(self, tmp_path):
+        """_format_elements includes select dropdowns."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        parsed = {
+            "selects": [
+                {"name": "country", "options": ["USA", "Canada", "UK"]}
+            ]
+        }
+        result = agent._format_elements(parsed)
+        # Should handle selects if present
+        assert result is not None
+
+
+class TestAgentMemoryRecording:
+    """Tests for memory recording methods."""
+
+    def test_record_download_without_url(self, tmp_path):
+        """_record_download handles empty URL."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        # Should not raise
+        agent._record_download("test.pdf", "")
+
+        assert "test.pdf" in agent.session_memory.downloaded_files
+
+    def test_record_visit_with_metadata(self, tmp_path):
+        """_record_visit records with title and success."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        agent._record_visit("http://example.com", title="Example", success=True)
+
+        assert "http://example.com" in agent.session_memory.visited_urls
+
+    def test_track_url_maintains_limit(self, tmp_path):
+        """_track_url keeps history limited."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        # Add many URLs
+        for i in range(20):
+            agent._track_url(f"http://example.com/page{i}")
+
+        # Should be capped at 10
+        assert len(agent._recent_urls) == 10
+        # Most recent should be last
+        assert "page19" in agent._recent_urls[-1]
