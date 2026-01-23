@@ -387,9 +387,8 @@ class SiteDetector:
             confidence += 0.4
 
         # Check for minimal page content (interstitial pages are usually minimal)
-        # Count actual content elements
-        import re as regex
-        text_content = regex.sub(r'<[^>]+>', '', html)
+        # Count actual content elements (use module-level re import)
+        text_content = re.sub(r'<[^>]+>', '', html)
         word_count = len(text_content.split())
         if word_count < 50:
             indicators.append(f"Minimal content ({word_count} words)")

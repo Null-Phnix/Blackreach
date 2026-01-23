@@ -24,6 +24,7 @@ import signal
 import atexit
 
 from blackreach.config import config_manager, AVAILABLE_MODELS, CONFIG_FILE
+from blackreach.exceptions import SessionNotFoundError
 
 # Global reference to active agent for cleanup
 _active_agent = None
@@ -280,7 +281,7 @@ def run(goal: str, provider: str, model: str, headless: bool, steps: int, resume
             # Show results
             _show_results(result)
 
-        except ValueError as e:
+        except SessionNotFoundError as e:
             console.print(f"[red]Error: {e}[/red]")
             console.print("Use [cyan]blackreach sessions[/cyan] to see resumable sessions")
             sys.exit(1)
@@ -797,7 +798,7 @@ def interactive_mode():
                     else:
                         ui.print_warning("Session ended without completing goal")
 
-                except ValueError as e:
+                except SessionNotFoundError as e:
                     ui.print_error(str(e))
                 except Exception as e:
                     ui.print_error(f"Resume failed: {e}")

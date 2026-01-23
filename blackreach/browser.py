@@ -60,6 +60,7 @@ class Hand:
         self._selector: Optional[SmartSelector] = None
         self._popups: Optional[PopupHandler] = None
         self._waits: Optional[WaitConditions] = None
+        self._detector = SiteDetector()  # Reuse for performance
 
         # State tracking
         self._mouse_pos = (0, 0)
@@ -287,11 +288,9 @@ class Hand:
 
         Returns True if a challenge was detected and resolved, False otherwise.
         """
-        detector = SiteDetector()
-
         for attempt in range(max_wait):
             html = self.page.content()
-            result = detector.detect_challenge(html)
+            result = self._detector.detect_challenge(html)
 
             if not result.detected:
                 return attempt > 0  # Return True if we waited at all

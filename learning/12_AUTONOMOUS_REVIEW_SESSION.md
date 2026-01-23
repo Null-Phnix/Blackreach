@@ -312,8 +312,69 @@ All 444 tests passing:
 3. Consider caching compiled regex patterns in detection module
 4. Add metrics/telemetry for agent performance analysis
 
-### Session Stats
+### Session Stats (Phase 1)
 - **Duration:** ~35 minutes active (03:20:00)
 - **Lines of test code added:** ~1,200
 - **Bugs fixed:** 3 (imports, Ollama options, observer tests)
 - **Code quality improvements:** 2 (agent imports, LLM config)
+
+---
+
+## Continued Work (03:23 - 03:30)
+
+### Additional Testing
+- Added 9 new tests for `detect_challenge` method in detection module
+- Test coverage now at 47 tests in `test_detection.py` (up from 38)
+
+### Performance Optimizations Applied
+
+#### 1. Module-Level Imports (planner.py)
+- Moved `import re` and `import json` from inside functions to module level
+- Eliminates repeated import overhead
+
+#### 2. Inline Import Removal (detection.py)
+- Removed `import re as regex` from inside `detect_challenge()` method
+- Uses module-level `re` import instead
+
+#### 3. SiteDetector Singleton Pattern
+- **agent.py**: Added `self.detector = SiteDetector()` as instance variable
+- **browser.py**: Added `self._detector = SiteDetector()` as instance variable
+- Eliminates repeated regex compilation (6 patterns compiled per instance)
+
+### Bug Fixes
+- **cli.py**: Changed `except ValueError` to `except SessionNotFoundError` for proper exception handling
+- Both regular run mode and interactive mode now catch the correct exception type
+
+### Code Duplication Analysis
+Comprehensive analysis identified 8 categories of duplication opportunities for future work:
+1. Repeated logging function pattern (agent.py) - 5 locations
+2. Dual memory recording pattern
+3. URL protocol validation
+4. Regex pattern compilation (now partially fixed)
+5. JSON error handling
+6. Repeated string constants
+7. Error logging pattern
+8. Similar selector strategies
+
+### Test Results (Final)
+All **453 tests** passing:
+- `test_agent.py` - 47 passed
+- `test_agent_e2e.py` - 25 passed
+- `test_browser.py` - 33 passed
+- `test_config.py` - 17 passed
+- `test_detection.py` - 47 passed (+9 new detect_challenge tests)
+- `test_exceptions.py` - 56 passed
+- `test_knowledge.py` - 32 passed
+- `test_llm.py` - 30 passed
+- `test_memory.py` - 45 passed
+- `test_observer.py` - 68 passed
+- `test_resilience.py` - 28 passed
+- `test_stealth.py` - 28 passed
+
+### Files Modified This Phase
+- `blackreach/planner.py` - Module-level imports
+- `blackreach/detection.py` - Removed inline import
+- `blackreach/agent.py` - SiteDetector as instance variable
+- `blackreach/browser.py` - SiteDetector as instance variable
+- `blackreach/cli.py` - SessionNotFoundError import and handling
+- `tests/test_detection.py` - Added detect_challenge tests

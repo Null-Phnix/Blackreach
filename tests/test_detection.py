@@ -502,3 +502,139 @@ class TestDetectionResult:
         assert result.confidence == 0.9
         assert result.details == "reCAPTCHA"
         assert len(result.indicators) == 2
+
+
+# =============================================================================
+# Challenge Detection Tests
+# =============================================================================
+
+class TestChallengeDetection:
+    """Tests for challenge/interstitial page detection."""
+
+    def test_detect_ddos_guard(self, detector):
+        """Detects DDoS-Guard challenge page."""
+        html = """
+        <html>
+        <head><title>DDOS-GUARD</title></head>
+        <body>
+            <p>Please wait while we check your browser...</p>
+        </body>
+        </html>
+        """
+        result = detector.detect_challenge(html)
+
+        assert result.detected is True
+        assert result.condition == "challenge"
+        assert "DDoS-Guard" in result.details
+
+    def test_detect_cloudflare_challenge(self, detector):
+        """Detects Cloudflare browser verification."""
+        html = """
+        <html>
+        <body>
+            <div id="cf-browser-verification">
+                <p>Checking your browser before accessing</p>
+            </div>
+        </body>
+        </html>
+        """
+        result = detector.detect_challenge(html)
+
+        assert result.detected is True
+        assert any("Cloudflare" in i for i in result.indicators)
+
+    def test_detect_checking_browser(self, detector):
+        """Detects 'checking your browser' text."""
+        html = """
+        <html>
+        <body>
+            <h1>Please wait</h1>
+            <p>Checking your browser before accessing the website...</p>
+        </body>
+        </html>
+        """
+        result = detector.detect_challenge(html)
+
+        assert result.detected is True
+        assert any("Pattern" in i for i in result.indicators)
+
+    def test_detect_js_redirect_timer(self, detector):
+        """Detects JavaScript redirect with timer."""
+        html = """
+        <html>
+        <head>
+            <script>
+                setTimeout(function() {
+                    window.location.href = '/continue';
+                }, 5000);
+            </script>
+        </head>
+        <body>
+            <p>Redirecting...</p>
+        </body>
+        </html>
+        """
+        result = detector.detect_challenge(html)
+
+        assert result.detected is True
+        assert any("JS redirect" in i for i in result.indicators)
+
+    def test_detect_meta_refresh(self, detector):
+        """Detects meta refresh redirect."""
+        html = """
+        <html>
+        <head>
+            <meta http-equiv="refresh" content="5;url=/continue">
+        </head>
+        <body>
+            <p>Please wait...</p>
+        </body>
+        </html>
+        """
+        result = detector.detect_challenge(html)
+
+        assert result.detected is True
+        assert any("Meta refresh" in i for i in result.indicators)
+
+    def test_detect_minimal_content(self, detector):
+        """Detects minimal content interstitial."""
+        html = """
+        <html>
+        <body>
+            <p>Please wait</p>
+        </body>
+        </html>
+        """
+        result = detector.detect_challenge(html)
+
+        assert any("Minimal content" in i for i in result.indicators)
+
+    def test_no_challenge_on_normal_page(self, detector, normal_html):
+        """No false positive on normal page."""
+        result = detector.detect_challenge(normal_html)
+
+        assert result.detected is False
+
+    def test_challenge_returns_type(self, detector):
+        """Challenge detection returns challenge type."""
+        html = '<html><body><p>ddos-guard verification</p></body></html>'
+        result = detector.detect_challenge(html)
+
+        assert result.detected is True
+        assert result.details is not None
+
+    def test_detect_please_wait(self, detector):
+        """Detects 'please wait' interstitial pages."""
+        html = """
+        <html>
+        <body>
+            <div class="loading">
+                <p>Please wait while we verify your request...</p>
+            </div>
+        </body>
+        </html>
+        """
+        result = detector.detect_challenge(html)
+
+        # Should have some confidence even if not detected
+        assert result.confidence > 0

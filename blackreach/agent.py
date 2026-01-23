@@ -80,9 +80,10 @@ class Agent:
         self.persistent_memory = PersistentMemory(self.config.memory_db)  # SQLite - survives forever
         self.session_id: Optional[int] = None  # Track current session in DB
 
-        # Browser and observer
+        # Browser, observer, and detector (reuse instances for performance)
         self.hand: Optional[Hand] = None
         self.eyes = Eyes()
+        self.detector = SiteDetector()
 
         # Load prompts
         self.prompts = self._load_prompts()
@@ -535,15 +536,14 @@ class Agent:
         url = self.hand.get_url()
         title = self.hand.get_title()
 
-        # Check for challenge/interstitial pages
-        detector = SiteDetector()
-        challenge = detector.detect_challenge(html)
+        # Check for challenge/interstitial pages (reuse instance for performance)
+        challenge = self.detector.detect_challenge(html)
         if challenge.detected:
             log(f"  [Challenge page detected: {challenge.details} - waiting...]")
             for attempt in range(15):  # Wait up to 15 seconds
                 time.sleep(1)
                 html = self.hand.get_html()
-                if not detector.detect_challenge(html).detected:
+                if not self.detector.detect_challenge(html).detected:
                     log(f"  [Challenge resolved after {attempt+1}s]")
                     break
             url = self.hand.get_url()

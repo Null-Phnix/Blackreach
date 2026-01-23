@@ -16,6 +16,8 @@ The planner uses a smarter model (or more tokens) to reason about the task,
 then the executor uses a faster model for each step.
 """
 
+import json
+import re
 from typing import List, Optional
 from dataclasses import dataclass
 
@@ -122,7 +124,6 @@ JSON:"""
                 return False
 
         # If it has number > 1, it's complex
-        import re
         numbers = re.findall(r'\b([2-9]|[1-9]\d+)\b', goal)
         if numbers:
             return False
@@ -151,9 +152,7 @@ JSON:"""
             prompt
         )
 
-        # Parse the response
-        import json
-        import re
+        # Parse the response (json and re imported at module level)
 
         # Find JSON in response
         json_match = re.search(r'\{[\s\S]*\}', response)
