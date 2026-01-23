@@ -205,8 +205,8 @@ class Hand:
     # === Navigation ===
 
     @retry_with_backoff()
-    def goto(self, url: str, handle_popups: bool = True) -> dict:
-        """Navigate to a URL with retry logic."""
+    def goto(self, url: str, handle_popups: bool = True, wait_for_content: bool = True) -> dict:
+        """Navigate to a URL with retry logic and smart content waiting."""
         self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
         # Wait for JavaScript to render dynamic elements
@@ -214,6 +214,10 @@ class Hand:
             self.page.wait_for_load_state("networkidle", timeout=5000)
         except Exception:
             pass  # Don't fail if network doesn't go idle
+
+        # Wait for dynamic content if enabled
+        if wait_for_content:
+            self._wait_for_dynamic_content()
 
         self._human_delay(0.5, 1.5)
 
@@ -224,6 +228,48 @@ class Hand:
             self._popups.handle_all()
 
         return {"action": "goto", "url": url, "title": self.page.title()}
+
+    def _wait_for_dynamic_content(self, timeout: int = 5000) -> None:
+        """
+        Wait for JavaScript-rendered content to appear.
+
+        Uses multiple strategies:
+        1. Wait for common content containers
+        2. Wait for images to load
+        3. Check for loading spinners to disappear
+        """
+        # Common content container selectors
+        content_selectors = [
+            'main', 'article', '.content', '#content',
+            '.results', '.items', '.list', '.cards',
+            '[role="main"]', '.container'
+        ]
+
+        # Try to find any content container
+        for selector in content_selectors:
+            try:
+                loc = self.page.locator(selector)
+                if loc.count() > 0:
+                    loc.first.wait_for(state="visible", timeout=timeout // 2)
+                    break
+            except Exception:
+                continue
+
+        # Wait for loading spinners to disappear
+        spinner_selectors = [
+            '.loading', '.spinner', '.loader', '[class*="loading"]',
+            '[class*="spinner"]', '.skeleton', '[aria-busy="true"]'
+        ]
+        for selector in spinner_selectors:
+            try:
+                loc = self.page.locator(selector)
+                if loc.count() > 0:
+                    loc.first.wait_for(state="hidden", timeout=timeout // 2)
+            except Exception:
+                pass
+
+        # Short additional wait for any remaining JS
+        time.sleep(0.3)
 
     def back(self) -> dict:
         """Go back in history."""

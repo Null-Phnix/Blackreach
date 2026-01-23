@@ -183,22 +183,12 @@ class Agent:
         if not self._is_stuck():
             return ""
 
-        # Get current URL to provide context-specific hints
-        current_url = self._recent_urls[-1] if self._recent_urls else ""
         start_url = self.config.start_url
 
-        # Wallpaper-specific hint if on wallhaven
-        if 'wallhaven' in current_url:
-            return (
-                f"\n\nSTUCK! You must navigate to a DIFFERENT page!"
-                f"\nGo back to search: {start_url}"
-                f"\nThen pick a DIFFERENT wallpaper link to navigate to."
-            )
-
         return (
-            f"\n\nSTUCK! Try a DIFFERENT approach:"
-            f"\n- Navigate back to: {start_url}"
-            f"\n- Or try a completely different URL"
+            f"\n\nSTUCK! You've been on the same page too long. Try:"
+            f"\n- Go back to: {start_url}"
+            f"\n- Or navigate to a DIFFERENT link/page"
             f"\n- DO NOT repeat the same action"
         )
 
@@ -846,9 +836,8 @@ class Agent:
 
             # Check if we've already downloaded this URL
             if url and self.persistent_memory.has_downloaded(url=url):
-                print(f"  SKIP: Already downloaded - navigate to different page!")
-                # Add to session memory as a failure hint
-                self.session_memory.last_failure = f"Already downloaded {url[:50]}... Navigate to a DIFFERENT wallpaper page!"
+                print(f"  SKIP: Already downloaded - try a different item!")
+                self.session_memory.add_failure(f"Already downloaded {url[:50]}... Try a different item!")
                 return {"action": "download", "skipped": True, "reason": "already downloaded"}
 
             # Perform the download
@@ -896,12 +885,6 @@ class Agent:
 
                 print(f"  Downloaded: {result['filename']} ({result['size']} bytes)")
 
-                # Auto-navigate back to search page after download to continue
-                if 'search' in self.config.start_url or 'wallhaven' in self.config.start_url:
-                    print(f"  (auto-returning to search)")
-                    self.hand.goto(self.config.start_url)
-                    self._recent_urls = []  # Clear stuck detection
-
                 return {
                     "action": "download",
                     "filename": result["filename"],
@@ -919,23 +902,29 @@ class Agent:
             raise UnknownActionError(action)
 
     def _format_elements(self, parsed: Dict, exclude_urls: list = None) -> str:
-        """Format parsed elements for prompt - prioritize images for download tasks.
+        """Format parsed elements for prompt - general purpose for any content type.
 
         Args:
             parsed: Parsed page elements from Eyes
             exclude_urls: URLs to exclude from output (already visited/downloaded)
         """
+        import re
         lines = []
         exclude_urls = exclude_urls or []
 
-        # Helper to extract paper/item ID from URL
-        def extract_id(url: str) -> str:
-            """Extract paper ID from academic URLs (e.g., arxiv.org/abs/2305.14496v2 -> 2305.14496)"""
-            import re
-            # ArXiv pattern: /abs/ID or /pdf/ID (with optional version suffix like v1, v2)
-            arxiv_match = re.search(r'arxiv\.org/(?:abs|pdf)/(\d+\.\d+)', url.lower())
+        # Helper to extract content ID from URL (papers, items, etc.)
+        def extract_content_id(url: str) -> str:
+            """Extract content ID from various URL patterns."""
+            url_lower = url.lower()
+            # ArXiv pattern
+            arxiv_match = re.search(r'arxiv\.org/(?:abs|pdf)/(\d+\.\d+)', url_lower)
             if arxiv_match:
                 return f"arxiv:{arxiv_match.group(1)}"
+            # Generic ID patterns
+            for pattern in [r'/(\d{5,})', r'/([a-f0-9]{8,})', r'id=(\w+)']:
+                match = re.search(pattern, url_lower)
+                if match:
+                    return match.group(1)
             return ""
 
         # Helper to check if URL should be excluded
@@ -943,87 +932,83 @@ class Agent:
             if not url or not exclude_urls:
                 return False
             url_lower = url.lower()
-            url_id = extract_id(url_lower)
+            url_id = extract_content_id(url_lower)
 
             for excluded in exclude_urls:
                 excluded_lower = excluded.lower()
-                # Check if URLs match (handle partial matches for detail pages)
                 if url_lower == excluded_lower or excluded_lower in url_lower or url_lower in excluded_lower:
                     return True
-                # Check if paper IDs match (e.g., /abs/XXXX matches /pdf/XXXX)
-                if url_id and url_id == extract_id(excluded_lower):
+                if url_id and url_id == extract_content_id(excluded_lower):
                     return True
             return False
 
-        # Images (critical for download tasks)
+        # Images with downloadable content
         images = parsed.get("images", [])[:15]
         image_lines = []
         for img in images:
             src = img.get("src", "")
             full_src = img.get("full_src", "")
             link = img.get("link", "")
-            alt = img.get("alt", "")[:30]
 
-            # Skip already visited/downloaded URLs
             if is_excluded(link) or is_excluded(src) or is_excluded(full_src):
                 continue
 
-            # Detect if this is a thumbnail (should not be downloaded)
-            is_thumbnail = any(t in src.lower() for t in ['th.wallhaven', '/small/', '/thumb/', 'thumbnail', 'preview'])
-            is_full = any(t in src.lower() for t in ['/full/', 'w.wallhaven.cc/full'])
+            # Detect thumbnails vs full images
+            src_lower = src.lower()
+            is_thumbnail = any(t in src_lower for t in ['/small/', '/thumb/', 'thumbnail', 'preview', '_s.', '_t.'])
+            is_full = any(t in src_lower for t in ['/full/', '/large/', '/original/', '_o.', '_l.'])
 
-            # Show the most useful URL for downloading
             if full_src:
                 image_lines.append(f"  - DOWNLOAD: {full_src}")
             elif is_full:
                 image_lines.append(f"  - DOWNLOAD: {src}")
-            elif link and '/w/' in link:
-                image_lines.append(f"  - NAVIGATE TO: {link}")  # Detail page
             elif link:
-                image_lines.append(f"  - Link: {link}")
-            else:
+                image_lines.append(f"  - NAVIGATE TO: {link}")
+            elif not is_thumbnail:
                 image_lines.append(f"  - Img: {src[:60]}")
 
         if image_lines:
             lines.append("Images:")
-            lines.extend(image_lines)
+            lines.extend(image_lines[:10])
 
-        # Links - prioritize actionable links (downloads, detail pages)
+        # Links - use pre-scored links from observer
         all_links = parsed.get("links", [])
 
-        # Separate and prioritize links
         download_links = []
         detail_links = []
         other_links = []
 
         for link in all_links:
             href = link.get("href", "")
-            href_lower = href.lower()
             text = link.get("text", "")[:40]
+            link_type = link.get("type", "other")
 
-            # Skip already visited/downloaded URLs
             if is_excluded(href):
                 continue
 
-            # Check for downloadable files by extension or path pattern
-            # Exclude wiki pages (e.g. /wiki/File:something.png is a wiki page, not a direct download)
-            is_wiki_page = '/wiki/' in href_lower
-            download_exts = ['.pdf', '.zip', '.tar', '.gz', '.csv', '.json', '.xlsx', '.jpg', '.jpeg', '.png', '.webp', '.gif', '.svg', '.mp3', '.mp4', '.doc', '.docx', '.txt', '.md']
-            download_paths = ['/pdf/', '/download/', '/file/', 'upload.wikimedia.org']  # ArXiv, GitHub, Wikimedia, etc.
-            is_download = (not is_wiki_page) and (any(ext in href_lower for ext in download_exts) or any(p in href_lower for p in download_paths))
-
-            if is_download:
+            if link_type == "download":
                 download_links.append(f"  - DOWNLOAD: \"{text}\" -> {href}")
-            elif any(p in href_lower for p in ['/abs/', '/paper/', '/article/', '/item/', '/w/', '/full/']):
+            elif link_type == "detail":
                 detail_links.append(f"  - DETAIL PAGE: \"{text}\" -> {href}")
-            elif 'author' not in href_lower and 'search' not in href_lower:
+            else:
                 other_links.append(f"  - \"{text}\" -> {href[:70]}")
 
-        # Combine with priority: downloads first, then detail pages, then others
+        # Combine with priority
         prioritized = download_links[:10] + detail_links[:10] + other_links[:5]
         if prioritized:
             lines.append("Links:")
             lines.extend(prioritized)
+
+        # Pagination info (if available)
+        pagination = parsed.get("pagination", {})
+        if pagination.get("has_pagination"):
+            lines.append("Pagination:")
+            if pagination.get("current_page"):
+                lines.append(f"  - Current page: {pagination['current_page']}")
+            if pagination.get("total_pages"):
+                lines.append(f"  - Total pages: {pagination['total_pages']}")
+            if pagination.get("next_page"):
+                lines.append(f"  - NEXT PAGE: {pagination['next_page']}")
 
         # Inputs
         inputs = parsed.get("inputs", [])[:5]

@@ -108,6 +108,9 @@ class Eyes:
         # Extract text LAST (may modify soup for prioritization)
         main_text = self._extract_prioritized_text(soup)
 
+        # Extract pagination for multi-page navigation
+        pagination = self._extract_pagination(soup)
+
         result = {
             "text": main_text[:self.config.max_text_length],
             "headings": headings,
@@ -117,6 +120,7 @@ class Eyes:
             "forms": forms,
             "lists": lists[:10],
             "images": images[:30],
+            "pagination": pagination,
         }
 
         if use_cache and len(self._cache) < self.config.cache_size:
@@ -250,14 +254,42 @@ class Eyes:
                     })
         return headings
 
+    # Common downloadable file extensions
+    DOWNLOAD_EXTENSIONS = {
+        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',  # Documents
+        '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2',  # Archives
+        '.csv', '.json', '.xml', '.txt', '.md',  # Data files
+        '.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.ico',  # Images
+        '.mp3', '.mp4', '.avi', '.mkv', '.mov', '.wav', '.flac',  # Media
+        '.epub', '.mobi', '.azw',  # Ebooks
+        '.apk', '.exe', '.dmg', '.deb', '.rpm',  # Software
+    }
+
+    # URL patterns that indicate downloadable content
+    DOWNLOAD_PATH_PATTERNS = [
+        '/pdf/', '/download/', '/file/', '/files/', '/downloads/',
+        '/attachment/', '/attachments/', '/asset/', '/assets/',
+        '/media/', '/uploads/', '/static/', '/content/',
+        'download=', 'file=', 'get=',
+    ]
+
+    # URL patterns that indicate detail/content pages (worth visiting)
+    DETAIL_PAGE_PATTERNS = [
+        '/abs/', '/paper/', '/article/', '/item/', '/view/',
+        '/full/', '/detail/', '/record/', '/entry/',
+        '/wiki/', '/page/', '/post/', '/blog/',
+        '/product/', '/show/', '/display/',
+    ]
+
     def _extract_links(self, soup: BeautifulSoup) -> List[Dict]:
-        """Extract links with relevance scoring."""
+        """Extract links with smart relevance scoring for any content type."""
         links = []
         seen_hrefs: Set[str] = set()
 
         for a in soup.find_all('a', href=True):
             href = a['href']
             text = a.get_text(strip=True)
+            href_lower = href.lower()
 
             # Skip duplicates, empty, and anchor-only links
             if not text or href in seen_hrefs or href == "#":
@@ -265,18 +297,58 @@ class Eyes:
 
             seen_hrefs.add(href)
 
-            # Calculate relevance score
-            score = len(text)  # Longer text = more likely important
+            # Calculate relevance score based on content type
+            score = 0
+            link_type = "other"
+
+            # Check if it's a direct download link
+            is_download = (
+                any(href_lower.endswith(ext) for ext in self.DOWNLOAD_EXTENSIONS) or
+                any(pattern in href_lower for pattern in self.DOWNLOAD_PATH_PATTERNS)
+            )
+
+            # Check if it's a detail page (likely contains downloadable content)
+            is_detail = any(pattern in href_lower for pattern in self.DETAIL_PAGE_PATTERNS)
+
+            if is_download:
+                score = 100  # Highest priority - direct downloads
+                link_type = "download"
+            elif is_detail:
+                score = 75  # High priority - pages with content
+                link_type = "detail"
+            else:
+                # Base score from text length (longer = more descriptive)
+                score = min(len(text), 50)
+
+            # Boost button-like links
+            classes = str(a.get('class', [])).lower()
+            if 'btn' in classes or 'button' in classes or 'download' in classes:
+                score += 25
+
+            # Boost links with relevant text
+            text_lower = text.lower()
+            if any(word in text_lower for word in ['download', 'pdf', 'view', 'full', 'open', 'get']):
+                score += 15
+
+            # Deprioritize navigation links
             if a.find_parent(['nav', 'header', 'footer']):
-                score -= 50  # Deprioritize nav links
-            if 'btn' in str(a.get('class', [])).lower():
-                score += 20  # Boost button-like links
+                score -= 40
+
+            # Deprioritize common noise links
+            if any(noise in href_lower for noise in [
+                'login', 'signin', 'signup', 'register', 'cart', 'checkout',
+                'account', 'profile', 'settings', 'help', 'faq', 'about',
+                'contact', 'privacy', 'terms', 'cookie', 'javascript:',
+                'mailto:', 'tel:', '#', 'share', 'tweet', 'facebook'
+            ]):
+                score -= 50
 
             links.append({
                 "text": text[:100],
                 "href": href,
                 "selector": self._get_selector(a),
-                "score": score
+                "score": score,
+                "type": link_type
             })
 
         # Sort by relevance
@@ -380,6 +452,81 @@ class Eyes:
                     "selector": self._get_selector(ul)
                 })
         return lists
+
+    def _extract_pagination(self, soup: BeautifulSoup) -> Dict:
+        """Extract pagination info for multi-page navigation."""
+        pagination = {
+            "has_pagination": False,
+            "current_page": None,
+            "next_page": None,
+            "prev_page": None,
+            "total_pages": None,
+            "page_links": []
+        }
+
+        # Look for pagination containers
+        pag_selectors = [
+            '.pagination', '.pager', '.pages', '[class*="pagina"]',
+            'nav[aria-label*="page"]', '[role="navigation"]',
+            '.page-numbers', '.page-links'
+        ]
+
+        pag_container = None
+        for selector in pag_selectors:
+            pag_container = soup.select_one(selector)
+            if pag_container:
+                break
+
+        # Also check for common pagination patterns in the page
+        if not pag_container:
+            # Look for links with page numbers
+            for a in soup.find_all('a', href=True):
+                href = a.get('href', '').lower()
+                text = a.get_text(strip=True)
+                if 'page=' in href or 'p=' in href or re.match(r'^\d+$', text):
+                    pag_container = a.find_parent(['div', 'nav', 'ul'])
+                    if pag_container:
+                        break
+
+        if not pag_container:
+            return pagination
+
+        pagination["has_pagination"] = True
+
+        # Find all pagination links
+        for a in pag_container.find_all('a', href=True):
+            href = a.get('href', '')
+            text = a.get_text(strip=True)
+            classes = str(a.get('class', [])).lower()
+
+            # Detect current page
+            if 'active' in classes or 'current' in classes or a.find_parent(class_=re.compile(r'active|current')):
+                try:
+                    pagination["current_page"] = int(text)
+                except ValueError:
+                    pass
+
+            # Detect next page
+            if any(w in text.lower() for w in ['next', '»', '>', 'следующая']) or 'next' in classes:
+                pagination["next_page"] = href
+
+            # Detect previous page
+            if any(w in text.lower() for w in ['prev', 'previous', '«', '<', 'назад']) or 'prev' in classes:
+                pagination["prev_page"] = href
+
+            # Collect numbered page links
+            if re.match(r'^\d+$', text):
+                pagination["page_links"].append({
+                    "page": int(text),
+                    "href": href
+                })
+
+        # Sort page links and determine total
+        if pagination["page_links"]:
+            pagination["page_links"].sort(key=lambda x: x["page"])
+            pagination["total_pages"] = max(p["page"] for p in pagination["page_links"])
+
+        return pagination
 
     def _extract_images(self, soup: BeautifulSoup) -> List[Dict]:
         """Extract images with their URLs and context."""
