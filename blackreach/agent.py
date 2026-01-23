@@ -11,13 +11,17 @@ Memory system:
 - PersistentMemory: Long-term (SQLite) - what happened across all runs
 """
 
+import json
+import re
+import sys
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin, quote as url_quote
 
 from blackreach.browser import Hand
+from blackreach.detection import SiteDetector
 from blackreach.observer import Eyes
 from blackreach.llm import LLM, LLMConfig
 from blackreach.stealth import StealthConfig
@@ -116,7 +120,6 @@ class Agent:
                 handler(*args, **kwargs)
             except Exception as e:
                 # Log but don't break the agent
-                import sys
                 print(f"[callback error] {event}: {e}", file=sys.stderr)
 
     def _load_prompts(self) -> Dict[str, str]:
@@ -345,8 +348,6 @@ class Agent:
 
         Returns (url, reasoning, search_query) tuple.
         """
-        import re
-
         def log(msg: str):
             if not quiet:
                 print(msg)
@@ -392,8 +393,7 @@ class Agent:
                         break
                 else:
                     # Fallback to Google search
-                    import urllib.parse
-                    encoded = urllib.parse.quote(result["search_query"])
+                    encoded = url_quote(result["search_query"])
                     start_url = f"https://www.google.com/search?q={encoded}"
                     log(f"   Falling back to Google search")
 
@@ -536,12 +536,10 @@ class Agent:
         title = self.hand.get_title()
 
         # Check for challenge/interstitial pages
-        from blackreach.detection import SiteDetector
         detector = SiteDetector()
         challenge = detector.detect_challenge(html)
         if challenge.detected:
             log(f"  [Challenge page detected: {challenge.details} - waiting...]")
-            import time
             for attempt in range(15):  # Wait up to 15 seconds
                 time.sleep(1)
                 html = self.hand.get_html()
@@ -562,7 +560,6 @@ class Agent:
 
             if render_attempts == 1:
                 # First attempt: just wait longer
-                import time
                 time.sleep(3)
             elif render_attempts == 2:
                 # Second attempt: use force_render
@@ -572,7 +569,6 @@ class Agent:
                 # Third attempt: refresh and wait
                 log("  [Refreshing page...]")
                 self.hand.refresh()
-                import time
                 time.sleep(3)
                 self.hand._wait_for_dynamic_content(timeout=10000)
 
@@ -601,7 +597,6 @@ class Agent:
             log(f"  [DEBUG: HTML={debug_info['html_length']}b, text={debug_info['text_length']}, links={debug_info['raw_links']}, inputs={debug_info['raw_inputs']}]")
 
             # Last resort: full page scroll and wait
-            import time
             log("  [Final attempt - full page interaction...]")
 
             # Scroll the entire page to trigger any lazy loading
@@ -711,9 +706,6 @@ You navigate. You click. You download. That's it."""
             return {"done": False, "error": "Empty LLM response"}
 
         # Parse the response
-        import json
-        import re
-
         thought = ""
         action = None
         args = {}
@@ -839,8 +831,7 @@ You navigate. You click. You download. That's it."""
                         search_url = result["start_url"]
                         log(f"  [OVERRIDE: Using {result['best_source'].name} - {search_url}]")
                     else:
-                        import urllib.parse
-                        encoded = urllib.parse.quote(search_query)
+                        encoded = url_quote(search_query)
                         search_url = f"https://www.google.com/search?q={encoded}"
                         log(f"  [OVERRIDE: Forcing search - {search_url[:50]}]")
                 else:
@@ -851,8 +842,7 @@ You navigate. You click. You download. That's it."""
                         search_url = alt.url
                         log(f"  [ALTERNATE: Trying {alt.name} - {search_url}]")
                     else:
-                        import urllib.parse
-                        encoded = urllib.parse.quote(search_query)
+                        encoded = url_quote(search_query)
                         search_url = f"https://www.google.com/search?q={encoded}+free+download"
                         log(f"  [FALLBACK SEARCH: {search_url[:50]}]")
 
@@ -904,7 +894,6 @@ You navigate. You click. You download. That's it."""
         goal_lower = goal.lower()
         if download_count > 0 and any(word in goal_lower for word in ['download', 'wallpaper', 'image', 'file', 'picture', 'photo']):
             # Check if we've met a numeric goal
-            import re
             numbers = re.findall(r'\b(\d+)\b', goal)
             target = int(numbers[0]) if numbers else 1
             if download_count >= target:
@@ -932,8 +921,7 @@ You navigate. You click. You download. That's it."""
                     search_url = result["start_url"]
                     log(f"  [FALLBACK: Using {result['best_source'].name}]")
                 else:
-                    import urllib.parse
-                    encoded = urllib.parse.quote(result["search_query"])
+                    encoded = url_quote(result["search_query"])
                     search_url = f"https://www.google.com/search?q={encoded}"
                 self.hand.goto(search_url)
                 self._record_visit(search_url)
@@ -1101,7 +1089,6 @@ You navigate. You click. You download. That's it."""
 
             # Resolve relative URLs to absolute
             if url and not url.startswith(('http://', 'https://')):
-                from urllib.parse import urljoin
                 url = urljoin(current_url, url)
 
             # Skip if navigating to the same or similar URL
@@ -1129,7 +1116,6 @@ You navigate. You click. You download. That's it."""
 
             # Resolve relative URLs to absolute
             if url and not url.startswith(('http://', 'https://')):
-                from urllib.parse import urljoin
                 base_url = self.hand.get_url()
                 url = urljoin(base_url, url)
                 print(f"  -> Resolved URL: {url[:70]}")
@@ -1208,7 +1194,6 @@ You navigate. You click. You download. That's it."""
             parsed: Parsed page elements from Eyes
             exclude_urls: URLs to exclude from output (already visited/downloaded)
         """
-        import re
         lines = []
         exclude_urls = exclude_urls or []
 
