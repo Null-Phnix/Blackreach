@@ -468,3 +468,106 @@ The agent now:
 1. LLM sometimes picks same link repeatedly (~30% of cases)
 2. Wikimedia pages too complex to parse
 3. Some inline files cause download timeouts
+
+---
+
+## Entry 9: Testing & Error Handling (Session 4)
+
+**Time:** January 22, 2026 - Session 4
+**Duration:** ~5 hours
+
+**Goal:** Complete Package A (Foundation) - reach 75% Beta milestone
+
+### Work Completed
+
+#### 1. Test Suite (284 tests)
+
+Created comprehensive test infrastructure:
+
+| Module | Tests | Focus |
+|--------|-------|-------|
+| memory.py | 38 | SessionMemory, PersistentMemory |
+| observer.py | 54 | HTML parsing, element extraction |
+| llm.py | 31 | Config, response parsing |
+| browser.py | 23 | Hash computation, state management |
+| agent e2e | 16 | Config, actions, memory integration |
+| exceptions.py | 56 | Exception hierarchy |
+| detection.py | 38 | CAPTCHA/login/paywall detection |
+| resilience.py | 28 | Retry logic, circuit breaker |
+
+#### 2. Exception Hierarchy (blackreach/exceptions.py)
+
+Created BlackreachError base class with specific exceptions:
+- **Browser:** BrowserNotReadyError, ElementNotFoundError, DownloadError
+- **LLM:** ProviderError, ProviderNotInstalledError, ParseError, APIError
+- **Agent:** ActionError, UnknownActionError, StuckError
+- **Site:** CaptchaError, LoginRequiredError, PaywallError, AccessDeniedError
+
+Key features:
+- `recoverable` flag for retry decisions
+- `details` dict for structured error info
+- Rich string formatting
+
+#### 3. Site Detection (blackreach/detection.py)
+
+Created SiteDetector class that detects:
+- CAPTCHAs (reCAPTCHA, hCaptcha, Cloudflare)
+- Login walls
+- Paywalls
+- Rate limiting (HTTP 429)
+- Access denied (HTTP 403)
+
+Each detection returns:
+- `detected`: bool
+- `confidence`: 0.0-1.0
+- `details`: specific info
+- `indicators`: what triggered detection
+
+#### 4. Circuit Breaker (blackreach/resilience.py)
+
+Implemented circuit breaker pattern:
+- **CLOSED**: Normal operation
+- **OPEN**: Failing fast
+- **HALF_OPEN**: Testing recovery
+
+Configurable:
+- failure_threshold (default: 5)
+- recovery_timeout (default: 30s)
+- half_open_max_calls (default: 1)
+
+#### 5. Error Handling Audit
+
+Fixed bare `except:` blocks across codebase:
+- browser.py: 3 locations
+- cli.py: 2 locations
+- resilience.py: 1 location
+
+Changed to `except Exception:` to avoid catching KeyboardInterrupt.
+
+### Milestones Completed
+
+| Milestone | Status | Progress |
+|-----------|--------|----------|
+| 1. Tests | ✅ COMPLETE | 100% |
+| 3. Errors | ✅ COMPLETE | 100% |
+
+**Package A (Foundation): 100% COMPLETE**
+
+### Git Commits
+
+1. `48af6b4` - Add comprehensive test suite (162 tests)
+2. `60c0228` - Add exception hierarchy and site detection
+3. `b8ad18e` - Complete Package A: Circuit breaker and error handling audit
+
+### Documentation Created
+
+- `learning/11_TESTING_AND_ERROR_HANDLING.md` - Phase 3 documentation
+- `ROADMAP.md` - Updated with progress
+
+### Next Steps
+
+Package A complete. For full Beta (100%):
+1. Milestone 2: Session Resume (0%)
+2. Milestone 4: Documentation (0%)
+3. Milestone 5: Reliability (0%)
+4. Milestone 6: Config System (0%)
