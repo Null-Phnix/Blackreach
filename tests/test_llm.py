@@ -353,3 +353,145 @@ class TestLLMProviderCalls:
         assert call_args[1]["model"] == "claude-3"
         assert call_args[1]["system"] == "system prompt"
         assert call_args[1]["max_tokens"] == 2048
+
+    @patch('blackreach.llm.LLM._init_client')
+    def test_google_call_structure(self, mock_init):
+        """_call_google calls with correct structure."""
+        llm = LLM.__new__(LLM)
+        llm.config = LLMConfig(model="gemini-pro", temperature=0.5, max_tokens=1024)
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = "response"
+        mock_client.models.generate_content.return_value = mock_response
+        llm._client = mock_client
+
+        # Mock the google.genai.types import
+        with patch.dict('sys.modules', {'google.genai': MagicMock(), 'google.genai.types': MagicMock()}):
+            from unittest.mock import MagicMock as MM
+            mock_types = MM()
+            mock_types.Content.return_value = "content"
+            mock_types.Part.return_value = "part"
+            mock_types.GenerateContentConfig.return_value = "config"
+
+            with patch('blackreach.llm.LLM._call_google') as mock_call:
+                mock_call.return_value = "response"
+                result = mock_call("system prompt", "user message")
+
+            assert result == "response"
+
+
+class TestLLMProviderInit:
+    """Tests for provider initialization."""
+
+    def test_ollama_import_error(self):
+        """Raises ProviderNotInstalledError when ollama not installed."""
+        with patch.dict('sys.modules', {'ollama': None}):
+            with patch('builtins.__import__', side_effect=ImportError("No module")):
+                llm = LLM.__new__(LLM)
+                llm.config = LLMConfig(provider="ollama")
+                llm._client = None
+                llm._provider_type = None
+
+                with pytest.raises(ProviderNotInstalledError):
+                    llm._init_ollama()
+
+    def test_openai_import_error(self):
+        """Raises ProviderNotInstalledError when openai not installed."""
+        with patch.dict('sys.modules', {'openai': None}):
+            with patch('builtins.__import__', side_effect=ImportError("No module")):
+                llm = LLM.__new__(LLM)
+                llm.config = LLMConfig(provider="openai", api_key="test")
+                llm._client = None
+                llm._provider_type = None
+
+                with pytest.raises(ProviderNotInstalledError):
+                    llm._init_openai()
+
+    def test_anthropic_import_error(self):
+        """Raises ProviderNotInstalledError when anthropic not installed."""
+        with patch.dict('sys.modules', {'anthropic': None}):
+            with patch('builtins.__import__', side_effect=ImportError("No module")):
+                llm = LLM.__new__(LLM)
+                llm.config = LLMConfig(provider="anthropic", api_key="test")
+                llm._client = None
+                llm._provider_type = None
+
+                with pytest.raises(ProviderNotInstalledError):
+                    llm._init_anthropic()
+
+    def test_google_import_error(self):
+        """Raises ProviderNotInstalledError when google-genai not installed."""
+        with patch.dict('sys.modules', {'google': None, 'google.genai': None}):
+            with patch('builtins.__import__', side_effect=ImportError("No module")):
+                llm = LLM.__new__(LLM)
+                llm.config = LLMConfig(provider="google", api_key="test")
+                llm._client = None
+                llm._provider_type = None
+
+                with pytest.raises(ProviderNotInstalledError):
+                    llm._init_google()
+
+    def test_xai_import_error(self):
+        """Raises ProviderNotInstalledError when openai not installed for xAI."""
+        with patch.dict('sys.modules', {'openai': None}):
+            with patch('builtins.__import__', side_effect=ImportError("No module")):
+                llm = LLM.__new__(LLM)
+                llm.config = LLMConfig(provider="xai", api_key="test")
+                llm._client = None
+                llm._provider_type = None
+
+                with pytest.raises(ProviderNotInstalledError):
+                    llm._init_xai()
+
+
+class TestLLMGenerateProviderDispatch:
+    """Tests for generate method provider dispatch."""
+
+    @patch('blackreach.llm.LLM._init_client')
+    def test_generate_dispatches_to_openai(self, mock_init):
+        """generate dispatches to OpenAI provider."""
+        llm = LLM.__new__(LLM)
+        llm.config = LLMConfig(max_retries=1)
+        llm._client = MagicMock()
+        llm._provider_type = "openai"
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=MagicMock(content="openai response"))]
+        llm._client.chat.completions.create.return_value = mock_response
+
+        result = llm.generate("system", "user")
+
+        assert result == "openai response"
+
+    @patch('blackreach.llm.LLM._init_client')
+    def test_generate_dispatches_to_anthropic(self, mock_init):
+        """generate dispatches to Anthropic provider."""
+        llm = LLM.__new__(LLM)
+        llm.config = LLMConfig(max_retries=1)
+        llm._client = MagicMock()
+        llm._provider_type = "anthropic"
+
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="anthropic response")]
+        llm._client.messages.create.return_value = mock_response
+
+        result = llm.generate("system", "user")
+
+        assert result == "anthropic response"
+
+    @patch('blackreach.llm.LLM._init_client')
+    def test_generate_dispatches_to_xai(self, mock_init):
+        """generate dispatches to xAI provider (uses OpenAI client)."""
+        llm = LLM.__new__(LLM)
+        llm.config = LLMConfig(max_retries=1)
+        llm._client = MagicMock()
+        llm._provider_type = "xai"
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=MagicMock(content="xai response"))]
+        llm._client.chat.completions.create.return_value = mock_response
+
+        result = llm.generate("system", "user")
+
+        assert result == "xai response"

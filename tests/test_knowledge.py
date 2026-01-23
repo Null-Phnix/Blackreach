@@ -20,6 +20,19 @@ class TestContentTypeDetection:
         types = detect_content_type("find me an epub for red rising")
         assert "ebook" in types
 
+    def test_pdf_adds_paper_when_research_context_and_paper_not_present(self):
+        """PDF with research context adds paper when not present."""
+        types = detect_content_type("download the pdf research study")
+        assert "paper" in types
+
+    def test_pdf_adds_paper_from_context_word_substring(self):
+        """PDF with 'journal' substring (journalistic) adds paper."""
+        # "journalistic" contains "journal" for context check,
+        # but doesn't match regex \bjournal\b for paper detection
+        types = detect_content_type("get the pdf about journalistic methods")
+        assert "paper" in types
+        assert "pdf" in types
+
     def test_detect_book(self):
         types = detect_content_type("download the book 1984")
         assert "book" in types or "ebook" in types
@@ -265,6 +278,16 @@ class TestReasonAboutGoalEdgeCases:
         result = reason_about_goal("download 10 papers from 2024")
         assert "subject" in result
 
+    def test_fallback_to_google_when_no_sources(self):
+        """Falls back to Google when no sources match."""
+        from blackreach.knowledge import reason_about_goal
+        from unittest.mock import patch
+
+        with patch('blackreach.knowledge.find_best_sources', return_value=[]):
+            result = reason_about_goal("xyz123")
+            assert result["best_source"] is None
+            assert "google.com" in result["start_url"]
+
 
 class TestSubjectExtractionEdgeCases:
     """Edge case tests for extract_subject."""
@@ -322,3 +345,107 @@ class TestGetAllUrls:
         assert annas is not None
         urls = get_all_urls_for_source(annas)
         assert len(urls) > 1  # Has mirrors
+
+
+class TestCheckUrlReachable:
+    """Tests for check_url_reachable function."""
+
+    def test_reachable_url_returns_true(self):
+        """Reachable URL returns True."""
+        from blackreach.knowledge import check_url_reachable
+        from unittest.mock import patch, MagicMock
+
+        with patch('urllib.request.urlopen') as mock_urlopen:
+            mock_urlopen.return_value = MagicMock()
+            result = check_url_reachable("https://example.com")
+            assert result is True
+
+    def test_unreachable_url_returns_false(self):
+        """Unreachable URL returns False."""
+        from blackreach.knowledge import check_url_reachable
+        from unittest.mock import patch
+        import urllib.error
+
+        with patch('urllib.request.urlopen', side_effect=urllib.error.URLError("Network error")):
+            result = check_url_reachable("https://nonexistent.invalid")
+            assert result is False
+
+    def test_http_error_returns_false(self):
+        """HTTP error returns False."""
+        from blackreach.knowledge import check_url_reachable
+        from unittest.mock import patch
+        import urllib.error
+
+        with patch('urllib.request.urlopen', side_effect=urllib.error.HTTPError(None, 404, "Not Found", {}, None)):
+            result = check_url_reachable("https://example.com/notfound")
+            assert result is False
+
+    def test_timeout_returns_false(self):
+        """Timeout returns False."""
+        from blackreach.knowledge import check_url_reachable
+        from unittest.mock import patch
+
+        with patch('urllib.request.urlopen', side_effect=TimeoutError()):
+            result = check_url_reachable("https://slow.example.com")
+            assert result is False
+
+
+class TestGetWorkingUrl:
+    """Tests for get_working_url function."""
+
+    def test_returns_first_working_url(self):
+        """Returns the first working URL."""
+        from blackreach.knowledge import get_working_url, check_url_reachable
+        from unittest.mock import patch
+
+        source = ContentSource(
+            name="Test",
+            url="https://primary.com",
+            description="Test",
+            content_types=["test"],
+            keywords=["test"],
+            mirrors=["https://mirror1.com"]
+        )
+
+        with patch('blackreach.knowledge.check_url_reachable', return_value=True):
+            result = get_working_url(source)
+            assert result == "https://primary.com"
+
+    def test_returns_mirror_when_primary_fails(self):
+        """Returns mirror URL when primary fails."""
+        from blackreach.knowledge import get_working_url
+        from unittest.mock import patch
+
+        source = ContentSource(
+            name="Test",
+            url="https://primary.com",
+            description="Test",
+            content_types=["test"],
+            keywords=["test"],
+            mirrors=["https://mirror1.com"]
+        )
+
+        def mock_check(url, timeout=5.0):
+            return url == "https://mirror1.com"
+
+        with patch('blackreach.knowledge.check_url_reachable', side_effect=mock_check):
+            result = get_working_url(source)
+            assert result == "https://mirror1.com"
+
+    def test_returns_none_when_all_fail(self):
+        """Returns None when all URLs fail."""
+        from blackreach.knowledge import get_working_url
+        from unittest.mock import patch
+
+        source = ContentSource(
+            name="Test",
+            url="https://primary.com",
+            description="Test",
+            content_types=["test"],
+            keywords=["test"],
+            mirrors=["https://mirror1.com"]
+        )
+
+        with patch('blackreach.knowledge.check_url_reachable', return_value=False):
+            result = get_working_url(source)
+            assert result is None

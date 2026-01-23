@@ -352,3 +352,39 @@ class TestCleanupOldLogs:
         cleanup_old_logs(keep_days=7)
 
         assert not old_file.exists()
+
+
+class TestSessionLoggerWriteFailure:
+    """Tests for handling write failures gracefully."""
+
+    def test_write_failure_does_not_crash(self, tmp_path, monkeypatch):
+        """Write failure does not crash the logger."""
+        from unittest.mock import patch, mock_open
+
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal")
+
+        # Mock open to raise an exception
+        with patch("builtins.open", side_effect=PermissionError("Cannot write")):
+            # These should not raise even if write fails
+            logger.step_start(1)
+            logger.observe(1, "test", "https://example.com")
+            logger.think(1, "thinking", "act")
+            logger.error(1, "error msg")
+            # If we got here, the test passes - no crash
+
+    def test_write_failure_with_io_error(self, tmp_path, monkeypatch):
+        """IOError during write does not crash."""
+        from unittest.mock import patch
+
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal")
+
+        with patch("builtins.open", side_effect=IOError("Disk full")):
+            # Should silently fail
+            logger.download(1, "file.pdf", "http://example.com", 1024)
+            logger.session_end(success=True, steps=1, downloads=1, failures=0)

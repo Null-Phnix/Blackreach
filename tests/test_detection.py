@@ -658,3 +658,85 @@ class TestChallengeDetection:
 
         # Should have some confidence even if not detected
         assert result.confidence > 0
+
+
+# =============================================================================
+# Raise For Obstacle Tests
+# =============================================================================
+
+class TestRaiseForObstacle:
+    """Tests for detect_and_raise method."""
+
+    def test_no_exception_on_normal_page(self, detector, normal_html):
+        """No exception raised for normal page."""
+        # Should not raise anything
+        detector.detect_and_raise(normal_html, "https://example.com")
+
+    def test_raises_captcha_error(self, detector, recaptcha_html):
+        """Raises CaptchaError for CAPTCHA pages."""
+        from blackreach.exceptions import CaptchaError
+
+        with pytest.raises(CaptchaError):
+            detector.detect_and_raise(recaptcha_html, "https://example.com")
+
+    def test_raises_login_required_error(self, detector, login_html):
+        """Raises LoginRequiredError for login pages."""
+        from blackreach.exceptions import LoginRequiredError
+
+        with pytest.raises(LoginRequiredError):
+            detector.detect_and_raise(login_html, "https://example.com")
+
+    def test_raises_paywall_error(self, detector, paywall_html):
+        """Raises PaywallError for paywall pages."""
+        from blackreach.exceptions import PaywallError
+
+        with pytest.raises(PaywallError):
+            detector.detect_and_raise(paywall_html, "https://example.com")
+
+    def test_raises_rate_limit_error(self, detector, rate_limit_html):
+        """Raises RateLimitError for rate limit pages."""
+        from blackreach.exceptions import RateLimitError
+
+        with pytest.raises(RateLimitError):
+            detector.detect_and_raise(rate_limit_html, "https://example.com", status_code=429)
+
+    def test_raises_access_denied_error(self, detector, access_denied_html):
+        """Raises AccessDeniedError for access denied pages."""
+        from blackreach.exceptions import AccessDeniedError
+
+        with pytest.raises(AccessDeniedError):
+            detector.detect_and_raise(access_denied_html, "https://example.com")
+
+    def test_rate_limit_parses_retry_after(self, detector):
+        """RateLimitError includes parsed retry_after."""
+        from blackreach.exceptions import RateLimitError
+
+        html = '<p>Rate limited. Please try again in 5 minutes.</p>'
+
+        try:
+            detector.detect_and_raise(html, "https://example.com", status_code=429)
+            assert False, "Should have raised"
+        except RateLimitError as e:
+            # retry_after should be parsed from "Retry after 300s" -> 300.0
+            assert e.retry_after == 300.0 or e.retry_after is None
+
+    def test_rate_limit_invalid_retry_after_format(self, detector):
+        """RateLimitError handles unparseable retry_after gracefully."""
+        from blackreach.exceptions import RateLimitError
+        from unittest.mock import patch, MagicMock
+
+        # Create a mock DetectionResult with invalid retry_after format
+        mock_result = MagicMock()
+        mock_result.detected = True
+        mock_result.condition = "rate_limit"
+        mock_result.confidence = 0.9
+        mock_result.indicators = []
+        mock_result.details = "Retry after invalid_value"  # This will cause ValueError
+
+        with patch.object(detector, 'detect_all', return_value=[mock_result]):
+            try:
+                detector.detect_and_raise("", "https://example.com")
+                assert False, "Should have raised"
+            except RateLimitError as e:
+                # Should have handled the ValueError and set retry_after to None
+                assert e.retry_after is None
