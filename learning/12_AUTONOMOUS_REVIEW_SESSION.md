@@ -377,4 +377,41 @@ All **453 tests** passing:
 - `blackreach/agent.py` - SiteDetector as instance variable
 - `blackreach/browser.py` - SiteDetector as instance variable
 - `blackreach/cli.py` - SessionNotFoundError import and handling
-- `tests/test_detection.py` - Added detect_challenge tests
+- `tests/test_detection.py` - Added detect_challenge tests (9 new)
+- `tests/test_planner.py` - New file with 30 tests for Planner module
+
+---
+
+## Final Session Stats (03:31)
+
+### Test Count Progress
+| Time | Test Count | Notes |
+|------|------------|-------|
+| 02:48 | 329 | Session start baseline |
+| 03:18 | 444 | After initial test expansion |
+| 03:29 | 453 | After detect_challenge tests |
+| 03:31 | 483 | After planner tests |
+
+### Total Improvements
+- **Tests Added:** 154 new tests (329 → 483)
+- **Test Files Created:** 8 (config, stealth, browser, agent, llm, observer extensions, detection extensions, planner)
+- **Performance Fixes:** 4 (module-level imports, SiteDetector singleton in 2 files)
+- **Bug Fixes:** 4 (imports, Ollama options, observer tests, CLI exception handling)
+- **Code Quality:** Module imports consolidated, inline imports removed
+
+### Coverage by Module (Final)
+| Module | Tests | Coverage |
+|--------|-------|----------|
+| detection | 47 | 97% |
+| memory | 51 | 97% |
+| stealth | 28 | 95% |
+| observer | 68 | 93% |
+| knowledge | 32 | 82% |
+| llm | 30 | 68% |
+| config | 17 | 47% |
+| resilience | 28 | 39% |
+| agent | 47 | 30% |
+| browser | 33 | 23% |
+| planner | 30 | NEW |
+| agent_e2e | 25 | (integration) |
+| exceptions | 56 | 99% |
