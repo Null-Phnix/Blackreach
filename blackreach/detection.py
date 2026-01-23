@@ -57,6 +57,12 @@ class SiteDetector:
         r'cf-challenge',
         r'challenge-form',
         r'cf-turnstile',
+        # DDoS-Guard
+        r'ddos-guard',
+        r'ddos_guard',
+        r'DDoS-Guard',
+        r'checking\s*your\s*browser',
+        r'please\s*wait.*redirect',
         # Generic
         r'captcha',
         r'robot\s*check',
@@ -65,6 +71,8 @@ class SiteDetector:
         r'security\s*check',
         r'bot\s*detection',
         r'verify\s*you.re\s*not\s*a\s*robot',
+        r'just\s*a\s*moment',
+        r'browser\s*verification',
     ]
 
     CAPTCHA_SCRIPTS = [
@@ -73,6 +81,19 @@ class SiteDetector:
         'hcaptcha.com/1/',
         'challenges.cloudflare.com',
         'turnstile/v0/api.js',
+        'ddos-guard.net',
+    ]
+
+    # Challenge/interstitial page indicators (auto-solving, need to wait)
+    CHALLENGE_PATTERNS = [
+        r'ddos-guard',
+        r'DDoS-Guard',
+        r'checking\s*your\s*browser',
+        r'please\s*wait',
+        r'just\s*a\s*moment',
+        r'verifying.*connection',
+        r'cf-browser-verification',
+        r'ray\s*id',  # Cloudflare Ray ID
     ]
 
     # Login wall indicators
@@ -151,6 +172,7 @@ class SiteDetector:
         self._paywall_re = re.compile('|'.join(self.PAYWALL_PATTERNS), re.IGNORECASE)
         self._rate_limit_re = re.compile('|'.join(self.RATE_LIMIT_PATTERNS), re.IGNORECASE)
         self._access_denied_re = re.compile('|'.join(self.ACCESS_DENIED_PATTERNS), re.IGNORECASE)
+        self._challenge_re = re.compile('|'.join(self.CHALLENGE_PATTERNS), re.IGNORECASE)
 
     def detect_captcha(self, html: str, url: str = "") -> DetectionResult:
         """Detect if page contains a CAPTCHA challenge."""
@@ -334,6 +356,72 @@ class SiteDetector:
             detected=detected,
             condition="access_denied" if detected else None,
             confidence=confidence,
+            indicators=indicators
+        )
+
+    def detect_challenge(self, html: str, url: str = "") -> DetectionResult:
+        """
+        Detect if page is a challenge/interstitial page that may auto-resolve.
+
+        These are pages like DDoS-Guard, Cloudflare "checking your browser",
+        etc. that often resolve automatically if you wait a few seconds.
+        """
+        indicators = []
+        confidence = 0.0
+        html_lower = html.lower()
+
+        # Check for challenge patterns
+        matches = self._challenge_re.findall(html)
+        for match in matches[:3]:
+            indicators.append(f"Pattern: {match}")
+            confidence += 0.3
+
+        # Check for DDoS-Guard specific indicators
+        if 'ddos-guard' in html_lower or 'ddos_guard' in html_lower:
+            indicators.append("DDoS-Guard")
+            confidence += 0.5
+
+        # Check for Cloudflare challenge
+        if 'cf-browser-verification' in html_lower or 'cf_clearance' in html_lower:
+            indicators.append("Cloudflare challenge")
+            confidence += 0.4
+
+        # Check for minimal page content (interstitial pages are usually minimal)
+        # Count actual content elements
+        import re as regex
+        text_content = regex.sub(r'<[^>]+>', '', html)
+        word_count = len(text_content.split())
+        if word_count < 50:
+            indicators.append(f"Minimal content ({word_count} words)")
+            confidence += 0.2
+
+        # Check for JavaScript redirect indicators
+        if 'location.href' in html or 'window.location' in html:
+            if 'setTimeout' in html or 'setInterval' in html:
+                indicators.append("JS redirect timer")
+                confidence += 0.3
+
+        # Check for meta refresh
+        if 'http-equiv="refresh"' in html_lower or "http-equiv='refresh'" in html_lower:
+            indicators.append("Meta refresh")
+            confidence += 0.3
+
+        confidence = min(confidence, 1.0)
+        detected = confidence >= 0.4 or 'ddos-guard' in html_lower
+
+        challenge_type = None
+        if 'ddos-guard' in html_lower:
+            challenge_type = "DDoS-Guard"
+        elif 'cloudflare' in html_lower or 'cf-' in html_lower:
+            challenge_type = "Cloudflare"
+        elif detected:
+            challenge_type = "Unknown"
+
+        return DetectionResult(
+            detected=detected,
+            condition="challenge" if detected else None,
+            confidence=confidence,
+            details=challenge_type,
             indicators=indicators
         )
 

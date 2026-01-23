@@ -24,6 +24,7 @@ from blackreach.exceptions import (
     InvalidActionArgsError,
     UnknownActionError,
 )
+from blackreach.detection import SiteDetector
 
 
 class Hand:
@@ -215,6 +216,9 @@ class Hand:
         except Exception:
             pass  # Don't fail if network doesn't go idle
 
+        # Check for and wait through challenge pages (DDoS-Guard, Cloudflare, etc.)
+        self._wait_for_challenge_resolution()
+
         # Wait for dynamic content if enabled
         if wait_for_content:
             self._wait_for_dynamic_content()
@@ -228,6 +232,41 @@ class Hand:
             self._popups.handle_all()
 
         return {"action": "goto", "url": url, "title": self.page.title()}
+
+    def _wait_for_challenge_resolution(self, max_wait: int = 15) -> bool:
+        """
+        Wait for challenge/interstitial pages to resolve.
+
+        DDoS-Guard, Cloudflare and similar services often show an interstitial
+        page that auto-resolves after a few seconds. This method detects and
+        waits for such pages.
+
+        Returns True if a challenge was detected and resolved, False otherwise.
+        """
+        detector = SiteDetector()
+
+        for attempt in range(max_wait):
+            html = self.page.content()
+            result = detector.detect_challenge(html)
+
+            if not result.detected:
+                return attempt > 0  # Return True if we waited at all
+
+            # Challenge detected - wait and check again
+            if attempt == 0:
+                print(f"  [Challenge detected: {result.details or 'unknown'} - waiting...]")
+
+            time.sleep(1)
+
+            # Check if page URL changed (redirect after challenge)
+            try:
+                self.page.wait_for_load_state("domcontentloaded", timeout=2000)
+            except Exception:
+                pass
+
+        # If we're still on a challenge page after max_wait, log it
+        print(f"  [Challenge did not resolve after {max_wait}s]")
+        return True
 
     def _wait_for_dynamic_content(self, timeout: int = 5000) -> None:
         """

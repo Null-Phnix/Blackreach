@@ -529,6 +529,22 @@ class Agent:
         html = self.hand.get_html()
         url = self.hand.get_url()
         title = self.hand.get_title()
+
+        # Check for challenge/interstitial pages
+        from blackreach.detection import SiteDetector
+        detector = SiteDetector()
+        challenge = detector.detect_challenge(html)
+        if challenge.detected:
+            log(f"  [Challenge page detected: {challenge.details} - waiting...]")
+            import time
+            for _ in range(10):  # Wait up to 10 seconds
+                time.sleep(1)
+                html = self.hand.get_html()
+                if not detector.detect_challenge(html).detected:
+                    break
+            url = self.hand.get_url()
+            title = self.hand.get_title()
+
         parsed = self.eyes.see(html)
 
         # Build list of URLs to exclude (already visited detail pages + downloaded URLs)
@@ -541,6 +557,23 @@ class Agent:
         exclude_urls.extend(self.session_memory.downloaded_urls)
 
         elements = self._format_elements(parsed, exclude_urls=exclude_urls)
+
+        # If no elements found, wait and retry (page may still be loading)
+        if elements == "No interactive elements found":
+            log("  [No elements - waiting for page to load...]")
+            import time
+            time.sleep(3)
+            html = self.hand.get_html()
+            parsed = self.eyes.see(html)
+            elements = self._format_elements(parsed, exclude_urls=exclude_urls)
+
+            # If still no elements, try scrolling to trigger lazy loading
+            if elements == "No interactive elements found":
+                self.hand.scroll("down", 500)
+                time.sleep(1)
+                html = self.hand.get_html()
+                parsed = self.eyes.see(html)
+                elements = self._format_elements(parsed, exclude_urls=exclude_urls)
 
         # Cache for potential reuse
         self._page_cache["url"] = url
