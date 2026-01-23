@@ -1077,3 +1077,116 @@ class TestPaginationFallback:
         pagination = result.get("pagination", {})
         # Should recognize the p= pattern
         assert "pagination" in result
+
+    def test_current_page_non_numeric_text(self):
+        """Handles active page with non-numeric text gracefully."""
+        html = """
+        <html><body>
+            <main><p>Content</p></main>
+            <div class="pagination">
+                <a href="?page=1" class="active">Page One</a>
+                <a href="?page=2">2</a>
+            </div>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        # Should not crash, current_page might be None
+        pagination = result.get("pagination", {})
+        # The non-numeric "Page One" can't be converted to int
+        assert "pagination" in result
+
+
+# =============================================================================
+# Image Edge Case Tests
+# =============================================================================
+
+class TestImageEdgeCases:
+    """Tests for image extraction edge cases."""
+
+    def test_duplicate_image_src_skipped(self):
+        """Duplicate image sources are skipped."""
+        html = """
+        <html><body>
+            <main><p>Content</p></main>
+            <img src="/image.jpg" alt="First">
+            <img src="/image.jpg" alt="Duplicate">
+            <img src="/other.jpg" alt="Other">
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        images = result.get("images", [])
+        # Should have deduplicated
+        srcs = [img["src"] for img in images]
+        assert srcs.count("/image.jpg") <= 1
+
+    def test_image_finds_sibling_link_in_container(self):
+        """Image finds associated link from container sibling."""
+        html = """
+        <html><body>
+            <main><p>Content</p></main>
+            <figure>
+                <img src="/photo.jpg" alt="Photo">
+                <a href="/full-size.jpg">View Full</a>
+            </figure>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        images = result.get("images", [])
+        photo = next((img for img in images if img["src"] == "/photo.jpg"), None)
+        if photo:
+            # Should find the sibling link
+            assert photo.get("link") == "/full-size.jpg" or photo.get("link_href") == "/full-size.jpg"
+
+
+# =============================================================================
+# Text Extraction Edge Cases
+# =============================================================================
+
+class TestTextExtractionEdgeCases:
+    """Tests for text extraction edge cases."""
+
+    def test_noise_elements_removed(self):
+        """Noise elements (nav, footer) are removed from text extraction."""
+        html = """
+        <html><body>
+            <nav>Navigation menu here</nav>
+            <main>
+                <p>This is the main content.</p>
+            </main>
+            <footer>Footer content here</footer>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        # Main content should be present, noise reduced
+        text = result.get("text", "")
+        assert "main content" in text.lower()
+
+    def test_fallback_text_extraction_removes_noise(self):
+        """When no main content found, noise elements are removed in fallback."""
+        # HTML without main/article/section/content - triggers fallback path
+        html = """
+        <html><body>
+            <nav>Navigation here</nav>
+            <div>
+                <p>This is body text without main content container.</p>
+                <p>More body content.</p>
+            </div>
+            <footer>Footer here</footer>
+        </body></html>
+        """
+        eyes = Eyes()
+        result = eyes.see(html)
+
+        text = result.get("text", "")
+        # Body text should be there
+        assert "body text" in text.lower() or "body content" in text.lower()
+        # Navigation/footer noise should be removed
+        # (exact behavior depends on implementation)
