@@ -187,6 +187,17 @@ class TestLLMParseAction:
         assert result.action == "click"
 
     @patch('blackreach.llm.LLM._init_client')
+    def test_parse_strips_generic_markdown(self, mock_init):
+        """parse_action strips generic markdown code blocks (no json)."""
+        llm = LLM.__new__(LLM)
+        llm.config = LLMConfig()
+        llm._client = None
+
+        result = llm.parse_action('```\n{"action": "navigate"}\n```')
+
+        assert result.action == "navigate"
+
+    @patch('blackreach.llm.LLM._init_client')
     def test_parse_no_json(self, mock_init):
         """parse_action handles missing JSON."""
         llm = LLM.__new__(LLM)
@@ -495,3 +506,19 @@ class TestLLMGenerateProviderDispatch:
         result = llm.generate("system", "user")
 
         assert result == "xai response"
+
+    @patch('blackreach.llm.LLM._init_client')
+    @patch('blackreach.llm.LLM._call_google')
+    def test_generate_dispatches_to_google(self, mock_call_google, mock_init):
+        """generate dispatches to Google provider."""
+        llm = LLM.__new__(LLM)
+        llm.config = LLMConfig(max_retries=1)
+        llm._client = MagicMock()
+        llm._provider_type = "google"
+
+        mock_call_google.return_value = "google response"
+
+        result = llm.generate("system", "user")
+
+        assert result == "google response"
+        mock_call_google.assert_called_once_with("system", "user")
