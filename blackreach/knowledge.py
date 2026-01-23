@@ -20,6 +20,7 @@ class ContentSource:
     keywords: List[str]  # Keywords that suggest this source
     priority: int = 5  # 1-10, higher = better for this content type
     requires_search: bool = True  # Whether to search on the site or just navigate
+    mirrors: List[str] = field(default_factory=list)  # Alternative URLs if primary is down
 
 
 # Knowledge base of content sources
@@ -28,12 +29,17 @@ CONTENT_SOURCES: List[ContentSource] = [
     # === EBOOKS / BOOKS ===
     ContentSource(
         name="Anna's Archive",
-        url="https://annas-archive.org",
+        url="https://annas-archive.li",  # Primary mirror (.org is often down)
         description="Largest open library with books, papers, comics, magazines",
         content_types=["ebook", "book", "epub", "pdf", "paper", "textbook"],
         keywords=["book", "ebook", "epub", "pdf", "novel", "fiction", "textbook", "read"],
         priority=9,
-        requires_search=True
+        requires_search=True,
+        mirrors=[
+            "https://annas-archive.se",
+            "https://annas-archive.gs",
+            "https://annas-archive.org",
+        ]
     ),
     ContentSource(
         name="Project Gutenberg",
@@ -54,13 +60,18 @@ CONTENT_SOURCES: List[ContentSource] = [
         requires_search=True
     ),
     ContentSource(
-        name="Z-Library (mirror)",
-        url="https://z-lib.io",
+        name="Z-Library",
+        url="https://z-lib.gs",
         description="Large ebook library",
         content_types=["ebook", "book", "epub", "pdf"],
         keywords=["zlibrary", "z-lib", "ebook"],
         priority=8,
-        requires_search=True
+        requires_search=True,
+        mirrors=[
+            "https://z-lib.io",
+            "https://z-lib.fm",
+            "https://singlelogin.re",
+        ]
     ),
     ContentSource(
         name="Library Genesis",
@@ -69,7 +80,12 @@ CONTENT_SOURCES: List[ContentSource] = [
         content_types=["ebook", "book", "textbook", "paper", "pdf"],
         keywords=["libgen", "textbook", "academic", "scientific"],
         priority=8,
-        requires_search=True
+        requires_search=True,
+        mirrors=[
+            "https://libgen.is",
+            "https://libgen.st",
+            "https://libgen.li",
+        ]
     ),
 
     # === ACADEMIC PAPERS ===
@@ -107,7 +123,12 @@ CONTENT_SOURCES: List[ContentSource] = [
         content_types=["paper", "journal", "research"],
         keywords=["doi", "journal", "paywalled", "scientific"],
         priority=8,
-        requires_search=True
+        requires_search=True,
+        mirrors=[
+            "https://sci-hub.st",
+            "https://sci-hub.ru",
+            "https://sci-hub.ee",
+        ]
     ),
 
     # === CODE / SOFTWARE ===
@@ -481,3 +502,45 @@ def get_smart_start(goal: str) -> tuple:
         result["reasoning"],
         result["search_query"]
     )
+
+
+def get_all_urls_for_source(source: ContentSource) -> List[str]:
+    """
+    Get all possible URLs for a source (primary + mirrors).
+    """
+    urls = [source.url]
+    if source.mirrors:
+        urls.extend(source.mirrors)
+    return urls
+
+
+def check_url_reachable(url: str, timeout: float = 5.0) -> bool:
+    """
+    Quick check if a URL is reachable.
+    Returns True if reachable, False otherwise.
+    """
+    import urllib.request
+    import urllib.error
+
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        )
+        urllib.request.urlopen(req, timeout=timeout)
+        return True
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, Exception):
+        return False
+
+
+def get_working_url(source: ContentSource, timeout: float = 5.0) -> Optional[str]:
+    """
+    Find the first working URL for a source.
+    Tries primary URL first, then mirrors.
+
+    Returns the working URL or None if all fail.
+    """
+    for url in get_all_urls_for_source(source):
+        if check_url_reachable(url, timeout):
+            return url
+    return None

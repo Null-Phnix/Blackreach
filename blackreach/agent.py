@@ -25,7 +25,7 @@ from blackreach.resilience import RetryConfig
 from blackreach.memory import SessionMemory, PersistentMemory
 from blackreach.logging import SessionLogger
 from blackreach.exceptions import InvalidActionArgsError, UnknownActionError
-from blackreach.knowledge import reason_about_goal, extract_subject
+from blackreach.knowledge import reason_about_goal, extract_subject, get_working_url, get_all_urls_for_source
 
 
 @dataclass
@@ -370,8 +370,35 @@ class Agent:
             alts = [s.name for s in result["alternate_sources"][:2]]
             log(f"   Backups: {', '.join(alts)}")
 
+        # Check if primary URL is reachable, try mirrors if not
+        start_url = result["start_url"]
+        best_source = result.get("best_source")
+
+        if best_source and best_source.mirrors:
+            log(f"   Checking {best_source.name} availability...")
+            working_url = get_working_url(best_source, timeout=3.0)
+            if working_url:
+                if working_url != best_source.url:
+                    log(f"   Using mirror: {working_url}")
+                start_url = working_url
+            else:
+                log(f"   ⚠ {best_source.name} unavailable, trying alternates...")
+                # Try alternate sources
+                for alt_source in result.get("alternate_sources", []):
+                    alt_url = get_working_url(alt_source, timeout=3.0) if alt_source.mirrors else alt_source.url
+                    if alt_url:
+                        log(f"   Using {alt_source.name}: {alt_url}")
+                        start_url = alt_url
+                        break
+                else:
+                    # Fallback to Google search
+                    import urllib.parse
+                    encoded = urllib.parse.quote(result["search_query"])
+                    start_url = f"https://www.google.com/search?q={encoded}"
+                    log(f"   Falling back to Google search")
+
         return (
-            result["start_url"],
+            start_url,
             result["reasoning"],
             result["search_query"]
         )
