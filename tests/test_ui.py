@@ -274,3 +274,93 @@ class TestThemeColors:
     def test_warning_is_yellow(self):
         """Warning color is yellow."""
         assert theme.warning == "yellow"
+
+
+class TestAgentProgressMethods:
+    """Tests for AgentProgress methods."""
+
+    @patch('blackreach.ui.console')
+    def test_start_sets_max_steps(self, mock_console):
+        """start() sets max_steps."""
+        progress = AgentProgress()
+        progress.start("Test goal", 100)
+
+        assert progress.max_steps == 100
+        assert progress.current_step == 0
+
+    @patch('blackreach.ui.console')
+    def test_start_clears_step_shown(self, mock_console):
+        """start() clears _step_shown set."""
+        progress = AgentProgress()
+        progress._step_shown.add(1)
+        progress._step_shown.add(2)
+
+        progress.start("Test goal", 50)
+
+        assert len(progress._step_shown) == 0
+
+    @patch('blackreach.ui.console')
+    def test_update_step_tracks_current(self, mock_console):
+        """update_step() updates current step."""
+        progress = AgentProgress()
+        progress.max_steps = 10
+
+        progress.update_step(5, "observe", "looking at page")
+
+        assert progress.current_step == 5
+        assert progress.current_phase == "observe"
+
+    @patch('blackreach.ui.console')
+    def test_update_step_records_shown(self, mock_console):
+        """update_step() records step as shown."""
+        progress = AgentProgress()
+        progress.max_steps = 10
+
+        progress.update_step(3, "think")
+
+        assert 3 in progress._step_shown
+
+    @patch('blackreach.ui.console')
+    def test_update_step_only_shows_header_once(self, mock_console):
+        """update_step() only prints header once per step."""
+        progress = AgentProgress()
+        progress.max_steps = 10
+
+        # First call for step 3
+        progress.update_step(3, "observe")
+        call_count_1 = mock_console.print.call_count
+
+        # Second call for step 3 (same step)
+        progress.update_step(3, "think")
+        call_count_2 = mock_console.print.call_count
+
+        # Should not have printed more for second call of same step
+        assert 3 in progress._step_shown
+
+
+class TestSlashCompleterShortcuts:
+    """Tests for SlashCompleter shortcut commands."""
+
+    def test_has_plan_command(self):
+        """SlashCompleter has /plan command."""
+        completer = SlashCompleter()
+        cmd_names = [cmd for cmd, desc in completer.commands]
+        assert "/plan" in cmd_names
+
+    def test_has_logs_command(self):
+        """SlashCompleter has /logs command."""
+        completer = SlashCompleter()
+        cmd_names = [cmd for cmd, desc in completer.commands]
+        assert "/logs" in cmd_names or "/l" in cmd_names
+
+    def test_has_provider_command(self):
+        """SlashCompleter has /provider command."""
+        completer = SlashCompleter()
+        cmd_names = [cmd for cmd, desc in completer.commands]
+        assert "/provider" in cmd_names or "/p" in cmd_names
+
+    def test_has_config_command(self):
+        """SlashCompleter has /config command."""
+        completer = SlashCompleter()
+        cmd_names = [cmd for cmd, desc in completer.commands]
+        assert "/config" in cmd_names or "/cfg" in cmd_names
