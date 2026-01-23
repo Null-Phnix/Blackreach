@@ -410,3 +410,25 @@ class TestLoadPrompts:
         agent = Agent()
         assert "react" in agent.prompts
         assert len(agent.prompts["react"]) > 0
+
+    def test_load_prompts_fallback_when_missing(self):
+        """_load_prompts uses fallback when react.txt missing."""
+        from unittest.mock import patch, MagicMock
+        from pathlib import Path
+
+        # Create a mock that makes react file not exist
+        original_exists = Path.exists
+
+        def mock_exists(self):
+            if "react.txt" in str(self):
+                return False
+            return original_exists(self)
+
+        with patch.object(Path, 'exists', mock_exists):
+            agent = Agent.__new__(Agent)
+            agent.hand = None
+            prompts = agent._load_prompts()
+
+            # Should have fallback message
+            assert "react" in prompts
+            assert "not found" in prompts["react"].lower()
