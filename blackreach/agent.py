@@ -524,9 +524,11 @@ class Agent:
         if hasattr(self, '_logger'):
             self._logger.step_start(step_num)
 
-        # Get page state
+        # Get page state with content verification
         self._emit("on_step", step_num, self.config.max_steps, "observe", "Analyzing page...")
-        html = self.hand.get_html()
+
+        # Get HTML with content verification - this waits for JS to render
+        html = self.hand.get_html(ensure_content=True)
         url = self.hand.get_url()
         title = self.hand.get_title()
 
@@ -537,13 +539,31 @@ class Agent:
         if challenge.detected:
             log(f"  [Challenge page detected: {challenge.details} - waiting...]")
             import time
-            for _ in range(10):  # Wait up to 10 seconds
+            for attempt in range(15):  # Wait up to 15 seconds
                 time.sleep(1)
                 html = self.hand.get_html()
                 if not detector.detect_challenge(html).detected:
+                    log(f"  [Challenge resolved after {attempt+1}s]")
                     break
             url = self.hand.get_url()
             title = self.hand.get_title()
+
+        # Debug: Check HTML content before parsing
+        debug_info = self.eyes.debug_html(html)
+        if debug_info.get("empty_root") or not debug_info.get("has_meaningful_content"):
+            log(f"  [SPA detected or empty content - waiting for render...]")
+            import time
+            # Wait longer for SPA to render
+            for attempt in range(5):
+                time.sleep(2)
+                html = self.hand.get_html()
+                debug_info = self.eyes.debug_html(html)
+                if debug_info.get("has_meaningful_content"):
+                    log(f"  [Content loaded after {(attempt+1)*2}s]")
+                    break
+                # Try scrolling to trigger lazy loading
+                if attempt == 2:
+                    self.hand.scroll("down", 300)
 
         parsed = self.eyes.see(html)
 
@@ -558,22 +578,21 @@ class Agent:
 
         elements = self._format_elements(parsed, exclude_urls=exclude_urls)
 
-        # If no elements found, wait and retry (page may still be loading)
+        # If still no elements after all that, log debug info
         if elements == "No interactive elements found":
-            log("  [No elements - waiting for page to load...]")
+            log(f"  [DEBUG: HTML={debug_info['html_length']}b, text={debug_info['text_length']}, links={debug_info['raw_links']}, inputs={debug_info['raw_inputs']}]")
+
+            # Last resort: try one more time with aggressive waiting
             import time
-            time.sleep(3)
+            log("  [Last attempt - aggressive wait...]")
+            time.sleep(5)
+            self.hand.scroll("down", 500)
+            time.sleep(2)
+            self.hand.scroll("up", 300)
+            time.sleep(1)
             html = self.hand.get_html()
             parsed = self.eyes.see(html)
             elements = self._format_elements(parsed, exclude_urls=exclude_urls)
-
-            # If still no elements, try scrolling to trigger lazy loading
-            if elements == "No interactive elements found":
-                self.hand.scroll("down", 500)
-                time.sleep(1)
-                html = self.hand.get_html()
-                parsed = self.eyes.see(html)
-                elements = self._format_elements(parsed, exclude_urls=exclude_urls)
 
         # Cache for potential reuse
         self._page_cache["url"] = url

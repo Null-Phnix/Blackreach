@@ -212,7 +212,7 @@ class Hand:
 
         # Wait for JavaScript to render dynamic elements
         try:
-            self.page.wait_for_load_state("networkidle", timeout=5000)
+            self.page.wait_for_load_state("networkidle", timeout=8000)
         except Exception:
             pass  # Don't fail if network doesn't go idle
 
@@ -220,18 +220,29 @@ class Hand:
         self._wait_for_challenge_resolution()
 
         # Wait for dynamic content if enabled
+        content_found = False
         if wait_for_content:
-            self._wait_for_dynamic_content()
+            content_found = self._wait_for_dynamic_content(timeout=15000)
 
-        self._human_delay(0.5, 1.5)
+            # If no content found, try scrolling to trigger lazy loading
+            if not content_found:
+                self.scroll("down", 300)
+                time.sleep(1)
+                content_found = self._wait_for_dynamic_content(timeout=5000)
+
+        self._human_delay(0.5, 1.0)
 
         if handle_popups:
             self._popups.handle_all()
-            # Try again after a moment (popups may appear after JS runs)
-            self._human_delay(0.3, 0.5)
+            self._human_delay(0.2, 0.4)
             self._popups.handle_all()
 
-        return {"action": "goto", "url": url, "title": self.page.title()}
+        return {
+            "action": "goto",
+            "url": url,
+            "title": self.page.title(),
+            "content_found": content_found
+        }
 
     def _wait_for_challenge_resolution(self, max_wait: int = 15) -> bool:
         """
@@ -268,47 +279,111 @@ class Hand:
         print(f"  [Challenge did not resolve after {max_wait}s]")
         return True
 
-    def _wait_for_dynamic_content(self, timeout: int = 5000) -> None:
+    def _wait_for_dynamic_content(self, timeout: int = 10000) -> bool:
         """
         Wait for JavaScript-rendered content to appear.
 
-        Uses multiple strategies:
-        1. Wait for common content containers
-        2. Wait for images to load
-        3. Check for loading spinners to disappear
+        Uses multiple strategies with verification:
+        1. Wait for network idle
+        2. Wait for common content containers
+        3. Wait for loading indicators to disappear
+        4. VERIFY actual content exists (links, buttons, text)
+        5. Use JavaScript to check DOM readiness
+
+        Returns True if content was found, False otherwise.
         """
-        # Common content container selectors
+        start_time = time.time()
+        max_time = timeout / 1000  # Convert to seconds
+
+        # Strategy 1: Wait for network to settle
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=min(timeout, 8000))
+        except Exception:
+            pass
+
+        # Strategy 2: Wait for common content containers
         content_selectors = [
-            'main', 'article', '.content', '#content',
-            '.results', '.items', '.list', '.cards',
-            '[role="main"]', '.container'
+            'main', 'article', '.content', '#content', '#root', '#app',
+            '.results', '.items', '.list', '.cards', '.search-results',
+            '[role="main"]', '.container', '.page-content', '.main-content',
+            'form', 'input[type="search"]', 'input[type="text"]'
         ]
 
-        # Try to find any content container
         for selector in content_selectors:
+            if time.time() - start_time > max_time:
+                break
             try:
                 loc = self.page.locator(selector)
                 if loc.count() > 0:
-                    loc.first.wait_for(state="visible", timeout=timeout // 2)
+                    loc.first.wait_for(state="visible", timeout=2000)
                     break
             except Exception:
                 continue
 
-        # Wait for loading spinners to disappear
+        # Strategy 3: Wait for loading indicators to disappear
         spinner_selectors = [
             '.loading', '.spinner', '.loader', '[class*="loading"]',
-            '[class*="spinner"]', '.skeleton', '[aria-busy="true"]'
+            '[class*="spinner"]', '.skeleton', '[aria-busy="true"]',
+            '.lds-ring', '.lds-dual-ring', '.progress'
         ]
         for selector in spinner_selectors:
+            if time.time() - start_time > max_time:
+                break
             try:
                 loc = self.page.locator(selector)
                 if loc.count() > 0:
-                    loc.first.wait_for(state="hidden", timeout=timeout // 2)
+                    loc.first.wait_for(state="hidden", timeout=3000)
             except Exception:
                 pass
 
-        # Short additional wait for any remaining JS
-        time.sleep(0.3)
+        # Strategy 4: Use JavaScript to verify DOM has meaningful content
+        # This is the KEY fix - actually verify content exists
+        for attempt in range(5):
+            if time.time() - start_time > max_time:
+                break
+
+            try:
+                # Check if page has actual interactive elements
+                content_check = self.page.evaluate("""
+                    () => {
+                        const links = document.querySelectorAll('a[href]');
+                        const buttons = document.querySelectorAll('button, [role="button"], input[type="submit"]');
+                        const inputs = document.querySelectorAll('input, textarea, select');
+                        const textLength = document.body?.innerText?.length || 0;
+
+                        return {
+                            links: links.length,
+                            buttons: buttons.length,
+                            inputs: inputs.length,
+                            textLength: textLength,
+                            hasContent: links.length > 3 || buttons.length > 0 || inputs.length > 0 || textLength > 500
+                        };
+                    }
+                """)
+
+                if content_check.get('hasContent', False):
+                    return True
+
+                # Content not ready yet, wait and retry
+                time.sleep(1)
+
+            except Exception:
+                time.sleep(0.5)
+
+        # Strategy 5: Final fallback - just wait a bit more for slow sites
+        time.sleep(1)
+
+        # Final verification
+        try:
+            final_check = self.page.evaluate("""
+                () => {
+                    return document.querySelectorAll('a[href]').length > 0 ||
+                           document.body?.innerText?.length > 200;
+                }
+            """)
+            return final_check
+        except Exception:
+            return False
 
     def back(self) -> dict:
         """Go back in history."""
@@ -471,8 +546,15 @@ class Hand:
     
     # === Reading ===
 
-    def get_html(self, wait_for_load: bool = True, retries: int = 3) -> str:
-        """Get the current page HTML with retry logic for dynamic pages."""
+    def get_html(self, wait_for_load: bool = True, retries: int = 3, ensure_content: bool = False) -> str:
+        """
+        Get the current page HTML with retry logic for dynamic pages.
+
+        Args:
+            wait_for_load: Wait for network to settle before getting HTML
+            retries: Number of retries if page is still navigating
+            ensure_content: If True, verify page has actual content before returning
+        """
         if wait_for_load:
             try:
                 self.page.wait_for_load_state("networkidle", timeout=10000)
@@ -482,15 +564,29 @@ class Hand:
                 except Exception:
                     pass  # Continue anyway - page may be usable
 
+        # If ensure_content is True, wait for actual content to appear
+        if ensure_content:
+            self._wait_for_dynamic_content(timeout=10000)
+
         # Retry logic for pages that are still navigating
         for attempt in range(retries):
             try:
-                return self.page.content()
+                html = self.page.content()
+
+                # If ensure_content, verify we have meaningful HTML
+                if ensure_content and html:
+                    # Quick check: does HTML have any links?
+                    if '<a ' not in html.lower() and attempt < retries - 1:
+                        time.sleep(2)  # Wait and retry
+                        continue
+
+                return html
             except Exception as e:
                 if "navigating" in str(e).lower() and attempt < retries - 1:
                     time.sleep(1)  # Wait a bit and retry
                 else:
                     raise
+        return ""
 
     def get_url(self) -> str:
         """Get the current URL."""

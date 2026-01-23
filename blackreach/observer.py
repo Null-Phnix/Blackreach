@@ -90,7 +90,8 @@ class Eyes:
             if cache_key in self._cache:
                 return self._cache[cache_key]
 
-        soup = BeautifulSoup(html, 'lxml')
+        # Use html.parser instead of lxml - more lenient with malformed HTML
+        soup = BeautifulSoup(html, 'html.parser')
 
         # Remove unwanted tags
         for tag in soup.find_all(self.REMOVE_TAGS):
@@ -127,6 +128,46 @@ class Eyes:
             self._cache[cache_key] = result
 
         return result
+
+    def debug_html(self, html: str) -> dict:
+        """
+        Debug helper to understand what's in the HTML.
+        Returns statistics about the HTML structure.
+        """
+        soup = BeautifulSoup(html, 'html.parser')
+
+        # Count raw elements before any filtering
+        raw_links = len(soup.find_all('a', href=True))
+        raw_buttons = len(soup.find_all(['button', 'input']))
+        raw_inputs = len(soup.find_all(['input', 'textarea', 'select']))
+        raw_divs = len(soup.find_all('div'))
+        raw_text = len(soup.get_text(strip=True))
+
+        # Check for common SPA indicators
+        has_react = 'react' in html.lower() or 'data-reactroot' in html
+        has_vue = 'vue' in html.lower() or 'data-v-' in html
+        has_angular = 'ng-' in html or 'angular' in html.lower()
+        has_empty_root = bool(soup.find('div', id='root') and not soup.find('div', id='root').get_text(strip=True))
+        has_empty_app = bool(soup.find('div', id='app') and not soup.find('div', id='app').get_text(strip=True))
+
+        # Check for challenge/interstitial indicators
+        has_challenge = any(phrase in html.lower() for phrase in [
+            'ddos-guard', 'cloudflare', 'checking your browser', 'please wait'
+        ])
+
+        return {
+            "html_length": len(html),
+            "text_length": raw_text,
+            "raw_links": raw_links,
+            "raw_buttons": raw_buttons,
+            "raw_inputs": raw_inputs,
+            "raw_divs": raw_divs,
+            "is_spa": has_react or has_vue or has_angular,
+            "spa_framework": "React" if has_react else ("Vue" if has_vue else ("Angular" if has_angular else None)),
+            "empty_root": has_empty_root or has_empty_app,
+            "is_challenge_page": has_challenge,
+            "has_meaningful_content": raw_text > 200 and (raw_links > 3 or raw_inputs > 0)
+        }
 
     def see_simple(self, html: str) -> str:
         """Compact text representation for quick overview."""
