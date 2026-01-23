@@ -245,3 +245,77 @@ class TestAvailableModelsContent:
         """Ollama has local model options."""
         models = AVAILABLE_MODELS.get("ollama", [])
         assert len(models) > 0
+
+
+class TestConfigManagerFileOps:
+    """Tests for ConfigManager file operations."""
+
+    def test_load_config_creates_default(self, tmp_path, monkeypatch):
+        """load() creates default config if file doesn't exist."""
+        config_file = tmp_path / "config.yml"
+        monkeypatch.setattr("blackreach.config.CONFIG_FILE", config_file)
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = None
+
+        config = manager.load()
+
+        assert config is not None
+        assert isinstance(config, Config)
+        assert config_file.exists()  # File was created
+
+    def test_load_config_from_existing_file(self, tmp_path, monkeypatch):
+        """load() reads config from existing file."""
+        import yaml
+
+        config_file = tmp_path / "config.yml"
+        data = {
+            "default_provider": "openai",
+            "providers": {"openai": {"api_key": "test-key"}},
+            "agent": {"max_steps": 50},
+            "ui": {"verbose": True}
+        }
+        with open(config_file, 'w') as f:
+            yaml.dump(data, f)
+
+        monkeypatch.setattr("blackreach.config.CONFIG_FILE", config_file)
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = None
+
+        config = manager.load()
+
+        assert config.default_provider == "openai"
+        assert config.max_steps == 50
+
+    def test_load_env_keys(self, monkeypatch):
+        """_load_env_keys() loads API keys from environment."""
+        monkeypatch.setenv("OPENAI_API_KEY", "env-openai-key")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "env-anthropic-key")
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = Config()
+        manager._load_env_keys()
+
+        assert manager._config.openai.api_key == "env-openai-key"
+        assert manager._config.anthropic.api_key == "env-anthropic-key"
+
+    def test_save_config(self, tmp_path, monkeypatch):
+        """save() writes config to file."""
+        config_file = tmp_path / "config.yml"
+        monkeypatch.setattr("blackreach.config.CONFIG_FILE", config_file)
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = Config()
+        manager._config.default_provider = "google"
+        manager._config.max_steps = 75
+
+        manager.save()
+
+        assert config_file.exists()
+        # Verify file content
+        import yaml
+        with open(config_file) as f:
+            data = yaml.safe_load(f)
+        assert data["default_provider"] == "google"
+        assert data["agent"]["max_steps"] == 75
