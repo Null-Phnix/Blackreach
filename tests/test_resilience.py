@@ -397,3 +397,107 @@ class TestCircuitBreakerNaming:
                 pass
 
         assert "my-service" in str(exc_info.value)
+
+
+# =============================================================================
+# PopupHandler Constants Tests
+# =============================================================================
+
+class TestPopupHandlerConstants:
+    """Tests for PopupHandler selector constants."""
+
+    def test_cookie_selectors_not_empty(self):
+        """Cookie selectors list is not empty."""
+        from blackreach.resilience import PopupHandler
+        assert len(PopupHandler.COOKIE_SELECTORS) > 0
+
+    def test_close_selectors_not_empty(self):
+        """Close selectors list is not empty."""
+        from blackreach.resilience import PopupHandler
+        assert len(PopupHandler.CLOSE_SELECTORS) > 0
+
+    def test_cookie_selectors_are_strings(self):
+        """All cookie selectors are strings."""
+        from blackreach.resilience import PopupHandler
+        for selector in PopupHandler.COOKIE_SELECTORS:
+            assert isinstance(selector, str)
+
+    def test_close_selectors_are_strings(self):
+        """All close selectors are strings."""
+        from blackreach.resilience import PopupHandler
+        for selector in PopupHandler.CLOSE_SELECTORS:
+            assert isinstance(selector, str)
+
+    def test_cookie_selectors_include_common_patterns(self):
+        """Cookie selectors include common accept buttons."""
+        from blackreach.resilience import PopupHandler
+        selectors_str = " ".join(PopupHandler.COOKIE_SELECTORS).lower()
+        assert "accept" in selectors_str
+        assert "agree" in selectors_str
+
+    def test_close_selectors_include_close_buttons(self):
+        """Close selectors include common close patterns."""
+        from blackreach.resilience import PopupHandler
+        selectors_str = " ".join(PopupHandler.CLOSE_SELECTORS).lower()
+        assert "close" in selectors_str
+
+
+# =============================================================================
+# SmartSelector Basic Tests
+# =============================================================================
+
+class TestSmartSelectorBasic:
+    """Basic tests for SmartSelector that don't require browser."""
+
+    def test_smart_selector_import(self):
+        """SmartSelector can be imported."""
+        from blackreach.resilience import SmartSelector
+        assert SmartSelector is not None
+
+    def test_smart_selector_has_find_method(self):
+        """SmartSelector has find method."""
+        from blackreach.resilience import SmartSelector
+        assert hasattr(SmartSelector, 'find')
+
+    def test_smart_selector_has_find_by_text_method(self):
+        """SmartSelector has find_by_text method."""
+        from blackreach.resilience import SmartSelector
+        assert hasattr(SmartSelector, 'find_by_text')
+
+
+# =============================================================================
+# WaitConditions Tests
+# =============================================================================
+
+class TestWaitConditionsBasic:
+    """Basic tests for WaitConditions."""
+
+    def test_wait_conditions_import(self):
+        """WaitConditions can be imported."""
+        from blackreach.resilience import WaitConditions
+        assert WaitConditions is not None
+
+    def test_wait_conditions_has_wait_for_url(self):
+        """WaitConditions has wait_for_url method."""
+        from blackreach.resilience import WaitConditions
+        assert hasattr(WaitConditions, 'wait_for_url')
+
+    def test_wait_conditions_has_wait_for_text(self):
+        """WaitConditions has wait_for_text method."""
+        from blackreach.resilience import WaitConditions
+        assert hasattr(WaitConditions, 'wait_for_text')
+
+    def test_wait_conditions_has_wait_for_network_idle(self):
+        """WaitConditions has wait_for_network_idle method."""
+        from blackreach.resilience import WaitConditions
+        assert hasattr(WaitConditions, 'wait_for_network_idle')
+
+    def test_wait_conditions_has_wait_for_element(self):
+        """WaitConditions has wait_for_element method."""
+        from blackreach.resilience import WaitConditions
+        assert hasattr(WaitConditions, 'wait_for_element')
+
+    def test_wait_conditions_has_wait_for_navigation(self):
+        """WaitConditions has wait_for_navigation method."""
+        from blackreach.resilience import WaitConditions
+        assert hasattr(WaitConditions, 'wait_for_navigation')
