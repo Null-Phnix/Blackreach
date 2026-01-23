@@ -281,12 +281,190 @@ elements = self._page_cache.get("elements")  # Reuse, don't re-parse
 
 ---
 
+## Entry 6: Single LLM Call Architecture (Session 2)
+
+**Time:** January 22, 2026 - Session 2
+
+**Goal:** Fix performance issues - agent was too slow with 3 LLM calls per step
+
+### Problem Identified
+
+The agent made 3 separate LLM calls per step:
+1. `_observe()` - Describe the page
+2. `_think()` - Decide what to do
+3. `_act()` - Output JSON action
+
+This caused ~15 second latency per step and inconsistent outputs.
+
+### Solution Implemented
+
+Created unified `react.txt` prompt that combines all three into one JSON response:
+
+```json
+{"thought": "reasoning", "action": "type", "args": {"selector": "input", "text": "query"}}
+```
+
+### Changes Made
+
+| File | Change |
+|------|--------|
+| prompts/react.txt | NEW - Unified prompt |
+| agent.py | Refactored _step() to single call |
+| agent.py | Added action aliases (search->type, go->navigate) |
+| agent.py | Default submit=True for type action |
+| agent.py | Default URL changed to Wikipedia |
+
+### Test Results
+
+| Test | Result | Steps |
+|------|--------|-------|
+| Search "artificial intelligence" on Wikipedia | SUCCESS | 2 |
+| Search "Python programming" on Wikipedia | SUCCESS | 2 |
+
+### Performance Improvement
+
+- LLM calls: 3 → 1 per step (66% reduction)
+- Response time: ~15s → ~5s per step
+- Token usage: ~75% reduction
+
+---
+
+## Entry 7: Run 3 - Final Polish (Session 2 continued)
+
+**Time:** January 22, 2026 - Session 2, Run 3
+
+**Goal:** Final cleanup and testing
+
+### Work Done
+
+1. **Removed dead code** - Old _observe(), _think(), _act() methods (~150 lines)
+2. **Improved goal completion detection** - Stronger rules for recognizing when goal is done
+3. **Tested search and download flows** - Both work correctly
+
+### Final Prompt (`react.txt`)
+
+```
+Goal: {goal}
+Page: {title}
+URL: {url}
+Downloads completed: {download_count}
+
+*** STOP AND CHECK ***
+If Downloads completed = 1 or more: output done (goal achieved, stop)
+If page title contains goal topic: output done
+
+Actions:
+- type: {"action":"type","args":{"selector":"input","text":"query"}}
+- navigate: {"action":"navigate","args":{"url":"https://..."}}
+- download: {"action":"download","args":{"url":"https://..."}}
+- done: {"action":"done","args":{"reason":"complete"}}
+
+Output ONE JSON:
+```
+
+### Test Results (Final)
+
+| Test | Result | Steps |
+|------|--------|-------|
+| Wikipedia "machine learning" | SUCCESS | 3 |
+| Download w3c_home.png | SUCCESS | 2 |
+| Wikipedia "cats" | SUCCESS | 2 |
+| Wikipedia "python" | SUCCESS | 2 |
+
+### Performance Notes
+
+- qwen2.5:7b: 4-11 seconds per LLM call
+- llama3.2:3b: Faster but inconsistent output format
+- Recommended: qwen2.5:7b for reliability
+
+---
+
+## Summary of All Sessions
+
+### Session 1 Changes
+- Fixed null locator crash
+- Fixed silent callback errors
+- Fixed bare except clauses
+- Added HTML caching
+- Added command aliases
+- Added structured logging
+- Added Planner module
+
+### Session 2 Changes (Runs 1-3)
+- Reduced LLM calls from 3 to 1 per step (66% faster)
+- Simplified prompt for reliability
+- Added HTTP fallback for inline file downloads
+- Made JSON parsing flexible for various LLM outputs
+- Added action aliases (search→type, go→navigate)
+- Removed dead code (~150 lines)
+- Changed default URL to Wikipedia (no CAPTCHA)
+
+### Final State
+
+The agent now:
+1. Works end-to-end for search and download tasks
+2. Uses single LLM call per step (fast and reliable)
+3. Handles inline file downloads (images, etc.)
+4. Detects goal completion automatically
+5. Works with qwen2.5:7b as default model
+
+---
+
 ## Next Steps
 
-1. [ ] Test agent end-to-end
-2. [ ] Fix any remaining issues discovered during testing
-3. [ ] Add more learning documentation
-4. [ ] Consider Phase 3 polish items:
-   - Planner module for complex goals
-   - Better error recovery
-   - Progress checkpointing
+1. [x] Test agent end-to-end - DONE
+2. [x] Test download functionality - DONE
+3. [ ] Add timeout handling for slow LLM responses
+4. [ ] Consider parallel download support
+5. [ ] Add more robust error messages
+
+---
+
+## Entry 8: Stress Testing Session (January 22, 2026 - Session 3)
+
+**Goal:** Verify Blackreach works as a general-purpose agent, not just wallpaper downloader
+
+### Tests Completed
+
+| Test | Description | Result |
+|------|-------------|--------|
+| 1 | Wallpapers from wallhaven | PARTIAL (2/5) |
+| 2 | ArXiv papers | SUCCESS (2/2) |
+| 3 | GitHub README | SUCCESS |
+| 5 | Gutenberg ebook | SUCCESS |
+| 6 | CSV data files | SUCCESS (2/2) |
+| 7 | Wikimedia image | FAILED |
+| 9 | MIT OCW PDFs | PARTIAL (1/2) |
+
+**Score: ~70% success rate**
+
+### Major Fixes Applied
+
+1. Single action output (not array)
+2. Click text bracket stripping
+3. Relative URL resolution (navigate + download)
+4. Link prioritization (downloads > detail pages > other)
+5. PDF path detection (`/pdf/` pattern)
+6. Size filter scoped to images only
+7. Generalized visited page tracking
+8. HTTP User-Agent header
+9. Wiki page exclusion from downloads
+
+### Files Downloaded During Testing
+
+- 2 ArXiv papers (11.2MB total)
+- 1 MIT OCW PDF (3.3MB)
+- 1 Gutenberg ebook (25MB)
+- 1 GitHub README (208KB)
+- 2 CSV files (95KB total)
+
+### Documentation Created
+
+- `learning/test_results.md` - Full test documentation
+- `learning/08_DEBUGGING_REPORT.md` - Detailed error analysis and fixes
+
+### Known Remaining Issues
+
+1. LLM sometimes picks same link repeatedly (~30% of cases)
+2. Wikimedia pages too complex to parse
+3. Some inline files cause download timeouts

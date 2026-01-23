@@ -9,21 +9,17 @@ Provides:
 - Keyboard handling
 """
 
-import sys
 import time
-from typing import Optional, Callable, Generator, Any
+from typing import Optional
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from rich.console import Console, Group
+from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.text import Text
 from rich.table import Table
-from rich.markdown import Markdown
-from rich.syntax import Syntax
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.status import Status
 from rich.rule import Rule
 from rich.style import Style
@@ -31,13 +27,12 @@ from rich.style import Style
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
-from prompt_toolkit.completion import WordCompleter, Completer, Completion
+from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.styles import Style as PTStyle
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
-from prompt_toolkit.shortcuts import radiolist_dialog, yes_no_dialog
-from prompt_toolkit.application import run_in_terminal
+from prompt_toolkit.shortcuts import radiolist_dialog
 
 
 # Global console

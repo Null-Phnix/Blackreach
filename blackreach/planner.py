@@ -16,7 +16,7 @@ The planner uses a smarter model (or more tokens) to reason about the task,
 then the executor uses a faster model for each step.
 """
 
-from typing import List, Dict, Optional
+from typing import List, Optional
 from dataclasses import dataclass
 
 from blackreach.llm import LLM, LLMConfig

@@ -10,10 +10,8 @@ Techniques to avoid detection by anti-bot systems:
 """
 
 import random
-import asyncio
 from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass, field
-import math
 
 
 @dataclass

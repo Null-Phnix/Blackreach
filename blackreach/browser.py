@@ -514,9 +514,78 @@ class Hand:
         """
         Download a file from a direct link URL.
 
-        This handles both regular file URLs and blob URLs.
+        This handles both regular file URLs, blob URLs, and inline files (images, etc.)
+        Automatically chooses the best download method based on file type.
         """
-        return self.download_file(url=href, timeout=timeout)
+        href_lower = href.lower()
+
+        # Files that are typically displayed inline by browsers - use HTTP fetch directly
+        inline_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.ico', '.bmp']
+        is_inline_file = any(href_lower.endswith(ext) or f'{ext}?' in href_lower for ext in inline_extensions)
+
+        # Also check for image hosting patterns
+        is_image_host = any(h in href_lower for h in ['upload.wikimedia.org', 'i.imgur.com', 'pbs.twimg.com'])
+
+        if is_inline_file or is_image_host:
+            # Use HTTP fetch directly for images (faster, no timeout)
+            return self._fetch_file_directly(href)
+
+        # For other files, try browser download first with shorter timeout
+        try:
+            return self.download_file(url=href, timeout=min(timeout, 30000))  # Max 30s
+        except Exception as e:
+            if "Timeout" in str(e) or "download" in str(e).lower():
+                # Browser displays file inline - use HTTP fetch instead
+                return self._fetch_file_directly(href)
+            raise
+
+    def _fetch_file_directly(self, url: str) -> dict:
+        """
+        Download a file using direct HTTP fetch (for inline content like images).
+        """
+        import urllib.request
+        import urllib.error
+        from urllib.parse import urlparse, unquote
+        import hashlib
+
+        # Get filename from URL
+        parsed = urlparse(url)
+        filename = unquote(parsed.path.split('/')[-1]) or 'downloaded_file'
+
+        # Add extension if missing based on content type
+        save_path = self.download_dir / filename
+
+        # Handle duplicate filenames
+        counter = 1
+        base_path = save_path
+        while save_path.exists():
+            stem = base_path.stem
+            save_path = self.download_dir / f"{stem}_{counter}{base_path.suffix}"
+            counter += 1
+
+        # Download the file with User-Agent to avoid 403 errors
+        try:
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            })
+            with urllib.request.urlopen(req, timeout=30) as response:
+                with open(save_path, 'wb') as f:
+                    f.write(response.read())
+        except urllib.error.HTTPError as e:
+            raise ValueError(f"HTTP error downloading {url}: {e.code} {e.reason}")
+
+        # Compute hash and size
+        file_hash = self._compute_hash(save_path)
+        file_size = save_path.stat().st_size
+
+        return {
+            "action": "download",
+            "filename": save_path.name,
+            "path": str(save_path),
+            "size": file_size,
+            "hash": file_hash,
+            "url": url
+        }
 
     def click_and_download(self, selector: str, timeout: int = 60000) -> dict:
         """

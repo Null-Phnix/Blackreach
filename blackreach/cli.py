@@ -21,7 +21,7 @@ import subprocess
 import sys
 import shutil
 
-from blackreach.config import config_manager, AVAILABLE_MODELS, CONFIG_FILE, CONFIG_DIR
+from blackreach.config import config_manager, AVAILABLE_MODELS, CONFIG_FILE
 
 console = Console()
 

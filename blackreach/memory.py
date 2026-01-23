@@ -12,7 +12,6 @@ This allows the agent to:
 """
 
 import sqlite3
-import json
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any
@@ -32,13 +31,16 @@ class SessionMemory:
     Used for: recent actions, current session state
     """
     downloaded_files: List[str] = field(default_factory=list)
+    downloaded_urls: List[str] = field(default_factory=list)
     visited_urls: List[str] = field(default_factory=list)
     actions_taken: List[Dict[str, Any]] = field(default_factory=list)
     failures: List[str] = field(default_factory=list)
 
     def add_download(self, filename: str, url: str = ""):
-        """Record a downloaded file."""
+        """Record a downloaded file and its URL."""
         self.downloaded_files.append(filename)
+        if url and url not in self.downloaded_urls:
+            self.downloaded_urls.append(url)
 
     def add_visit(self, url: str):
         """Record a visited URL (no duplicates)."""

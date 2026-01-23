@@ -5,10 +5,9 @@ Cleans raw HTML into simple, readable text for the Brain.
 Optimized for performance and LLM consumption.
 """
 
-from bs4 import BeautifulSoup, Tag, SoupStrainer
+from bs4 import BeautifulSoup, Tag
 from typing import List, Dict, Optional, Set
 from dataclasses import dataclass
-from functools import lru_cache
 import re
 import hashlib
 
@@ -37,7 +36,6 @@ class Eyes:
     The Eyes that parse and clean HTML for the Brain.
 
     Features:
-    - Optimized parsing with SoupStrainer
     - Content prioritization (main content first)
     - Semantic extraction (headings, lists, structured data)
     - Result caching for repeated parsing
@@ -105,6 +103,7 @@ class Eyes:
         buttons = self._extract_buttons(soup)
         forms = self._extract_forms(soup)
         lists = self._extract_lists(soup) if self.config.extract_lists else []
+        images = self._extract_images(soup)
 
         # Extract text LAST (may modify soup for prioritization)
         main_text = self._extract_prioritized_text(soup)
@@ -117,6 +116,7 @@ class Eyes:
             "buttons": buttons[:self.config.max_buttons],
             "forms": forms,
             "lists": lists[:10],
+            "images": images[:30],
         }
 
         if use_cache and len(self._cache) < self.config.cache_size:
@@ -380,6 +380,63 @@ class Eyes:
                     "selector": self._get_selector(ul)
                 })
         return lists
+
+    def _extract_images(self, soup: BeautifulSoup) -> List[Dict]:
+        """Extract images with their URLs and context."""
+        images = []
+        seen_srcs: Set[str] = set()
+
+        for img in soup.find_all('img'):
+            # Get image source - check src, data-src, data-original, srcset
+            src = (img.get('src') or img.get('data-src') or
+                   img.get('data-original') or img.get('data-lazy-src') or '')
+
+            # Skip small images, icons, tracking pixels
+            if not src or src in seen_srcs:
+                continue
+            if any(x in src.lower() for x in ['icon', 'logo', 'avatar', 'pixel', 'tracking', 'ads', 'btn', 'button']):
+                continue
+
+            seen_srcs.add(src)
+
+            # Get alt text and title
+            alt = img.get('alt', '')
+            title = img.get('title', '')
+
+            # Find associated link - check parent, then sibling, then container
+            link_href = ''
+
+            # 1. Check if image is inside a link
+            parent_link = img.find_parent('a')
+            if parent_link and parent_link.get('href'):
+                link_href = parent_link.get('href', '')
+
+            # 2. Check container (figure, div, li) for links (wallhaven pattern)
+            if not link_href:
+                container = img.find_parent(['figure', 'div', 'li', 'article'])
+                if container:
+                    # Find the first link in the same container
+                    sibling_link = container.find('a', href=True)
+                    if sibling_link:
+                        link_href = sibling_link.get('href', '')
+
+            # Look for data attributes with full-size URLs (common in galleries)
+            full_src = (img.get('data-full') or img.get('data-wallpaper') or
+                        img.get('data-large') or img.get('data-original-src') or
+                        img.get('data-zoom') or '')
+
+            images.append({
+                "src": src,
+                "full_src": full_src,
+                "alt": alt[:100],
+                "title": title[:100],
+                "link": link_href,
+                "selector": self._get_selector(img)
+            })
+
+        # Sort by likely importance (images with links first, then with alt text)
+        images.sort(key=lambda x: (bool(x['link']), bool(x['alt']), len(x['src'])), reverse=True)
+        return images
 
     def _get_selector(self, tag: Tag) -> str:
         """Generate a robust CSS selector for an element."""

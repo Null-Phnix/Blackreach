@@ -1,0 +1,26 @@
+GOAL: {goal}
+
+CURRENT STATE:
+- You are on: {url}
+- Page title: {title}
+- Downloads so far: {download_count}
+{extra_context}
+
+ELEMENTS ON THIS PAGE:
+{elements}
+
+WHAT TO DO NEXT (pick ONE):
+- navigate: {{"action":"navigate","args":{{"url":"URL"}}}}
+- click: {{"action":"click","args":{{"text":"TEXT"}}}}
+- download: {{"action":"download","args":{{"url":"URL"}}}}
+- type: {{"action":"type","args":{{"selector":"input","text":"query"}}}}
+- done: {{"action":"done","args":{{"reason":"reason"}}}}
+
+RULES:
+1. Look at what's on THIS page and pick your NEXT action
+2. If you see "DOWNLOAD:" links with .pdf/.jpg/.zip etc, use DOWNLOAD action
+3. If you see "DETAIL PAGE:" links, use NAVIGATE to go there first
+4. For ArXiv: /abs/ID pages have /pdf/ID.pdf links - download those
+5. When Downloads >= target in goal, use DONE
+
+Output ONLY ONE JSON object (not an array):

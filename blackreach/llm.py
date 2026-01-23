@@ -8,9 +8,8 @@ Supports: Ollama (local), OpenAI, Anthropic, Google, Groq
 import json
 import re
 import time
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from dataclasses import dataclass
-from pathlib import Path
 
 
 @dataclass
