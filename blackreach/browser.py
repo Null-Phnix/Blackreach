@@ -17,6 +17,13 @@ from blackreach.resilience import (
     SmartSelector, PopupHandler, WaitConditions,
     retry_with_backoff, RetryConfig
 )
+from blackreach.exceptions import (
+    BrowserNotReadyError,
+    ElementNotFoundError,
+    DownloadError,
+    InvalidActionArgsError,
+    UnknownActionError,
+)
 
 
 class Hand:
@@ -153,28 +160,28 @@ class Hand:
     @property
     def page(self) -> Page:
         if not self._page:
-            raise RuntimeError("Hand is not awake. Call wake() first.")
+            raise BrowserNotReadyError()
         return self._page
 
     @property
     def selector(self) -> SmartSelector:
         """Get smart selector helper."""
         if not self._selector:
-            raise RuntimeError("Hand is not awake. Call wake() first.")
+            raise BrowserNotReadyError()
         return self._selector
 
     @property
     def popups(self) -> PopupHandler:
         """Get popup handler."""
         if not self._popups:
-            raise RuntimeError("Hand is not awake. Call wake() first.")
+            raise BrowserNotReadyError()
         return self._popups
 
     @property
     def waits(self) -> WaitConditions:
         """Get wait conditions helper."""
         if not self._waits:
-            raise RuntimeError("Hand is not awake. Call wake() first.")
+            raise BrowserNotReadyError()
         return self._waits
 
     def _human_delay(self, min_s: float = None, max_s: float = None) -> None:
@@ -259,7 +266,7 @@ class Hand:
             locator = self.page.locator(selector).first
 
         if not locator:
-            raise ValueError(f"Element not found: {selector}")
+            raise ElementNotFoundError(selector=str(selector))
 
         # Simple human delay before click
         if human:
@@ -312,7 +319,7 @@ class Hand:
                 continue
 
         if locator is None:
-            raise ValueError(f"Could not find visible element with selector: {selector}")
+            raise ElementNotFoundError(selector=selector)
 
         # Now type into the found element
         try:
@@ -482,7 +489,7 @@ class Hand:
                 self.page.locator(selector).first.click()
             download = download_info.value
         else:
-            raise ValueError("Must provide either selector or url")
+            raise InvalidActionArgsError("download", "Must provide either selector or url")
 
         # Save to download directory
         suggested_name = download.suggested_filename
@@ -572,7 +579,7 @@ class Hand:
                 with open(save_path, 'wb') as f:
                     f.write(response.read())
         except urllib.error.HTTPError as e:
-            raise ValueError(f"HTTP error downloading {url}: {e.code} {e.reason}")
+            raise DownloadError(url, reason=e.reason, status_code=e.code)
 
         # Compute hash and size
         file_hash = self._compute_hash(save_path)
@@ -637,7 +644,7 @@ class Hand:
         """Click element by its visible text."""
         locator = self.selector.find_by_text(text, tag)
         if not locator:
-            raise ValueError(f"No element found with text: {text}")
+            raise ElementNotFoundError(text=text)
         locator.click()
         self._human_delay()
         return {"action": "smart_click", "text": text}
@@ -646,7 +653,7 @@ class Hand:
         """Type into input found by various attributes."""
         locator = self.selector.find_input(name=into, placeholder=placeholder, label=label)
         if not locator:
-            raise ValueError(f"No input found matching criteria")
+            raise ElementNotFoundError()
         locator.fill(text)
         return {"action": "smart_type", "text": text}
 
@@ -699,5 +706,5 @@ class Hand:
         elif action == "wait_and_click":
             return self.wait_and_click(command["selector"], command.get("timeout", 10000))
         else:
-            raise ValueError(f"Unknown action: {action}")
+            raise UnknownActionError(action)
 

@@ -7,6 +7,7 @@ Does NOT test actual LLM API calls (those require mocking or integration tests).
 
 import pytest
 from blackreach.llm import LLM, LLMConfig, LLMResponse
+from blackreach.exceptions import ProviderError, ProviderNotInstalledError
 
 
 # =============================================================================
@@ -137,7 +138,7 @@ class TestParseAction:
         """
         try:
             return LLM(LLMConfig())
-        except ImportError:
+        except (ImportError, ProviderNotInstalledError):
             pytest.skip("ollama not installed")
 
     def test_parse_simple_action(self, llm):
@@ -321,20 +322,20 @@ class TestLLMInitialization:
     """Tests for LLM class initialization."""
 
     def test_unsupported_provider_raises(self):
-        """Unsupported provider raises ValueError."""
+        """Unsupported provider raises ProviderError."""
         config = LLMConfig(provider="unsupported_provider")
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ProviderError) as exc_info:
             LLM(config)
 
-        assert "Unsupported provider" in str(exc_info.value)
+        assert "unsupported_provider" in str(exc_info.value)
 
     def test_ollama_provider_type(self):
         """Ollama provider sets correct type."""
         try:
             llm = LLM(LLMConfig(provider="ollama"))
             assert llm._provider_type == "ollama"
-        except ImportError:
+        except (ImportError, ProviderNotInstalledError):
             pytest.skip("ollama not installed")
 
     def test_config_stored(self):
@@ -344,5 +345,5 @@ class TestLLMInitialization:
             llm = LLM(config)
             assert llm.config.model == "test-model"
             assert llm.config.temperature == 0.5
-        except ImportError:
+        except (ImportError, ProviderNotInstalledError):
             pytest.skip("ollama not installed")

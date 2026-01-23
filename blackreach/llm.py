@@ -11,6 +11,8 @@ import time
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
+from blackreach.exceptions import ProviderError, ProviderNotInstalledError, ParseError
+
 
 @dataclass
 class LLMConfig:
@@ -68,7 +70,7 @@ class LLM:
         elif provider == "xai":
             self._init_xai()
         else:
-            raise ValueError(f"Unsupported provider: {provider}")
+            raise ProviderError(provider, "Unsupported provider")
 
     def _init_ollama(self):
         """Initialize Ollama client (local models)."""
@@ -77,7 +79,7 @@ class LLM:
             self._client = ollama
             self._provider_type = "ollama"
         except ImportError:
-            raise ImportError("ollama package required. Install with: pip install ollama")
+            raise ProviderNotInstalledError("ollama", "ollama")
 
     def _init_openai(self):
         """Initialize OpenAI client."""
@@ -89,7 +91,7 @@ class LLM:
             )
             self._provider_type = "openai"
         except ImportError:
-            raise ImportError("openai package required. Install with: pip install openai")
+            raise ProviderNotInstalledError("openai", "openai")
 
     def _init_anthropic(self):
         """Initialize Anthropic client."""
@@ -98,7 +100,7 @@ class LLM:
             self._client = anthropic.Anthropic(api_key=self.config.api_key)
             self._provider_type = "anthropic"
         except ImportError:
-            raise ImportError("anthropic package required. Install with: pip install anthropic")
+            raise ProviderNotInstalledError("anthropic", "anthropic")
 
     def _init_google(self):
         """Initialize Google Gemini client."""
@@ -107,7 +109,7 @@ class LLM:
             self._client = genai.Client(api_key=self.config.api_key)
             self._provider_type = "google"
         except ImportError:
-            raise ImportError("google-genai package required. Install with: pip install google-genai")
+            raise ProviderNotInstalledError("google", "google-genai")
 
     def _init_xai(self):
         """Initialize xAI client (uses OpenAI-compatible API)."""
@@ -119,7 +121,7 @@ class LLM:
             )
             self._provider_type = "xai"
         except ImportError:
-            raise ImportError("openai package required. Install with: pip install openai")
+            raise ProviderNotInstalledError("xai", "openai")
 
     def generate(self, system_prompt: str, user_message: str) -> str:
         """Generate a response from the LLM."""

@@ -24,6 +24,7 @@ from blackreach.stealth import StealthConfig
 from blackreach.resilience import RetryConfig
 from blackreach.memory import SessionMemory, PersistentMemory
 from blackreach.logging import SessionLogger
+from blackreach.exceptions import InvalidActionArgsError, UnknownActionError
 
 
 @dataclass
@@ -643,7 +644,7 @@ class Agent:
                 self.hand.click(selector)
                 return {"action": "click", "selector": selector}
             else:
-                raise ValueError("Click requires either 'selector' or 'text' argument")
+                raise InvalidActionArgsError("click", "Must provide either selector or text argument")
 
         elif action == "type":
             selector = args.get("selector", "input")
@@ -721,7 +722,7 @@ class Agent:
                 elif selector:
                     result = self.hand.click_and_download(selector)
                 else:
-                    raise ValueError("Download requires url or selector")
+                    raise InvalidActionArgsError("download", "Must provide either url or selector")
 
                 # Check if we already have this file (by hash)
                 if self.persistent_memory.has_downloaded(file_hash=result["hash"]):
@@ -779,7 +780,7 @@ class Agent:
             return {"done": True, "reason": args.get("reason", "Goal complete")}
 
         else:
-            raise ValueError(f"Unknown action: {action}")
+            raise UnknownActionError(action)
 
     def _format_elements(self, parsed: Dict, exclude_urls: list = None) -> str:
         """Format parsed elements for prompt - prioritize images for download tasks.

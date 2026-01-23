@@ -13,6 +13,7 @@ import hashlib
 from blackreach.browser import Hand
 from blackreach.resilience import RetryConfig
 from blackreach.stealth import StealthConfig
+from blackreach.exceptions import BrowserNotReadyError
 
 
 # =============================================================================
@@ -243,9 +244,9 @@ class TestStateManagement:
     def test_page_property_raises_before_wake(self, download_dir):
         """Page property raises error before wake()."""
         hand = Hand(download_dir=download_dir)
-        with pytest.raises(RuntimeError) as exc_info:
+        with pytest.raises(BrowserNotReadyError) as exc_info:
             _ = hand.page
-        assert "not awake" in str(exc_info.value)
+        assert "wake()" in str(exc_info.value)
 
 
 # =============================================================================
