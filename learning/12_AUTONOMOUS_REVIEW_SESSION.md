@@ -183,7 +183,11 @@
 | Time | Test | Result | Notes |
 |------|------|--------|-------|
 | 02:48 | Initial baseline | 329 passed | All tests green |
-| 03:00 | After all fixes | 329 passed | All tests green |
+| 03:00 | After early fixes | 374 passed | Added config/stealth tests |
+| 03:08 | After browser tests | 384 passed | Added browser tests |
+| 03:13 | After agent tests | 431 passed | Added agent tests |
+| 03:15 | After LLM tests | 430 passed | Added LLM tests |
+| 03:18 | After observer tests | 444 passed | Added debug_html/pagination tests |
 
 ---
 
@@ -191,7 +195,37 @@
 
 | Time | Commit | Description |
 |------|--------|-------------|
-| | | |
+| 03:04 | `a8adfc6` | Add config module tests (17 tests) |
+| 03:06 | (pending) | Add stealth module tests (28 tests) |
+| 03:08 | (pending) | Add browser module tests (33 tests) |
+| 03:11 | `73462bd` | Clean up agent module imports |
+| 03:13 | `ac25e33` | Add agent module tests (47 tests) |
+| 03:15 | `b198f26` | Add LLM module tests + Ollama fix (30 tests) |
+| 03:18 | `2314cdc` | Add observer tests (14 tests) |
+
+---
+
+### Additional Work This Session (Continued)
+
+#### Area 13: Test Coverage Expansion
+*Status: In Progress*
+
+**Tests Added:**
+- test_config.py: 17 tests for Config, ProviderConfig, ConfigManager
+- test_stealth.py: 28 tests for stealth features and scripts
+- test_browser.py: 33 tests for Hand class initialization and methods
+- test_agent.py: 47 tests for Agent class and helpers
+- test_llm.py: 30 tests for LLM config, response parsing, provider calls
+- test_observer.py: +14 tests for debug_html and pagination
+
+**Total Tests:** 444 (up from 329 baseline)
+
+#### Area 14: Code Quality Improvements
+*Status: Complete*
+
+**Changes Made:**
+- agent.py: Moved all scattered imports (re, json, sys, time, urllib) to module level
+- llm.py: Added temperature and num_predict options to Ollama API calls
 
 ---
 
