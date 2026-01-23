@@ -25,6 +25,7 @@ from blackreach.resilience import RetryConfig
 from blackreach.memory import SessionMemory, PersistentMemory
 from blackreach.logging import SessionLogger
 from blackreach.exceptions import InvalidActionArgsError, UnknownActionError
+from blackreach.knowledge import reason_about_goal, extract_subject
 
 
 @dataclass
@@ -321,8 +322,16 @@ class Agent:
         )
         self.hand.wake()
 
-        # Determine best start URL based on goal
-        start_url = self._get_smart_start_url(goal)
+        # Use deep reasoning to determine the best starting point
+        start_url, reasoning, search_query = self._get_smart_start_url(goal, quiet=quiet)
+
+        # Store reasoning for later use in prompts
+        self._goal_reasoning = {
+            "start_url": start_url,
+            "reasoning": reasoning,
+            "search_query": search_query
+        }
+
         log(f"Navigating to: {start_url}")
         self.hand.goto(start_url)
         self._record_visit(start_url)
@@ -330,28 +339,42 @@ class Agent:
         # Run the main loop
         return self._run_loop(goal, start_step=1, quiet=quiet)
 
-    def _get_smart_start_url(self, goal: str) -> str:
-        """Choose the best starting URL based on the goal."""
-        goal_lower = goal.lower()
+    def _get_smart_start_url(self, goal: str, quiet: bool = False) -> tuple:
+        """
+        Use deep reasoning to choose the best starting URL based on the goal.
 
-        # If user specified a URL in the goal, use that
+        Returns (url, reasoning, search_query) tuple.
+        """
         import re
+
+        def log(msg: str):
+            if not quiet:
+                print(msg)
+
+        # If user specified a URL in the goal, use that directly
         url_match = re.search(r'https?://\S+', goal)
         if url_match:
-            return url_match.group()
+            url = url_match.group()
+            return (url, f"Using URL specified in goal", "")
 
-        # Choose based on content type
-        if any(word in goal_lower for word in ['arxiv', 'paper', 'research', 'academic']):
-            return "https://arxiv.org"
-        elif any(word in goal_lower for word in ['github', 'repo', 'code', 'readme']):
-            return "https://github.com"
-        elif any(word in goal_lower for word in ['epub', 'ebook', 'book', 'gutenberg']):
-            return "https://www.google.com"  # Google is best for finding ebooks
-        elif any(word in goal_lower for word in ['wikipedia', 'wiki']):
-            return "https://www.wikipedia.org"
+        # Use the knowledge base to reason about the best source
+        result = reason_about_goal(goal)
 
-        # Default to Google for general searches (more flexible than Wikipedia)
-        return "https://www.google.com"
+        # Log the reasoning
+        log(f"\n🧠 REASONING:")
+        log(f"   Content type: {', '.join(result['content_types'])}")
+        log(f"   Subject: \"{result['subject']}\"")
+        log(f"   Decision: {result['reasoning']}")
+
+        if result.get("alternate_sources"):
+            alts = [s.name for s in result["alternate_sources"][:2]]
+            log(f"   Backups: {', '.join(alts)}")
+
+        return (
+            result["start_url"],
+            result["reasoning"],
+            result["search_query"]
+        )
 
     def _run_loop(self, goal: str, start_step: int = 1, quiet: bool = False) -> Dict[str, Any]:
         """
@@ -704,20 +727,32 @@ You navigate. You click. You download. That's it."""
             if needs_download and download_count == 0:
                 self._record_failure(url, "llm_refusal", f"LLM refused: {thought[:100] if thought else response[:100]}")
 
-                # Try different search strategies based on refusal count
-                search_terms = goal.replace("find", "").replace("download", "").replace("get", "").replace("me", "").strip()
+                # Use knowledge base to get alternate sources
+                result = reason_about_goal(goal)
+                search_query = result["search_query"]
 
                 if self._refusal_count <= self._max_refusals:
-                    # Keep trying with Google searches
-                    search_url = f"https://www.google.com/search?q={search_terms.replace(' ', '+')}"
-                    log(f"  [OVERRIDE: Forcing search - {search_url[:50]}]")
+                    # Use the knowledge base's recommended source
+                    if result.get("best_source"):
+                        search_url = result["start_url"]
+                        log(f"  [OVERRIDE: Using {result['best_source'].name} - {search_url}]")
+                    else:
+                        import urllib.parse
+                        encoded = urllib.parse.quote(search_query)
+                        search_url = f"https://www.google.com/search?q={encoded}"
+                        log(f"  [OVERRIDE: Forcing search - {search_url[:50]}]")
                 else:
-                    # After many refusals, try a different approach - specific sites
-                    # Extract the main subject from search terms
-                    import urllib.parse
-                    encoded = urllib.parse.quote(search_terms)
-                    search_url = f"https://www.google.com/search?q={encoded}+free+download+site"
-                    log(f"  [ALTERNATE SEARCH: {search_url[:50]}]")
+                    # After many refusals, try alternate sources from knowledge base
+                    alt_sources = result.get("alternate_sources", [])
+                    if alt_sources:
+                        alt = alt_sources[self._refusal_count % len(alt_sources)]
+                        search_url = alt.url
+                        log(f"  [ALTERNATE: Trying {alt.name} - {search_url}]")
+                    else:
+                        import urllib.parse
+                        encoded = urllib.parse.quote(search_query)
+                        search_url = f"https://www.google.com/search?q={encoded}+free+download"
+                        log(f"  [FALLBACK SEARCH: {search_url[:50]}]")
 
                 self.hand.goto(search_url)
                 self._record_visit(search_url)
@@ -789,9 +824,15 @@ You navigate. You click. You download. That's it."""
             ])
 
             if needs_download and download_count == 0:
-                log(f"  [NO ACTION PARSED - forcing search]")
-                search_terms = goal.replace("find", "").replace("download", "").replace("get", "").replace("me", "").strip()
-                search_url = f"https://www.google.com/search?q={search_terms.replace(' ', '+')}"
+                log(f"  [NO ACTION PARSED - using knowledge base fallback]")
+                result = reason_about_goal(goal)
+                if result.get("best_source"):
+                    search_url = result["start_url"]
+                    log(f"  [FALLBACK: Using {result['best_source'].name}]")
+                else:
+                    import urllib.parse
+                    encoded = urllib.parse.quote(result["search_query"])
+                    search_url = f"https://www.google.com/search?q={encoded}"
                 self.hand.goto(search_url)
                 self._record_visit(search_url)
                 return {"done": False, "fallback": True, "reason": "Forced search on parse failure"}
