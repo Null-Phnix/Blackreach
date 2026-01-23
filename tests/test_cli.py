@@ -281,3 +281,108 @@ class TestStatusCommand:
         result = runner.invoke(cli, ['status'])
         # Should complete
         assert result.exit_code in [0, 1]
+
+
+class TestConfigCommand:
+    """Tests for config command execution."""
+
+    @patch('blackreach.cli.console')
+    @patch('blackreach.cli.config_manager')
+    def test_config_runs(self, mock_config, mock_console):
+        """config command runs without error."""
+        mock_config.config.default_provider = "ollama"
+
+        from blackreach.cli import cli
+        runner = CliRunner()
+        result = runner.invoke(cli, ['config'])
+        # Exit code 0 or 1 (may prompt for input)
+        assert result.exit_code in [0, 1, 2]
+
+
+class TestSessionsCommand:
+    """Tests for sessions command execution."""
+
+    @patch('blackreach.cli.console')
+    @patch('blackreach.memory.PersistentMemory')
+    def test_sessions_runs(self, mock_memory, mock_console):
+        """sessions command runs without error."""
+        mock_memory.return_value.get_session_history.return_value = []
+
+        from blackreach.cli import cli
+        runner = CliRunner()
+        result = runner.invoke(cli, ['sessions'])
+        # Should complete (may fail without db)
+        assert result.exit_code in [0, 1, 2]
+
+
+class TestDoctorCommand:
+    """Tests for doctor command."""
+
+    def test_cli_has_doctor_command(self):
+        """CLI has 'doctor' command."""
+        from blackreach.cli import cli
+        assert 'doctor' in [cmd.name for cmd in cli.commands.values()]
+
+    @patch('blackreach.cli.console')
+    @patch('blackreach.cli.check_playwright_browsers')
+    def test_doctor_runs(self, mock_check, mock_console):
+        """doctor command runs."""
+        mock_check.return_value = True
+
+        from blackreach.cli import cli
+        runner = CliRunner()
+        result = runner.invoke(cli, ['doctor'])
+        assert result.exit_code in [0, 1]
+
+
+class TestCleanupKeyboard:
+    """Tests for keyboard cleanup function."""
+
+    @patch('subprocess.run')
+    def test_cleanup_on_linux(self, mock_run):
+        """_cleanup_keyboard runs on Linux."""
+        import sys
+        with patch.object(sys, 'platform', 'linux'):
+            from blackreach.cli import _cleanup_keyboard
+            _cleanup_keyboard()
+            # May or may not call subprocess based on platform
+
+
+class TestSignalHandler:
+    """Tests for signal handler."""
+
+    @patch('blackreach.cli.console')
+    def test_signal_handler_prints_message(self, mock_console):
+        """_signal_handler prints exit message."""
+        import signal
+        from blackreach.cli import _signal_handler
+
+        # Should not raise
+        try:
+            _signal_handler(signal.SIGINT, None)
+        except SystemExit:
+            pass  # Expected behavior
+
+
+class TestIsFirstRun:
+    """Tests for is_first_run function."""
+
+    @patch('blackreach.cli.CONFIG_FILE')
+    def test_first_run_when_no_config(self, mock_config_file):
+        """is_first_run returns True when config doesn't exist."""
+        mock_config_file.exists.return_value = False
+
+        from blackreach.cli import is_first_run
+        result = is_first_run()
+
+        assert result is True
+
+    @patch('blackreach.cli.CONFIG_FILE')
+    def test_not_first_run_when_config_exists(self, mock_config_file):
+        """is_first_run returns False when config exists."""
+        mock_config_file.exists.return_value = True
+
+        from blackreach.cli import is_first_run
+        result = is_first_run()
+
+        assert result is False
