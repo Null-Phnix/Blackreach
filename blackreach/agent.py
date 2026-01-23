@@ -359,6 +359,15 @@ class Agent:
             url = url_match.group()
             return (url, f"Using URL specified in goal", "")
 
+        # Also check for bare domain names (e.g., "google.com", "example.org")
+        domain_match = re.search(r'\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}\b', goal)
+        if domain_match:
+            domain = domain_match.group()
+            # Common domains that users might mention
+            if any(tld in domain for tld in ['.com', '.org', '.net', '.edu', '.gov', '.io', '.co']):
+                url = f"https://{domain}"
+                return (url, f"Using domain specified in goal", "")
+
         # Use the knowledge base to reason about the best source
         result = reason_about_goal(goal)
 

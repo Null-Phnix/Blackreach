@@ -697,3 +697,77 @@ class TestAgentStuckHint:
         hint = agent._get_stuck_hint()
 
         assert "DO NOT repeat" in hint or "different" in hint.lower()
+
+
+class TestGetSmartStartUrl:
+    """Tests for _get_smart_start_url method."""
+
+    def test_extracts_full_url_from_goal(self, tmp_path):
+        """_get_smart_start_url extracts https:// URLs from goal."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        url, reasoning, _ = agent._get_smart_start_url("visit https://example.com", quiet=True)
+
+        assert url == "https://example.com"
+        assert "specified in goal" in reasoning.lower()
+
+    def test_extracts_http_url_from_goal(self, tmp_path):
+        """_get_smart_start_url extracts http:// URLs from goal."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        url, reasoning, _ = agent._get_smart_start_url("go to http://test.com", quiet=True)
+
+        assert url == "http://test.com"
+        assert "specified in goal" in reasoning.lower()
+
+    def test_extracts_bare_com_domain(self, tmp_path):
+        """_get_smart_start_url extracts bare .com domains."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        url, reasoning, _ = agent._get_smart_start_url("go to google.com", quiet=True)
+
+        assert url == "https://google.com"
+        assert "domain" in reasoning.lower()
+
+    def test_extracts_bare_org_domain(self, tmp_path):
+        """_get_smart_start_url extracts bare .org domains."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        url, reasoning, _ = agent._get_smart_start_url("visit example.org", quiet=True)
+
+        assert url == "https://example.org"
+
+    def test_extracts_bare_io_domain(self, tmp_path):
+        """_get_smart_start_url extracts bare .io domains."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        url, reasoning, _ = agent._get_smart_start_url("check out cursor.io", quiet=True)
+
+        assert url == "https://cursor.io"
+
+    def test_uses_knowledge_base_for_generic_goals(self, tmp_path):
+        """_get_smart_start_url uses knowledge base for generic goals."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        url, reasoning, _ = agent._get_smart_start_url("download some files", quiet=True)
+
+        # Should fall back to knowledge base reasoning
+        assert "https://" in url
+        assert "specified in goal" not in reasoning.lower()
+
+    def test_full_url_takes_priority_over_domain(self, tmp_path):
+        """Full URLs take priority over bare domain detection."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        url, _, _ = agent._get_smart_start_url(
+            "go to https://example.com not google.com", quiet=True
+        )
+
+        assert url == "https://example.com"
