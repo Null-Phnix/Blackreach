@@ -391,11 +391,11 @@ class Hand:
         if wait_for_load:
             try:
                 self.page.wait_for_load_state("networkidle", timeout=10000)
-            except:
+            except Exception:
                 try:
                     self.page.wait_for_load_state("domcontentloaded", timeout=5000)
-                except:
-                    pass  # Continue anyway
+                except Exception:
+                    pass  # Continue anyway - page may be usable
 
         # Retry logic for pages that are still navigating
         for attempt in range(retries):
@@ -422,8 +422,8 @@ class Hand:
                         time.sleep(1)
                         try:
                             self.page.wait_for_load_state("domcontentloaded", timeout=5000)
-                        except:
-                            pass
+                        except Exception:
+                            pass  # Continue anyway - will retry or fallback to URL
                     else:
                         return self.page.url  # Fallback to URL
                 else:
@@ -434,11 +434,11 @@ class Hand:
         """Wait for page to finish navigating."""
         try:
             self.page.wait_for_load_state("networkidle", timeout=timeout)
-        except:
+        except Exception:
             try:
                 self.page.wait_for_load_state("domcontentloaded", timeout=5000)
-            except:
-                pass
+            except Exception:
+                pass  # Navigation may still be usable
 
     def screenshot(self, path: str = "screenshot.png", full_page: bool = False) -> dict:
         """Take a screenshot."""

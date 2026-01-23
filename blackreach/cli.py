@@ -390,7 +390,7 @@ def status():
         mem = PersistentMemory(Path("./memory.db"))
         stats = mem.get_stats()
         mem.close()
-    except:
+    except Exception:
         stats = {"total_sessions": 0, "total_downloads": 0, "total_visits": 0}
 
     console.print(Panel(
@@ -497,7 +497,7 @@ def interactive_mode():
         mem = PersistentMemory(Path("./memory.db"))
         stats = mem.get_stats()
         mem.close()
-    except:
+    except Exception:
         stats = {"total_sessions": 0, "total_downloads": 0}
 
     # Welcome message

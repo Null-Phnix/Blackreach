@@ -66,6 +66,125 @@ def retry_with_backoff(config: RetryConfig = None):
     return decorator
 
 
+@dataclass
+class CircuitBreakerConfig:
+    """Configuration for circuit breaker behavior."""
+    failure_threshold: int = 5  # Failures before tripping
+    recovery_timeout: float = 30.0  # Seconds before attempting recovery
+    half_open_max_calls: int = 1  # Calls allowed in half-open state
+
+
+class CircuitBreaker:
+    """
+    Circuit breaker pattern implementation.
+
+    States:
+        - CLOSED: Normal operation, allows requests
+        - OPEN: Failing fast, blocking requests
+        - HALF_OPEN: Testing if system has recovered
+
+    Usage:
+        breaker = CircuitBreaker()
+
+        try:
+            with breaker:
+                result = risky_operation()
+        except CircuitBreakerOpen:
+            # Handle fail-fast case
+            pass
+    """
+
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+    def __init__(self, config: CircuitBreakerConfig = None, name: str = "default"):
+        self.config = config or CircuitBreakerConfig()
+        self.name = name
+        self._state = self.CLOSED
+        self._failure_count = 0
+        self._last_failure_time = 0.0
+        self._half_open_calls = 0
+
+    @property
+    def state(self) -> str:
+        """Current circuit breaker state."""
+        if self._state == self.OPEN:
+            # Check if recovery timeout has passed
+            if time.time() - self._last_failure_time >= self.config.recovery_timeout:
+                self._state = self.HALF_OPEN
+                self._half_open_calls = 0
+        return self._state
+
+    @property
+    def is_open(self) -> bool:
+        """Check if circuit is open (blocking requests)."""
+        return self.state == self.OPEN
+
+    def record_success(self) -> None:
+        """Record a successful operation."""
+        if self._state == self.HALF_OPEN:
+            # Successful call in half-open state - close the circuit
+            self._state = self.CLOSED
+            self._failure_count = 0
+
+    def record_failure(self) -> None:
+        """Record a failed operation."""
+        self._failure_count += 1
+        self._last_failure_time = time.time()
+
+        if self._state == self.HALF_OPEN:
+            # Failure in half-open - re-open the circuit
+            self._state = self.OPEN
+        elif self._failure_count >= self.config.failure_threshold:
+            # Threshold reached - open the circuit
+            self._state = self.OPEN
+
+    def allow_request(self) -> bool:
+        """Check if a request should be allowed."""
+        state = self.state
+
+        if state == self.CLOSED:
+            return True
+        elif state == self.HALF_OPEN:
+            # Allow limited requests in half-open state
+            if self._half_open_calls < self.config.half_open_max_calls:
+                self._half_open_calls += 1
+                return True
+            return False
+        else:  # OPEN
+            return False
+
+    def reset(self) -> None:
+        """Manually reset the circuit breaker."""
+        self._state = self.CLOSED
+        self._failure_count = 0
+        self._half_open_calls = 0
+
+    def __enter__(self):
+        """Context manager entry - check if request is allowed."""
+        if not self.allow_request():
+            raise CircuitBreakerOpen(self.name, self.config.recovery_timeout - (time.time() - self._last_failure_time))
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - record success or failure."""
+        if exc_type is None:
+            self.record_success()
+        else:
+            self.record_failure()
+        return False  # Don't suppress exceptions
+
+
+class CircuitBreakerOpen(Exception):
+    """Exception raised when circuit breaker is open."""
+
+    def __init__(self, name: str, time_remaining: float = 0):
+        self.name = name
+        self.time_remaining = max(0, time_remaining)
+        super().__init__(f"Circuit breaker '{name}' is open. Retry in {self.time_remaining:.1f}s")
+
+
 class SmartSelector:
     """
     Smart element selector with fallback strategies.
@@ -159,7 +278,7 @@ class SmartSelector:
                     locator = self.page.locator(f"{tag}:has-text('{escaped_text}')")
                 locator.first.wait_for(timeout=self.timeout)
                 return locator.first
-            except:
+            except Exception:
                 return None
     
     def find_input(
