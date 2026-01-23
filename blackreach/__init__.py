@@ -11,7 +11,7 @@ from blackreach.llm import LLM, LLMConfig
 from blackreach.browser import Hand
 from blackreach.observer import Eyes
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "Agent",
     "AgentConfig",

@@ -528,10 +528,21 @@ class Agent:
         # SINGLE LLM call for think + act
         log("  REACT: ", end="")
         self._emit("on_step", step_num, self.config.max_steps, "think", "Reasoning...")
-        response = self.llm.generate(
-            "You are an autonomous browser agent. Output ONLY valid JSON.",
-            prompt
-        )
+
+        try:
+            response = self.llm.generate(
+                "You are an autonomous browser agent. Output ONLY valid JSON.",
+                prompt
+            )
+        except Exception as e:
+            log(f"LLM Error: {e}")
+            self._record_failure(url, "llm", str(e))
+            return {"done": False, "error": f"LLM call failed: {e}"}
+
+        if not response or not response.strip():
+            log("Empty response from LLM")
+            self._record_failure(url, "llm", "Empty response")
+            return {"done": False, "error": "Empty LLM response"}
 
         # Parse the response
         import json
@@ -544,20 +555,39 @@ class Agent:
         # Try to extract JSON from response - handle nested braces
         response_clean = response.strip()
 
+        # Strip markdown code blocks (common with reasoning models)
+        if "```json" in response_clean:
+            response_clean = re.sub(r'```json\s*', '', response_clean)
+            response_clean = re.sub(r'```\s*$', '', response_clean)
+        elif "```" in response_clean:
+            response_clean = re.sub(r'```\s*', '', response_clean)
+
         # Find all JSON-like structures and try to parse
+        data = {}
         try:
             # First try to parse the whole response as JSON
             data = json.loads(response_clean)
         except json.JSONDecodeError:
-            # Try to find JSON object in response
-            json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_clean)
-            if json_match:
-                try:
-                    data = json.loads(json_match.group())
-                except json.JSONDecodeError:
-                    data = {}
-            else:
-                data = {}
+            # Try to find JSON object in response (handle nested braces)
+            # Look for patterns like {"action": ...}
+            json_patterns = [
+                r'\{[^{}]*"action"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',  # With action key
+                r'\{[^{}]*"done"[^{}]*\}',  # Done pattern
+                r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',  # Any JSON object
+            ]
+            for pattern in json_patterns:
+                json_match = re.search(pattern, response_clean)
+                if json_match:
+                    try:
+                        data = json.loads(json_match.group())
+                        break
+                    except json.JSONDecodeError:
+                        continue
+
+        if not data:
+            log(f"No valid JSON found in response: {response_clean[:200]}...")
+            self._record_failure(url, "parse", "No JSON in LLM response")
+            return {"done": False, "error": "No valid JSON in response"}
 
         # Extract fields with VERY flexible handling for inconsistent LLM outputs
         thought = data.get("thought", data.get("reason", ""))

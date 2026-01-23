@@ -26,7 +26,7 @@ from blackreach.config import config_manager, AVAILABLE_MODELS, CONFIG_FILE
 console = Console()
 
 # Version
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 BANNER = """[bold cyan]
@@ -38,7 +38,7 @@ BANNER = """[bold cyan]
 ║   ██████╔╝███████╗██║  ██║╚██████╗██║  ██╗              ║
 ║   ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝              ║
 ║                                                          ║
-║   [white]Autonomous Browser Agent[/white]              [dim]v0.2.0[/dim]   ║
+║   [white]Autonomous Browser Agent[/white]              [dim]v0.3.0[/dim]   ║
 ╚══════════════════════════════════════════════════════════╝[/bold cyan]
 """
 

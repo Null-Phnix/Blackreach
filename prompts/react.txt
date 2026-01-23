@@ -1,26 +1,34 @@
 GOAL: {goal}
 
 CURRENT STATE:
-- You are on: {url}
-- Page title: {title}
-- Downloads so far: {download_count}
+- Page: {title}
+- URL: {url}
+- Downloads: {download_count}
 {extra_context}
 
-ELEMENTS ON THIS PAGE:
+AVAILABLE ELEMENTS:
 {elements}
 
-WHAT TO DO NEXT (pick ONE):
-- navigate: {{"action":"navigate","args":{{"url":"URL"}}}}
-- click: {{"action":"click","args":{{"text":"TEXT"}}}}
-- download: {{"action":"download","args":{{"url":"URL"}}}}
-- type: {{"action":"type","args":{{"selector":"input","text":"query"}}}}
-- done: {{"action":"done","args":{{"reason":"reason"}}}}
+ACTIONS (pick ONE):
+- navigate: Go to a URL
+- type: Search or fill input
+- click: Click element by text
+- download: Download a file
+- done: Goal complete
+
+OUTPUT FORMAT - respond with ONLY this JSON (no explanation before or after):
+{{"thought":"brief reason","action":"ACTION","args":{{"key":"value"}}}}
+
+EXAMPLES:
+{{"thought":"need to search for the content","action":"type","args":{{"selector":"input","text":"red rising epub"}}}}
+{{"thought":"found download link","action":"download","args":{{"url":"https://..."}}}}
+{{"thought":"navigate to detail page","action":"navigate","args":{{"url":"https://..."}}}}
+{{"thought":"goal achieved","action":"done","args":{{"reason":"downloaded file"}}}}
 
 RULES:
-1. Look at what's on THIS page and pick your NEXT action
-2. If you see "DOWNLOAD:" links with .pdf/.jpg/.zip etc, use DOWNLOAD action
-3. If you see "DETAIL PAGE:" links, use NAVIGATE to go there first
-4. For ArXiv: /abs/ID pages have /pdf/ID.pdf links - download those
-5. When Downloads >= target in goal, use DONE
+1. If on Wikipedia/Google, type search query first
+2. If you see DOWNLOAD links, use download action
+3. If you see DETAIL PAGE links, navigate to them
+4. Download count {download_count} >= goal target = done
 
-Output ONLY ONE JSON object (not an array):
+YOUR RESPONSE (JSON only):
