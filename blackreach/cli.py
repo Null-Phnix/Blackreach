@@ -22,6 +22,7 @@ import sys
 import shutil
 import signal
 import atexit
+import time
 
 from blackreach.config import config_manager, AVAILABLE_MODELS, CONFIG_FILE
 from blackreach.exceptions import SessionNotFoundError
@@ -897,8 +898,7 @@ def interactive_mode():
             console.print()
             ui.print_info("Press Ctrl+C again to exit, or type a command")
             try:
-                # Wait briefly for another Ctrl+C
-                import time
+                # Wait briefly for another Ctrl+C (time imported at module level)
                 time.sleep(0.5)
             except KeyboardInterrupt:
                 ui.print_info("Goodbye!")

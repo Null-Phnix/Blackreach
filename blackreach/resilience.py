@@ -268,8 +268,7 @@ class SmartSelector:
         except PlaywrightTimeout:
             return None
         except Exception:
-            # Fallback: try CSS escape approach
-            import re
+            # Fallback: try CSS escape approach (re already imported at module level)
             escaped_text = text.replace("'", "\\'").replace('"', '\\"')
             try:
                 if exact:
