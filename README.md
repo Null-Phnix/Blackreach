@@ -2,7 +2,22 @@
 
 **Autonomous Browser Agent** - Give it a goal, watch it browse.
 
-Blackreach is a CLI tool that uses AI to autonomously browse the web and accomplish tasks. It can navigate websites, fill forms, download files, and more.
+Blackreach is a CLI tool that uses AI to autonomously browse the web and accomplish tasks. It can navigate websites, search for content, download files (PDFs, images, datasets, etc.), and more.
+
+```bash
+blackreach run "find and download papers about machine learning from arxiv"
+```
+
+## Features
+
+- **General-Purpose**: Download any content type - papers, images, datasets, ebooks, etc.
+- **ReAct Pattern**: Observe → Think → Act loop for intelligent browsing
+- **Session Resume**: Pause and resume interrupted sessions
+- **Smart Deduplication**: Never download the same file twice (URL + hash checking)
+- **Memory System**: Remembers successful patterns across sessions
+- **Multi-Provider**: Ollama, OpenAI, Anthropic, Google, xAI
+- **Stealth Mode**: Evades basic bot detection
+- **Pagination Support**: Automatically detects and navigates multi-page results
 
 ## Installation
 
@@ -51,7 +66,7 @@ blackreach
 
 On first run, Blackreach will walk you through setup:
 1. Install browser (if needed)
-2. Choose AI provider (Ollama, Groq, OpenAI, etc.)
+2. Choose AI provider (Ollama, OpenAI, etc.)
 3. Configure API key (for cloud providers)
 
 ### Basic Usage
@@ -61,10 +76,13 @@ On first run, Blackreach will walk you through setup:
 blackreach
 
 # Run with a specific goal
-blackreach run "go to wikipedia and search for artificial intelligence"
+blackreach run "search wikipedia for artificial intelligence"
 
 # Run headless (no browser window)
-blackreach run --headless "download the first PDF from arxiv about transformers"
+blackreach run --headless "download papers about transformers from arxiv"
+
+# Resume an interrupted session
+blackreach run --resume 42
 ```
 
 ## Commands
@@ -73,21 +91,39 @@ blackreach run --headless "download the first PDF from arxiv about transformers"
 |---------|-------------|
 | `blackreach` | Interactive mode |
 | `blackreach run "goal"` | Run agent with a goal |
+| `blackreach run --resume ID` | Resume a paused session |
+| `blackreach sessions` | List resumable sessions |
 | `blackreach config` | Configure settings and API keys |
 | `blackreach models` | List available models |
 | `blackreach status` | Show current configuration |
 | `blackreach setup` | Run setup wizard |
 | `blackreach doctor` | Check system requirements |
 
+### Interactive Commands
+
+In interactive mode, use these slash commands:
+
+| Command | Short | Description |
+|---------|-------|-------------|
+| `/help` | `/h` | Show help |
+| `/model` | `/m` | Switch model |
+| `/provider` | `/p` | Switch provider |
+| `/status` | `/s` | Show status |
+| `/sessions` | | List resumable sessions |
+| `/resume ID` | | Resume a session |
+| `/logs` | `/l` | View recent logs |
+| `/clear` | `/cls` | Clear screen |
+| `/quit` | `/q` | Exit |
+
 ## Supported AI Providers
 
 | Provider | Type | Models |
 |----------|------|--------|
-| **Ollama** | Local | qwen2.5, llama3.2, mistral, etc. |
-| **Groq** | Cloud (free tier) | llama-3.1-70b, mixtral |
+| **Ollama** | Local | qwen2.5:7b, llama3.2:3b, mistral:7b |
+| **xAI** | Cloud | grok-2, grok-2-mini |
 | **OpenAI** | Cloud | gpt-4o, gpt-4o-mini |
 | **Anthropic** | Cloud | claude-3.5-sonnet, claude-3-opus |
-| **Google** | Cloud | gemini-1.5-pro, gemini-1.5-flash |
+| **Google** | Cloud | gemini-2.5-pro, gemini-2.5-flash |
 
 ### Using Ollama (Local, Free, Private)
 
@@ -96,66 +132,86 @@ blackreach run --headless "download the first PDF from arxiv about transformers"
 3. Start Ollama: `ollama serve`
 4. Use Blackreach: `blackreach`
 
-### Using Groq (Fast, Free Tier)
+### Using Cloud Providers
 
-1. Get API key: https://console.groq.com/keys
+1. Get API key from your provider
 2. Configure: `blackreach config` → Set API key
-3. Switch provider: `blackreach config` → Set default provider to "groq"
+3. Switch provider: `blackreach config` → Set default provider
 
 ## Configuration
 
-Config file location: `~/.blackreach/config.yaml`
+Config file: `~/.blackreach/config.yaml`
 
 ### Environment Variables
-
-You can also set API keys via environment variables:
 
 ```bash
 export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
 export GOOGLE_API_KEY="..."
-export GROQ_API_KEY="gsk_..."
+export XAI_API_KEY="xai-..."
 ```
 
 ## Examples
 
-### Search and Navigate
+### Research Papers
 
 ```bash
-blackreach run "go to github.com and search for python web frameworks"
+blackreach run "go to arxiv.org, search for 'attention mechanism', download 3 papers"
 ```
 
-### Download Files
+### Images and Media
 
 ```bash
-blackreach run "go to arxiv.org, search for 'attention is all you need', and download the PDF"
+blackreach run "find and download landscape wallpapers from unsplash"
 ```
 
-### Fill Forms
+### Datasets
 
 ```bash
-blackreach run "go to example.com/contact and fill out the contact form with test data"
+blackreach run "download CSV files about climate data from kaggle"
 ```
 
-## Features
+### Documentation
 
-- **ReAct Pattern**: Observe → Think → Act loop for intelligent browsing
-- **Memory System**: Remembers successful patterns across sessions
-- **Download Handling**: Automatic deduplication via file hashing
-- **Stealth Mode**: Evades basic bot detection
-- **Multi-Provider**: Switch between local and cloud AI easily
+```bash
+blackreach run "go to github.com/pytorch/pytorch and download the README"
+```
+
+### Ebooks
+
+```bash
+blackreach run "find and download 'pride and prejudice' from project gutenberg"
+```
+
+## Session Resume
+
+Sessions are automatically saved when interrupted (Ctrl+C):
+
+```bash
+# Start a task
+blackreach run "download 10 papers from arxiv"
+# Press Ctrl+C to pause
+
+# Later, resume where you left off
+blackreach sessions  # See available sessions
+blackreach run --resume 42  # Resume session #42
+```
 
 ## Architecture
 
 ```
 blackreach/
-├── agent.py      # ReAct loop coordinator
-├── browser.py    # Playwright browser control
-├── observer.py   # HTML parsing and element detection
-├── llm.py        # Multi-provider LLM integration
-├── memory.py     # Session and persistent memory
-├── config.py     # Configuration management
-└── cli.py        # Command-line interface
+├── agent.py       # ReAct loop coordinator
+├── browser.py     # Playwright browser control (stealth, downloads)
+├── observer.py    # HTML parsing, link detection, pagination
+├── llm.py         # Multi-provider LLM integration
+├── memory.py      # Session memory + SQLite persistence
+├── detection.py   # CAPTCHA, login, paywall detection
+├── resilience.py  # Retry logic, circuit breaker
+├── exceptions.py  # Error hierarchy
+├── config.py      # Configuration management
+├── logging.py     # Structured session logging
+└── cli.py         # Command-line interface
 ```
 
 ## Troubleshooting
@@ -178,9 +234,31 @@ playwright install chromium
 ollama serve
 ```
 
-**Permission denied:**
+**Bot detection (418/403 errors):**
+- Some sites block headless browsers
+- Try running without `--headless`
+- Use different search engines (Google/Wikipedia work better than DuckDuckGo)
+
+**Session resume fails:**
 ```bash
-pip install --user blackreach
+blackreach sessions  # Check if session exists
+```
+
+## Memory and Learning
+
+Blackreach maintains two types of memory:
+
+1. **Session Memory** (RAM): Current session state
+2. **Persistent Memory** (SQLite): Cross-session learning
+
+The persistent memory tracks:
+- All downloads (prevents re-downloading)
+- Site patterns that worked
+- Common failures to avoid
+
+View stats:
+```bash
+blackreach status
 ```
 
 ## License
