@@ -208,11 +208,18 @@ class Hand:
     @retry_with_backoff()
     def goto(self, url: str, handle_popups: bool = True, wait_for_content: bool = True) -> dict:
         """Navigate to a URL with retry logic and smart content waiting."""
-        self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        # Navigate and wait for initial DOM
+        self.page.goto(url, wait_until="domcontentloaded", timeout=45000)
 
-        # Wait for JavaScript to render dynamic elements
+        # Wait for full page load (all resources including images, scripts)
         try:
-            self.page.wait_for_load_state("networkidle", timeout=8000)
+            self.page.wait_for_load_state("load", timeout=15000)
+        except Exception:
+            pass  # Continue - page may still be usable
+
+        # Wait for network to settle
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=10000)
         except Exception:
             pass  # Don't fail if network doesn't go idle
 
@@ -222,13 +229,21 @@ class Hand:
         # Wait for dynamic content if enabled
         content_found = False
         if wait_for_content:
-            content_found = self._wait_for_dynamic_content(timeout=15000)
+            content_found = self._wait_for_dynamic_content(timeout=20000)
 
             # If no content found, try scrolling to trigger lazy loading
             if not content_found:
                 self.scroll("down", 300)
-                time.sleep(1)
-                content_found = self._wait_for_dynamic_content(timeout=5000)
+                time.sleep(2)
+                content_found = self._wait_for_dynamic_content(timeout=8000)
+
+                # Second scroll attempt
+                if not content_found:
+                    self.scroll("up", 300)
+                    time.sleep(1)
+                    self.scroll("down", 100)
+                    time.sleep(2)
+                    content_found = self._wait_for_dynamic_content(timeout=5000)
 
         self._human_delay(0.5, 1.0)
 
@@ -285,10 +300,11 @@ class Hand:
 
         Uses multiple strategies with verification:
         1. Wait for network idle
-        2. Wait for common content containers
-        3. Wait for loading indicators to disappear
-        4. VERIFY actual content exists (links, buttons, text)
-        5. Use JavaScript to check DOM readiness
+        2. Wait for framework hydration (React, Vue, Angular)
+        3. Wait for common content containers
+        4. Wait for loading indicators to disappear
+        5. VERIFY actual content exists (links, buttons, text)
+        6. Use JavaScript to check DOM readiness
 
         Returns True if content was found, False otherwise.
         """
@@ -297,11 +313,54 @@ class Hand:
 
         # Strategy 1: Wait for network to settle
         try:
-            self.page.wait_for_load_state("networkidle", timeout=min(timeout, 8000))
+            self.page.wait_for_load_state("networkidle", timeout=min(timeout, 10000))
         except Exception:
             pass
 
-        # Strategy 2: Wait for common content containers
+        # Strategy 2: Wait for framework hydration
+        try:
+            self.page.evaluate("""
+                () => {
+                    return new Promise((resolve) => {
+                        // Check if React has finished hydrating
+                        if (window.__REACT_DEVTOOLS_GLOBAL_HOOK__ || document.querySelector('[data-reactroot]')) {
+                            // Wait for React to finish rendering
+                            setTimeout(resolve, 500);
+                            return;
+                        }
+                        // Check for Vue
+                        if (window.__VUE__ || document.querySelector('[data-v-]')) {
+                            setTimeout(resolve, 500);
+                            return;
+                        }
+                        // Check for Angular
+                        if (window.ng || document.querySelector('[ng-version]')) {
+                            setTimeout(resolve, 500);
+                            return;
+                        }
+                        // Check for Next.js
+                        if (window.__NEXT_DATA__ || document.querySelector('#__next')) {
+                            setTimeout(resolve, 800);
+                            return;
+                        }
+                        // No framework detected, resolve immediately
+                        resolve();
+                    });
+                }
+            """)
+        except Exception:
+            pass
+
+        # Strategy 3: Wait for document.readyState === 'complete'
+        try:
+            self.page.wait_for_function(
+                "() => document.readyState === 'complete'",
+                timeout=5000
+            )
+        except Exception:
+            pass
+
+        # Strategy 4: Wait for common content containers to have content
         content_selectors = [
             'main', 'article', '.content', '#content', '#root', '#app',
             '.results', '.items', '.list', '.cards', '.search-results',
@@ -316,74 +375,144 @@ class Hand:
                 loc = self.page.locator(selector)
                 if loc.count() > 0:
                     loc.first.wait_for(state="visible", timeout=2000)
-                    break
+                    # Check if container actually has content
+                    has_content = self.page.evaluate(f"""
+                        () => {{
+                            const el = document.querySelector('{selector}');
+                            return el && el.innerText && el.innerText.trim().length > 50;
+                        }}
+                    """)
+                    if has_content:
+                        break
             except Exception:
                 continue
 
-        # Strategy 3: Wait for loading indicators to disappear
+        # Strategy 5: Wait for loading indicators to disappear
         spinner_selectors = [
             '.loading', '.spinner', '.loader', '[class*="loading"]',
             '[class*="spinner"]', '.skeleton', '[aria-busy="true"]',
-            '.lds-ring', '.lds-dual-ring', '.progress'
+            '.lds-ring', '.lds-dual-ring', '.progress', '.loading-overlay'
         ]
         for selector in spinner_selectors:
             if time.time() - start_time > max_time:
                 break
             try:
                 loc = self.page.locator(selector)
-                if loc.count() > 0:
-                    loc.first.wait_for(state="hidden", timeout=3000)
+                if loc.count() > 0 and loc.first.is_visible():
+                    loc.first.wait_for(state="hidden", timeout=5000)
             except Exception:
                 pass
 
-        # Strategy 4: Use JavaScript to verify DOM has meaningful content
+        # Strategy 6: Use JavaScript to verify DOM has meaningful content
         # This is the KEY fix - actually verify content exists
-        for attempt in range(5):
+        for attempt in range(8):  # More attempts
             if time.time() - start_time > max_time:
                 break
 
             try:
-                # Check if page has actual interactive elements
+                # Comprehensive check for page readiness
                 content_check = self.page.evaluate("""
                     () => {
                         const links = document.querySelectorAll('a[href]');
                         const buttons = document.querySelectorAll('button, [role="button"], input[type="submit"]');
                         const inputs = document.querySelectorAll('input, textarea, select');
+                        const images = document.querySelectorAll('img[src]');
                         const textLength = document.body?.innerText?.length || 0;
+
+                        // Check for empty placeholder states
+                        const hasPlaceholder = document.querySelector('.loading, .skeleton, [aria-busy="true"]');
+                        const hasEmptyRoot = document.querySelector('#root:empty, #app:empty, #__next:empty');
+
+                        // Check for visible content (not hidden or zero-sized)
+                        const visibleLinks = Array.from(links).filter(el => {
+                            const rect = el.getBoundingClientRect();
+                            return rect.width > 0 && rect.height > 0;
+                        }).length;
 
                         return {
                             links: links.length,
+                            visibleLinks: visibleLinks,
                             buttons: buttons.length,
                             inputs: inputs.length,
+                            images: images.length,
                             textLength: textLength,
-                            hasContent: links.length > 3 || buttons.length > 0 || inputs.length > 0 || textLength > 500
+                            hasPlaceholder: !!hasPlaceholder,
+                            hasEmptyRoot: !!hasEmptyRoot,
+                            hasContent: (visibleLinks > 3 || buttons.length > 0 || inputs.length > 0 || textLength > 500) && !hasEmptyRoot
                         };
                     }
                 """)
 
-                if content_check.get('hasContent', False):
+                if content_check.get('hasContent', False) and not content_check.get('hasPlaceholder', True):
                     return True
 
                 # Content not ready yet, wait and retry
-                time.sleep(1)
+                time.sleep(1.5)
 
             except Exception:
-                time.sleep(0.5)
+                time.sleep(1)
 
-        # Strategy 5: Final fallback - just wait a bit more for slow sites
-        time.sleep(1)
+        # Strategy 7: Final fallback with longer wait for very slow sites
+        time.sleep(2)
 
         # Final verification
         try:
             final_check = self.page.evaluate("""
                 () => {
-                    return document.querySelectorAll('a[href]').length > 0 ||
-                           document.body?.innerText?.length > 200;
+                    const links = document.querySelectorAll('a[href]');
+                    const text = document.body?.innerText?.length || 0;
+                    // At this point, accept any page with some links or text
+                    return links.length > 0 || text > 100;
                 }
             """)
             return final_check
         except Exception:
             return False
+
+    def force_render(self) -> bool:
+        """
+        Force page to fully render by triggering various browser events.
+
+        Useful for stubborn SPAs that don't render until user interaction.
+        Returns True if content was eventually found.
+        """
+        # Trigger resize event (some sites render on resize)
+        try:
+            self.page.evaluate("window.dispatchEvent(new Event('resize'))")
+        except Exception:
+            pass
+
+        # Scroll to trigger lazy loading
+        try:
+            self.page.evaluate("""
+                () => {
+                    // Scroll to bottom and back
+                    window.scrollTo(0, document.body.scrollHeight);
+                    setTimeout(() => window.scrollTo(0, 0), 500);
+                }
+            """)
+            time.sleep(1)
+        except Exception:
+            pass
+
+        # Trigger mouse move (some sites wait for user activity)
+        try:
+            self.page.mouse.move(100, 100)
+            self.page.mouse.move(200, 200)
+        except Exception:
+            pass
+
+        # Click on body to trigger focus events
+        try:
+            self.page.evaluate("document.body.click()")
+        except Exception:
+            pass
+
+        # Wait a moment for any triggered renders
+        time.sleep(2)
+
+        # Check if we now have content
+        return self._wait_for_dynamic_content(timeout=5000)
 
     def back(self) -> dict:
         """Go back in history."""

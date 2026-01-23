@@ -550,20 +550,35 @@ class Agent:
 
         # Debug: Check HTML content before parsing
         debug_info = self.eyes.debug_html(html)
-        if debug_info.get("empty_root") or not debug_info.get("has_meaningful_content"):
-            log(f"  [SPA detected or empty content - waiting for render...]")
-            import time
-            # Wait longer for SPA to render
-            for attempt in range(5):
-                time.sleep(2)
-                html = self.hand.get_html()
-                debug_info = self.eyes.debug_html(html)
-                if debug_info.get("has_meaningful_content"):
-                    log(f"  [Content loaded after {(attempt+1)*2}s]")
-                    break
-                # Try scrolling to trigger lazy loading
-                if attempt == 2:
-                    self.hand.scroll("down", 300)
+        render_attempts = 0
+
+        # If page appears empty or is an SPA, try multiple render strategies
+        while (debug_info.get("empty_root") or not debug_info.get("has_meaningful_content")) and render_attempts < 3:
+            render_attempts += 1
+            log(f"  [Render attempt {render_attempts}/3 - {'empty root' if debug_info.get('empty_root') else 'no content'}...]")
+
+            if render_attempts == 1:
+                # First attempt: just wait longer
+                import time
+                time.sleep(3)
+            elif render_attempts == 2:
+                # Second attempt: use force_render
+                log("  [Forcing render...]")
+                self.hand.force_render()
+            else:
+                # Third attempt: refresh and wait
+                log("  [Refreshing page...]")
+                self.hand.refresh()
+                import time
+                time.sleep(3)
+                self.hand._wait_for_dynamic_content(timeout=10000)
+
+            html = self.hand.get_html()
+            debug_info = self.eyes.debug_html(html)
+
+            if debug_info.get("has_meaningful_content"):
+                log(f"  [Content loaded on attempt {render_attempts}]")
+                break
 
         parsed = self.eyes.see(html)
 
@@ -578,18 +593,23 @@ class Agent:
 
         elements = self._format_elements(parsed, exclude_urls=exclude_urls)
 
-        # If still no elements after all that, log debug info
+        # If still no elements after all that, log debug info and try one final time
         if elements == "No interactive elements found":
             log(f"  [DEBUG: HTML={debug_info['html_length']}b, text={debug_info['text_length']}, links={debug_info['raw_links']}, inputs={debug_info['raw_inputs']}]")
 
-            # Last resort: try one more time with aggressive waiting
+            # Last resort: full page scroll and wait
             import time
-            log("  [Last attempt - aggressive wait...]")
-            time.sleep(5)
-            self.hand.scroll("down", 500)
+            log("  [Final attempt - full page interaction...]")
+
+            # Scroll the entire page to trigger any lazy loading
+            self.hand.scroll("down", 1000)
             time.sleep(2)
-            self.hand.scroll("up", 300)
-            time.sleep(1)
+            self.hand.scroll("up", 500)
+            time.sleep(2)
+
+            # Force render one more time
+            self.hand.force_render()
+
             html = self.hand.get_html()
             parsed = self.eyes.see(html)
             elements = self._format_elements(parsed, exclude_urls=exclude_urls)
