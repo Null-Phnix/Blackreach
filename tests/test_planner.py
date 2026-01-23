@@ -294,6 +294,22 @@ class TestPlannerPlan:
         assert len(plan.subtasks) >= 1
         assert "Complete:" in plan.subtasks[0].description
 
+    @patch('blackreach.planner.LLM')
+    def test_plan_handles_json_decode_error(self, mock_llm_class):
+        """plan() handles JSONDecodeError with fallback plan."""
+        mock_llm = MagicMock()
+        # This has braces so regex finds it, but invalid JSON inside
+        mock_llm.generate.return_value = '{not valid json syntax}'
+        mock_llm_class.return_value = mock_llm
+
+        planner = Planner()
+        plan = planner.plan("download all files from the server")
+
+        # Should get fallback plan from JSONDecodeError handler
+        assert plan is not None
+        assert len(plan.subtasks) >= 1
+        assert "Complete:" in plan.subtasks[0].description
+
 
 class TestFormatPlan:
     """Tests for plan formatting."""
