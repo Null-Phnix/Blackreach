@@ -1,34 +1,33 @@
 GOAL: {goal}
 
-CURRENT STATE:
+STATE:
 - Page: {title}
 - URL: {url}
 - Downloads: {download_count}
 {extra_context}
 
-AVAILABLE ELEMENTS:
+ELEMENTS:
 {elements}
 
-ACTIONS (pick ONE):
-- navigate: Go to a URL
-- type: Search or fill input
-- click: Click element by text
-- download: Download a file
-- done: Goal complete
+ACTIONS:
+- type: Search (e.g., {{"action":"type","args":{{"selector":"input","text":"query"}}}})
+- navigate: Go to URL (e.g., {{"action":"navigate","args":{{"url":"https://..."}}}})
+- click: Click by text (e.g., {{"action":"click","args":{{"text":"link text"}}}})
+- download: Download file (e.g., {{"action":"download","args":{{"url":"https://..."}}}})
+- done: ONLY when downloads >= goal target
 
-OUTPUT FORMAT - respond with ONLY this JSON (no explanation before or after):
-{{"thought":"brief reason","action":"ACTION","args":{{"key":"value"}}}}
+CRITICAL RULES:
+1. If goal says "find/get/download X" - you MUST actually download something before saying done
+2. If downloads = 0 and goal needs files - you are NOT done, keep searching
+3. On search pages (Google/Wikipedia/etc) - use TYPE to search for what you need
+4. When you see DOWNLOAD links with .epub/.pdf/.zip - use DOWNLOAD action
+5. When you see DETAIL PAGE links - NAVIGATE to them first
 
-EXAMPLES:
-{{"thought":"need to search for the content","action":"type","args":{{"selector":"input","text":"red rising epub"}}}}
-{{"thought":"found download link","action":"download","args":{{"url":"https://..."}}}}
-{{"thought":"navigate to detail page","action":"navigate","args":{{"url":"https://..."}}}}
-{{"thought":"goal achieved","action":"done","args":{{"reason":"downloaded file"}}}}
+STRATEGY for "{goal}":
+- If on generic page: search for it using TYPE
+- If on results page: navigate to a relevant result
+- If on content page: find and use DOWNLOAD link
+- ONLY use done when you have actually downloaded {download_count} files (need >= 1)
 
-RULES:
-1. If on Wikipedia/Google, type search query first
-2. If you see DOWNLOAD links, use download action
-3. If you see DETAIL PAGE links, navigate to them
-4. Download count {download_count} >= goal target = done
-
-YOUR RESPONSE (JSON only):
+OUTPUT (JSON only, no other text):
+{{"thought":"what I'm doing","action":"ACTION","args":{{...}}}}

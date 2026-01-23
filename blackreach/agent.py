@@ -317,13 +317,37 @@ class Agent:
         )
         self.hand.wake()
 
-        # Navigate to start URL
-        log(f"Navigating to: {self.config.start_url}")
-        self.hand.goto(self.config.start_url)
-        self._record_visit(self.config.start_url)
+        # Determine best start URL based on goal
+        start_url = self._get_smart_start_url(goal)
+        log(f"Navigating to: {start_url}")
+        self.hand.goto(start_url)
+        self._record_visit(start_url)
 
         # Run the main loop
         return self._run_loop(goal, start_step=1, quiet=quiet)
+
+    def _get_smart_start_url(self, goal: str) -> str:
+        """Choose the best starting URL based on the goal."""
+        goal_lower = goal.lower()
+
+        # If user specified a URL in the goal, use that
+        import re
+        url_match = re.search(r'https?://\S+', goal)
+        if url_match:
+            return url_match.group()
+
+        # Choose based on content type
+        if any(word in goal_lower for word in ['arxiv', 'paper', 'research', 'academic']):
+            return "https://arxiv.org"
+        elif any(word in goal_lower for word in ['github', 'repo', 'code', 'readme']):
+            return "https://github.com"
+        elif any(word in goal_lower for word in ['epub', 'ebook', 'book', 'gutenberg']):
+            return "https://www.google.com"  # Google is best for finding ebooks
+        elif any(word in goal_lower for word in ['wikipedia', 'wiki']):
+            return "https://www.wikipedia.org"
+
+        # Default to Google for general searches (more flexible than Wikipedia)
+        return "https://www.google.com"
 
     def _run_loop(self, goal: str, start_step: int = 1, quiet: bool = False) -> Dict[str, Any]:
         """
@@ -645,12 +669,28 @@ class Agent:
         # Record visit
         self._record_visit(url, title=title)
 
-        # Handle done action
+        # Handle done action - but validate it first
         if action == "done":
             reason = args.get("reason", thought or "Goal complete")
-            if hasattr(self, '_logger'):
-                self._logger.act(step_num, "done", {"reason": reason}, success=True)
-            return {"done": True, "reason": reason}
+            download_count = len(self.session_memory.downloaded_files)
+            goal_lower = goal.lower()
+
+            # Check if goal requires downloads
+            needs_download = any(word in goal_lower for word in [
+                'download', 'find', 'get', 'fetch', 'save', 'epub', 'pdf', 'file',
+                'paper', 'image', 'wallpaper', 'picture', 'photo', 'document'
+            ])
+
+            # Don't allow "done" if goal needs downloads but we have 0
+            if needs_download and download_count == 0:
+                log(f"  [BLOCKED: Can't be done - goal needs downloads but have {download_count}]")
+                # Force agent to keep trying - treat as if no action was parsed
+                action = None
+                self._record_failure(url, "premature_done", "Tried to finish without downloading")
+            else:
+                if hasattr(self, '_logger'):
+                    self._logger.act(step_num, "done", {"reason": reason}, success=True)
+                return {"done": True, "reason": reason}
 
         # Auto-completion check for download goals
         download_count = len(self.session_memory.downloaded_files)
