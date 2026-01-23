@@ -7,6 +7,7 @@ from blackreach.knowledge import (
     find_best_sources,
     reason_about_goal,
     get_smart_start,
+    get_all_urls_for_source,
     ContentSource,
     CONTENT_SOURCES
 )
@@ -54,6 +55,11 @@ class TestContentTypeDetection:
     def test_detect_pdf(self):
         types = detect_content_type("download the pdf manual")
         assert "pdf" in types or "ebook" in types
+
+    def test_detect_pdf_research_context(self):
+        """PDF with research context is also detected as paper."""
+        types = detect_content_type("download the research pdf study")
+        assert "paper" in types
 
     def test_fallback_to_general(self):
         types = detect_content_type("help me with something")
@@ -276,3 +282,43 @@ class TestSubjectExtractionEdgeCases:
         result = extract_subject("download papers about machine learning and neural networks")
         # Should contain the technical terms
         assert "machine" in result.lower() or "neural" in result.lower() or "learning" in result.lower()
+
+
+class TestGetAllUrls:
+    """Tests for get_all_urls_for_source function."""
+
+    def test_source_without_mirrors(self):
+        """Source without mirrors returns only primary URL."""
+        source = ContentSource(
+            name="Test",
+            url="https://example.com",
+            description="Test source",
+            content_types=["test"],
+            keywords=["test"],
+            mirrors=[]
+        )
+        urls = get_all_urls_for_source(source)
+        assert urls == ["https://example.com"]
+
+    def test_source_with_mirrors(self):
+        """Source with mirrors returns primary + mirror URLs."""
+        source = ContentSource(
+            name="Test",
+            url="https://primary.com",
+            description="Test source",
+            content_types=["test"],
+            keywords=["test"],
+            mirrors=["https://mirror1.com", "https://mirror2.com"]
+        )
+        urls = get_all_urls_for_source(source)
+        assert len(urls) == 3
+        assert "https://primary.com" in urls
+        assert "https://mirror1.com" in urls
+        assert "https://mirror2.com" in urls
+
+    def test_annas_archive_has_mirrors(self):
+        """Anna's Archive source has mirrors configured."""
+        annas = next((s for s in CONTENT_SOURCES if s.name == "Anna's Archive"), None)
+        assert annas is not None
+        urls = get_all_urls_for_source(annas)
+        assert len(urls) > 1  # Has mirrors

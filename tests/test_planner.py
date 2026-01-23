@@ -278,3 +278,73 @@ class TestPlannerPlan:
         assert plan is not None
         assert plan.subtasks[0].optional is True
         assert plan.subtasks[1].optional is False
+
+    @patch('blackreach.planner.LLM')
+    def test_plan_handles_invalid_json(self, mock_llm_class):
+        """plan() handles invalid JSON with fallback plan."""
+        mock_llm = MagicMock()
+        mock_llm.generate.return_value = 'This is not valid JSON at all'
+        mock_llm_class.return_value = mock_llm
+
+        planner = Planner()
+        plan = planner.plan("download all papers from arxiv")
+
+        # Should get fallback plan
+        assert plan is not None
+        assert len(plan.subtasks) >= 1
+        assert "Complete:" in plan.subtasks[0].description
+
+
+class TestFormatPlan:
+    """Tests for plan formatting."""
+
+    def test_format_plan_basic(self):
+        """format_plan produces readable output."""
+        plan = Plan(
+            goal="Test goal",
+            subtasks=[
+                Subtask(description="Step 1", expected_outcome="Outcome 1"),
+                Subtask(description="Step 2", expected_outcome="Outcome 2"),
+            ],
+            estimated_steps=10
+        )
+
+        planner = Planner()
+        output = planner.format_plan(plan)
+
+        assert "Test goal" in output
+        assert "Step 1" in output
+        assert "Outcome 1" in output
+        assert "Estimated steps: ~10" in output
+
+    def test_format_plan_with_optional(self):
+        """format_plan marks optional steps."""
+        plan = Plan(
+            goal="Test with optional",
+            subtasks=[
+                Subtask(description="Required step", expected_outcome="Must do"),
+                Subtask(description="Optional step", expected_outcome="Nice to have", optional=True),
+            ],
+            estimated_steps=5
+        )
+
+        planner = Planner()
+        output = planner.format_plan(plan)
+
+        assert "Required step" in output
+        assert "(optional)" in output
+
+
+class TestMaybePlan:
+    """Tests for maybe_plan convenience function."""
+
+    def test_maybe_plan_import(self):
+        """maybe_plan can be imported."""
+        from blackreach.planner import maybe_plan
+        assert callable(maybe_plan)
+
+    def test_maybe_plan_simple_goal_returns_none(self):
+        """maybe_plan returns None for simple goals."""
+        from blackreach.planner import maybe_plan
+        result = maybe_plan("search google")
+        assert result is None
