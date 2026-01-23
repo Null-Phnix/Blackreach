@@ -195,3 +195,84 @@ class TestContentSourceDataclass:
     def test_all_sources_have_keywords(self):
         for source in CONTENT_SOURCES:
             assert len(source.keywords) > 0
+
+
+class TestContentSourceMirrors:
+    """Tests for source mirrors."""
+
+    def test_sources_with_mirrors_exist(self):
+        """Some sources have mirrors defined."""
+        sources_with_mirrors = [s for s in CONTENT_SOURCES if s.mirrors]
+        assert len(sources_with_mirrors) > 0
+
+    def test_mirrors_are_valid_urls(self):
+        """Mirror URLs are valid."""
+        for source in CONTENT_SOURCES:
+            for mirror in source.mirrors:
+                assert mirror.startswith("http")
+
+
+class TestContentSourcePriority:
+    """Tests for source priority system."""
+
+    def test_priority_is_positive(self):
+        """All sources have positive priority."""
+        for source in CONTENT_SOURCES:
+            assert source.priority > 0
+
+    def test_priority_reasonable_range(self):
+        """Priority is within reasonable range."""
+        for source in CONTENT_SOURCES:
+            assert 1 <= source.priority <= 10
+
+
+class TestFindBestSourcesEdgeCases:
+    """Edge case tests for find_best_sources."""
+
+    def test_empty_goal_returns_sources(self):
+        """Empty goal still returns some sources."""
+        from blackreach.knowledge import find_best_sources
+        sources = find_best_sources("")
+        # Should return something even for empty goal
+        assert isinstance(sources, list)
+
+    def test_very_long_goal(self):
+        """Handles very long goals."""
+        from blackreach.knowledge import find_best_sources
+        long_goal = "download " * 100 + "papers about AI"
+        sources = find_best_sources(long_goal)
+        assert isinstance(sources, list)
+
+
+class TestReasonAboutGoalEdgeCases:
+    """Edge case tests for reason_about_goal."""
+
+    def test_handles_special_characters(self):
+        """Handles goals with special characters."""
+        from blackreach.knowledge import reason_about_goal
+        result = reason_about_goal("find papers about AI & ML + deep learning")
+        assert "subject" in result
+
+    def test_numeric_goal(self):
+        """Handles goals with numbers."""
+        from blackreach.knowledge import reason_about_goal
+        result = reason_about_goal("download 10 papers from 2024")
+        assert "subject" in result
+
+
+class TestSubjectExtractionEdgeCases:
+    """Edge case tests for extract_subject."""
+
+    def test_all_stopwords(self):
+        """Handles goals with mostly stopwords."""
+        from blackreach.knowledge import extract_subject
+        result = extract_subject("find the and or a")
+        # Should return something, not empty
+        assert isinstance(result, str)
+
+    def test_preserves_technical_terms(self):
+        """Preserves technical terms in subject."""
+        from blackreach.knowledge import extract_subject
+        result = extract_subject("download papers about machine learning and neural networks")
+        # Should contain the technical terms
+        assert "machine" in result.lower() or "neural" in result.lower() or "learning" in result.lower()

@@ -165,6 +165,41 @@ class TestStealth:
         assert "media" in blocked
         assert "font" not in blocked
 
+    def test_get_resource_types_with_fonts_blocked(self):
+        """get_resource_types_to_block includes fonts when configured."""
+        config = StealthConfig(block_images=False, block_media=False, block_fonts=True)
+        stealth = Stealth(config)
+        blocked = stealth.get_resource_types_to_block()
+        assert "font" in blocked
+        assert "image" not in blocked
+
+    def test_get_next_proxy_no_rotation(self):
+        """get_next_proxy returns single proxy when no rotation."""
+        config = StealthConfig(proxy="http://proxy.example.com:8080")
+        stealth = Stealth(config)
+        proxy = stealth.get_next_proxy()
+        assert proxy == "http://proxy.example.com:8080"
+
+    def test_get_next_proxy_with_rotation(self):
+        """get_next_proxy cycles through proxy rotation list."""
+        config = StealthConfig(proxy_rotation=[
+            "http://proxy1.example.com:8080",
+            "http://proxy2.example.com:8080",
+            "http://proxy3.example.com:8080",
+        ])
+        stealth = Stealth(config)
+        # First cycle through all proxies
+        proxy1 = stealth.get_next_proxy()
+        proxy2 = stealth.get_next_proxy()
+        proxy3 = stealth.get_next_proxy()
+        # Should cycle back
+        proxy4 = stealth.get_next_proxy()
+
+        assert proxy1 == "http://proxy1.example.com:8080"
+        assert proxy2 == "http://proxy2.example.com:8080"
+        assert proxy3 == "http://proxy3.example.com:8080"
+        assert proxy4 == proxy1  # Cycles back
+
 
 class TestBezierPath:
     """Tests for mouse path generation."""

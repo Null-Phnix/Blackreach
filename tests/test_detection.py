@@ -349,6 +349,26 @@ class TestRateLimitDetection:
 
         assert result.detected is False
 
+    def test_detect_rate_limit_with_minutes(self, detector):
+        """Detects rate limit with retry in minutes."""
+        # Need 429 status code to trigger detection with minutes parsing
+        html = '<p>Rate limited. Please try again in 5 minutes.</p>'
+        result = detector.detect_rate_limit(html, status_code=429)
+
+        assert result.detected is True
+        # 5 minutes = 300 seconds
+        assert "300" in (result.details or "")
+
+    def test_detect_rate_limit_with_hours(self, detector):
+        """Detects rate limit with retry in hours."""
+        # Need 429 status code to trigger detection with hours parsing
+        html = '<p>Too many requests. Please try again in 2 hours.</p>'
+        result = detector.detect_rate_limit(html, status_code=429)
+
+        assert result.detected is True
+        # 2 hours = 7200 seconds
+        assert "7200" in (result.details or "")
+
 
 # =============================================================================
 # Access Denied Detection Tests

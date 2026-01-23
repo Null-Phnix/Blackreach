@@ -124,6 +124,36 @@ class TestSessionMemory:
         assert mem.last_failure == "Error 2"
 
 
+class TestSessionMemoryLimits:
+    """Tests for memory limit enforcement."""
+
+    def test_visited_urls_limit_enforced(self):
+        """visited_urls is truncated when exceeding limit."""
+        mem = SessionMemory()
+        # Add more URLs than the limit
+        for i in range(510):
+            mem.add_visit(f"https://example.com/page{i}")
+
+        # Default max_urls is 500
+        assert len(mem.visited_urls) == 500
+        # Should keep the most recent ones (last 500)
+        assert "https://example.com/page509" in mem.visited_urls
+        assert "https://example.com/page0" not in mem.visited_urls
+
+    def test_actions_taken_limit_enforced(self):
+        """actions_taken is truncated when exceeding limit."""
+        mem = SessionMemory()
+        # Add more actions than the limit
+        for i in range(210):
+            mem.add_action({"action": "click", "step": i})
+
+        # Default max_actions is 200
+        assert len(mem.actions_taken) == 200
+        # Should keep the most recent ones (last 200)
+        assert mem.actions_taken[-1]["step"] == 209
+        assert all(a["step"] != 0 for a in mem.actions_taken)
+
+
 # =============================================================================
 # PersistentMemory Tests
 # =============================================================================
@@ -708,3 +738,36 @@ class TestSessionStatePersistence:
         assert "new_file.pdf" in state2["session_memory"].downloaded_files
 
         mem.close()
+
+
+class TestPersistentMemoryContextManager:
+    """Tests for context manager support."""
+
+    def test_context_manager_basic(self, memory_db):
+        """PersistentMemory works as context manager."""
+        with PersistentMemory(memory_db) as mem:
+            session_id = mem.start_session("context test")
+            assert session_id is not None
+        # Connection should be closed after with block
+        assert mem._conn is None
+
+    def test_context_manager_adds_data(self, memory_db):
+        """Data added in context manager is persisted."""
+        with PersistentMemory(memory_db) as mem:
+            mem.add_download("ctx_test.pdf", "https://example.com/ctx.pdf")
+
+        # Verify with new connection
+        mem2 = PersistentMemory(memory_db)
+        assert mem2.has_downloaded(url="https://example.com/ctx.pdf")
+        mem2.close()
+
+    def test_context_manager_exception_closes(self, memory_db):
+        """Context manager closes connection on exception."""
+        mem = None
+        try:
+            with PersistentMemory(memory_db) as mem:
+                raise ValueError("Test exception")
+        except ValueError:
+            pass
+        # Connection should still be closed
+        assert mem._conn is None

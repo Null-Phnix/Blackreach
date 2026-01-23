@@ -331,3 +331,24 @@ class TestCleanupOldLogs:
         cleanup_old_logs(keep_days=7)
 
         assert recent_file.exists()
+
+    def test_deletes_old_files(self, tmp_path, monkeypatch):
+        """cleanup_old_logs deletes files older than keep_days."""
+        import os
+        import time
+
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir(parents=True)
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        # Create an old log file
+        old_file = log_dir / "session_1_20240101.jsonl"
+        old_file.touch()
+
+        # Set modification time to 30 days ago
+        old_time = time.time() - (30 * 24 * 60 * 60)
+        os.utime(old_file, (old_time, old_time))
+
+        cleanup_old_logs(keep_days=7)
+
+        assert not old_file.exists()

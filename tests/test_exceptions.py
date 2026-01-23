@@ -129,6 +129,12 @@ class TestBrowserErrors:
         err = ElementNotFoundError(selector="a", url="https://example.com")
         assert err.details["url"] == "https://example.com"
 
+    def test_element_not_found_no_args(self):
+        """ElementNotFoundError with no arguments uses default message."""
+        err = ElementNotFoundError()
+        assert "Element not found" in str(err)
+        assert err.recoverable is True
+
     def test_navigation_error(self):
         """NavigationError formats correctly."""
         err = NavigationError("https://example.com", reason="DNS failure")
