@@ -461,3 +461,250 @@ class TestMemoryIntegration:
         assert mem2.has_downloaded(file_hash="abc123")
 
         mem2.close()
+
+
+# =============================================================================
+# Session Resume Tests
+# =============================================================================
+
+class TestSessionMemorySerialization:
+    """Tests for SessionMemory serialization (to_dict/from_dict)."""
+
+    def test_to_dict_empty(self):
+        """Empty SessionMemory serializes correctly."""
+        mem = SessionMemory()
+        data = mem.to_dict()
+
+        assert data["downloaded_files"] == []
+        assert data["downloaded_urls"] == []
+        assert data["visited_urls"] == []
+        assert data["actions_taken"] == []
+        assert data["failures"] == []
+
+    def test_to_dict_populated(self):
+        """Populated SessionMemory serializes all fields."""
+        mem = SessionMemory()
+        mem.add_download("test.pdf", "https://example.com/test.pdf")
+        mem.add_visit("https://example.com")
+        mem.add_action({"action": "click", "selector": "#btn"})
+        mem.add_failure("Element not found")
+
+        data = mem.to_dict()
+
+        assert "test.pdf" in data["downloaded_files"]
+        assert "https://example.com/test.pdf" in data["downloaded_urls"]
+        assert "https://example.com" in data["visited_urls"]
+        assert len(data["actions_taken"]) == 1
+        assert "Element not found" in data["failures"]
+
+    def test_from_dict_empty(self):
+        """Can restore empty SessionMemory from dict."""
+        data = {
+            "downloaded_files": [],
+            "downloaded_urls": [],
+            "visited_urls": [],
+            "actions_taken": [],
+            "failures": [],
+        }
+        mem = SessionMemory.from_dict(data)
+
+        assert mem.downloaded_files == []
+        assert mem.failures == []
+
+    def test_from_dict_populated(self):
+        """Can restore populated SessionMemory from dict."""
+        data = {
+            "downloaded_files": ["file1.pdf", "file2.pdf"],
+            "downloaded_urls": ["https://example.com/file1.pdf"],
+            "visited_urls": ["https://example.com"],
+            "actions_taken": [{"action": "click"}],
+            "failures": ["Error 1"],
+        }
+        mem = SessionMemory.from_dict(data)
+
+        assert len(mem.downloaded_files) == 2
+        assert "file1.pdf" in mem.downloaded_files
+        assert mem.last_failure == "Error 1"
+
+    def test_roundtrip_serialization(self):
+        """SessionMemory survives to_dict -> from_dict roundtrip."""
+        original = SessionMemory()
+        original.add_download("paper.pdf", "https://arxiv.org/pdf/123.pdf")
+        original.add_visit("https://arxiv.org")
+        original.add_action({"action": "type", "text": "AI papers"})
+        original.add_failure("Timeout")
+
+        data = original.to_dict()
+        restored = SessionMemory.from_dict(data)
+
+        assert restored.downloaded_files == original.downloaded_files
+        assert restored.downloaded_urls == original.downloaded_urls
+        assert restored.visited_urls == original.visited_urls
+        assert restored.actions_taken == original.actions_taken
+        assert restored.failures == original.failures
+
+
+class TestSessionStatePersistence:
+    """Tests for session state save/load in PersistentMemory."""
+
+    def test_save_session_state(self, memory_db):
+        """Can save session state."""
+        mem = PersistentMemory(memory_db)
+        session_id = mem.start_session("download papers")
+
+        session_memory = SessionMemory()
+        session_memory.add_download("paper.pdf")
+
+        mem.save_session_state(
+            session_id=session_id,
+            goal="download papers",
+            current_step=5,
+            current_url="https://arxiv.org",
+            session_memory=session_memory,
+            start_url="https://google.com",
+            max_steps=50,
+            status="paused"
+        )
+
+        # Verify it was saved
+        state = mem.load_session_state(session_id)
+        assert state is not None
+        assert state["goal"] == "download papers"
+        assert state["current_step"] == 5
+        mem.close()
+
+    def test_load_session_state(self, memory_db):
+        """Can load saved session state."""
+        mem = PersistentMemory(memory_db)
+        session_id = mem.start_session("find AI papers")
+
+        session_memory = SessionMemory()
+        session_memory.add_download("ai_paper.pdf", "https://arxiv.org/pdf/123.pdf")
+        session_memory.add_visit("https://arxiv.org")
+
+        mem.save_session_state(
+            session_id=session_id,
+            goal="find AI papers",
+            current_step=10,
+            current_url="https://arxiv.org/abs/123",
+            session_memory=session_memory,
+            start_url="https://arxiv.org",
+            max_steps=100
+        )
+
+        state = mem.load_session_state(session_id)
+
+        assert state["session_id"] == session_id
+        assert state["goal"] == "find AI papers"
+        assert state["current_step"] == 10
+        assert state["current_url"] == "https://arxiv.org/abs/123"
+        assert state["start_url"] == "https://arxiv.org"
+        assert state["max_steps"] == 100
+
+        # SessionMemory should be restored
+        restored_memory = state["session_memory"]
+        assert "ai_paper.pdf" in restored_memory.downloaded_files
+        assert "https://arxiv.org" in restored_memory.visited_urls
+
+        mem.close()
+
+    def test_load_session_state_not_found(self, memory_db):
+        """load_session_state returns None for non-existent session."""
+        mem = PersistentMemory(memory_db)
+        state = mem.load_session_state(99999)
+        assert state is None
+        mem.close()
+
+    def test_get_resumable_sessions_empty(self, memory_db):
+        """get_resumable_sessions returns empty list when none exist."""
+        mem = PersistentMemory(memory_db)
+        resumable = mem.get_resumable_sessions()
+        assert resumable == []
+        mem.close()
+
+    def test_get_resumable_sessions_filters_status(self, memory_db):
+        """get_resumable_sessions only returns paused/interrupted sessions."""
+        mem = PersistentMemory(memory_db)
+
+        # Create paused session
+        session1 = mem.start_session("paused goal")
+        mem.save_session_state(session1, "paused goal", 5, "", SessionMemory(), status="paused")
+
+        # Create interrupted session
+        session2 = mem.start_session("interrupted goal")
+        mem.save_session_state(session2, "interrupted goal", 3, "", SessionMemory(), status="interrupted")
+
+        # Create completed session (should not appear)
+        session3 = mem.start_session("completed goal")
+        mem.save_session_state(session3, "completed goal", 10, "", SessionMemory(), status="completed")
+
+        resumable = mem.get_resumable_sessions()
+
+        assert len(resumable) == 2
+        session_ids = [s["session_id"] for s in resumable]
+        assert session1 in session_ids
+        assert session2 in session_ids
+        assert session3 not in session_ids
+
+        mem.close()
+
+    def test_mark_session_completed(self, memory_db):
+        """mark_session_completed removes from resumable list."""
+        mem = PersistentMemory(memory_db)
+
+        session_id = mem.start_session("test goal")
+        mem.save_session_state(session_id, "test goal", 5, "", SessionMemory(), status="paused")
+
+        # Should be resumable
+        resumable = mem.get_resumable_sessions()
+        assert len(resumable) == 1
+
+        # Mark as completed
+        mem.mark_session_completed(session_id)
+
+        # Should no longer be resumable
+        resumable = mem.get_resumable_sessions()
+        assert len(resumable) == 0
+
+        mem.close()
+
+    def test_delete_session_state(self, memory_db):
+        """delete_session_state removes state from database."""
+        mem = PersistentMemory(memory_db)
+
+        session_id = mem.start_session("delete test")
+        mem.save_session_state(session_id, "delete test", 5, "", SessionMemory())
+
+        # Should exist
+        assert mem.load_session_state(session_id) is not None
+
+        # Delete
+        mem.delete_session_state(session_id)
+
+        # Should be gone
+        assert mem.load_session_state(session_id) is None
+
+        mem.close()
+
+    def test_save_session_state_upsert(self, memory_db):
+        """save_session_state updates existing state (upsert)."""
+        mem = PersistentMemory(memory_db)
+
+        session_id = mem.start_session("upsert test")
+        session_memory = SessionMemory()
+
+        # First save
+        mem.save_session_state(session_id, "upsert test", 5, "url1", session_memory)
+        state1 = mem.load_session_state(session_id)
+        assert state1["current_step"] == 5
+
+        # Update (same session_id)
+        session_memory.add_download("new_file.pdf")
+        mem.save_session_state(session_id, "upsert test", 10, "url2", session_memory)
+        state2 = mem.load_session_state(session_id)
+
+        assert state2["current_step"] == 10
+        assert state2["current_url"] == "url2"
+        assert "new_file.pdf" in state2["session_memory"].downloaded_files
+
+        mem.close()

@@ -12,10 +12,11 @@ This allows the agent to:
 """
 
 import sqlite3
+import json
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 
 
 # =============================================================================
@@ -29,6 +30,8 @@ class SessionMemory:
 
     This is fast (in RAM) but temporary.
     Used for: recent actions, current session state
+
+    Can be serialized to JSON for session resume.
     """
     downloaded_files: List[str] = field(default_factory=list)
     downloaded_urls: List[str] = field(default_factory=list)
@@ -64,6 +67,27 @@ class SessionMemory:
     def last_failure(self) -> str:
         """Get the most recent failure message."""
         return self.failures[-1] if self.failures else "None"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary for JSON storage."""
+        return {
+            "downloaded_files": self.downloaded_files,
+            "downloaded_urls": self.downloaded_urls,
+            "visited_urls": self.visited_urls,
+            "actions_taken": self.actions_taken,
+            "failures": self.failures,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SessionMemory":
+        """Restore from dictionary."""
+        return cls(
+            downloaded_files=data.get("downloaded_files", []),
+            downloaded_urls=data.get("downloaded_urls", []),
+            visited_urls=data.get("visited_urls", []),
+            actions_taken=data.get("actions_taken", []),
+            failures=data.get("failures", []),
+        )
 
 
 # =============================================================================
@@ -166,6 +190,23 @@ class PersistentMemory:
                 steps_taken INTEGER DEFAULT 0,
                 downloads_count INTEGER DEFAULT 0,
                 success BOOLEAN
+            )
+        """)
+
+        # Table: Session State (for resume functionality)
+        # Stores serialized session state for interrupted sessions
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS session_state (
+                session_id INTEGER PRIMARY KEY,
+                goal TEXT NOT NULL,
+                current_step INTEGER DEFAULT 0,
+                current_url TEXT,
+                status TEXT DEFAULT 'running',
+                memory_json TEXT,
+                start_url TEXT,
+                max_steps INTEGER DEFAULT 50,
+                saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
             )
         """)
 
@@ -402,6 +443,111 @@ class PersistentMemory:
             "known_domains": known_domains,
             "db_path": str(self.db_path)
         }
+
+    # -------------------------------------------------------------------------
+    # Session State (Resume functionality)
+    # -------------------------------------------------------------------------
+
+    def save_session_state(
+        self,
+        session_id: int,
+        goal: str,
+        current_step: int,
+        current_url: str,
+        session_memory: "SessionMemory",
+        start_url: str = "",
+        max_steps: int = 50,
+        status: str = "paused"
+    ) -> None:
+        """
+        Save session state for later resume.
+
+        Args:
+            session_id: The session ID
+            goal: The original goal
+            current_step: Current step number
+            current_url: Current page URL
+            session_memory: SessionMemory instance to serialize
+            start_url: The start URL for the session
+            max_steps: Maximum steps allowed
+            status: Session status (paused, interrupted, etc.)
+        """
+        cursor = self._conn.cursor()
+        memory_json = json.dumps(session_memory.to_dict())
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO session_state
+            (session_id, goal, current_step, current_url, status, memory_json, start_url, max_steps, saved_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (session_id, goal, current_step, current_url, status, memory_json, start_url, max_steps))
+        self._conn.commit()
+
+    def load_session_state(self, session_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Load session state for resume.
+
+        Returns:
+            Dict with session state or None if not found
+        """
+        cursor = self._conn.cursor()
+        cursor.execute("""
+            SELECT session_id, goal, current_step, current_url, status,
+                   memory_json, start_url, max_steps, saved_at
+            FROM session_state
+            WHERE session_id = ?
+        """, (session_id,))
+
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        memory_data = json.loads(row["memory_json"]) if row["memory_json"] else {}
+        return {
+            "session_id": row["session_id"],
+            "goal": row["goal"],
+            "current_step": row["current_step"],
+            "current_url": row["current_url"],
+            "status": row["status"],
+            "session_memory": SessionMemory.from_dict(memory_data),
+            "start_url": row["start_url"],
+            "max_steps": row["max_steps"],
+            "saved_at": row["saved_at"],
+        }
+
+    def get_resumable_sessions(self, limit: int = 10) -> List[Dict]:
+        """
+        Get list of sessions that can be resumed.
+
+        Returns sessions with status 'paused' or 'interrupted'.
+        """
+        cursor = self._conn.cursor()
+        cursor.execute("""
+            SELECT ss.session_id, ss.goal, ss.current_step, ss.status, ss.saved_at,
+                   s.downloads_count, s.start_time
+            FROM session_state ss
+            JOIN sessions s ON ss.session_id = s.id
+            WHERE ss.status IN ('paused', 'interrupted')
+            ORDER BY ss.saved_at DESC
+            LIMIT ?
+        """, (limit,))
+
+        return [dict(row) for row in cursor.fetchall()]
+
+    def mark_session_completed(self, session_id: int) -> None:
+        """Mark a session state as completed (removes from resumable list)."""
+        cursor = self._conn.cursor()
+        cursor.execute("""
+            UPDATE session_state
+            SET status = 'completed'
+            WHERE session_id = ?
+        """, (session_id,))
+        self._conn.commit()
+
+    def delete_session_state(self, session_id: int) -> None:
+        """Delete session state (after successful completion)."""
+        cursor = self._conn.cursor()
+        cursor.execute("DELETE FROM session_state WHERE session_id = ?", (session_id,))
+        self._conn.commit()
 
     def close(self):
         """Close the database connection."""

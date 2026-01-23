@@ -192,15 +192,17 @@ def cli(ctx):
 
 
 @cli.command()
-@click.argument('goal')
+@click.argument('goal', required=False)
 @click.option('--provider', '-p', help='LLM provider (ollama, openai, anthropic, google, xai)')
 @click.option('--model', '-m', help='Model to use')
 @click.option('--headless/--no-headless', default=None, help='Run browser headless')
 @click.option('--steps', '-s', type=int, help='Maximum steps')
-def run(goal: str, provider: str, model: str, headless: bool, steps: int):
+@click.option('--resume', '-r', type=int, help='Resume a paused session by ID')
+def run(goal: str, provider: str, model: str, headless: bool, steps: int, resume: int):
     """Run the agent with a goal.
 
     Example: blackreach run "go to wikipedia and search for AI"
+    Resume:  blackreach run --resume 42
     """
     from blackreach.agent import Agent, AgentConfig
     from blackreach.llm import LLMConfig
@@ -217,6 +219,52 @@ def run(goal: str, provider: str, model: str, headless: bool, steps: int):
     if provider != "ollama" and not config_manager.has_api_key(provider):
         console.print(f"[red]Error: No API key configured for {provider}[/red]")
         console.print(f"Run [cyan]blackreach config[/cyan] to set up API keys")
+        sys.exit(1)
+
+    # Handle resume
+    if resume:
+        console.print(Panel(
+            f"[bold]Resuming Session:[/bold] #{resume}\n"
+            f"[bold]Provider:[/bold] {provider}\n"
+            f"[bold]Model:[/bold] {model}",
+            title="[bold cyan]Blackreach Resume[/bold cyan]",
+            border_style="cyan"
+        ))
+
+        try:
+            llm_config = LLMConfig(
+                provider=provider,
+                model=model,
+                api_key=config_manager.get_api_key(provider) if provider != "ollama" else None
+            )
+
+            agent_config = AgentConfig(
+                max_steps=max_steps,
+                headless=headless,
+                download_dir=Path(config.download_dir)
+            )
+
+            agent = Agent(llm_config=llm_config, agent_config=agent_config)
+            result = agent.resume(resume)
+
+            # Show results
+            _show_results(result)
+
+        except ValueError as e:
+            console.print(f"[red]Error: {e}[/red]")
+            console.print("Use [cyan]blackreach sessions[/cyan] to see resumable sessions")
+            sys.exit(1)
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Interrupted - session state saved[/yellow]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+            sys.exit(1)
+        return
+
+    # Regular run - goal is required
+    if not goal:
+        console.print("[red]Error: Goal is required (or use --resume)[/red]")
+        console.print("Example: blackreach run \"find and download papers about AI\"")
         sys.exit(1)
 
     console.print(Panel(
@@ -245,21 +293,74 @@ def run(goal: str, provider: str, model: str, headless: bool, steps: int):
         result = agent.run(goal)
 
         # Show results
-        console.print("\n")
-        console.print(Panel(
-            f"[bold]Downloads:[/bold] {len(result['downloads'])}\n"
-            f"[bold]Pages Visited:[/bold] {result['pages_visited']}\n"
-            f"[bold]Steps Taken:[/bold] {result['steps_taken']}\n"
-            f"[bold]Failures:[/bold] {result['failures']}",
-            title="[bold green]Results[/bold green]",
-            border_style="green"
-        ))
+        _show_results(result)
 
     except KeyboardInterrupt:
-        console.print("\n[yellow]Interrupted[/yellow]")
+        console.print("\n[yellow]Interrupted - session state saved for resume[/yellow]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
+
+
+def _show_results(result: dict):
+    """Display agent run results."""
+    status = "[bold green]Success[/bold green]" if result.get('success') else "[bold yellow]Incomplete[/bold yellow]"
+    if result.get('paused'):
+        status = "[bold blue]Paused[/bold blue]"
+
+    console.print("\n")
+    console.print(Panel(
+        f"[bold]Status:[/bold] {status}\n"
+        f"[bold]Downloads:[/bold] {len(result.get('downloads', []))}\n"
+        f"[bold]Pages Visited:[/bold] {result.get('pages_visited', 0)}\n"
+        f"[bold]Steps Taken:[/bold] {result.get('steps_taken', 0)}\n"
+        f"[bold]Failures:[/bold] {result.get('failures', 0)}",
+        title="[bold green]Results[/bold green]",
+        border_style="green"
+    ))
+
+    if result.get('paused'):
+        console.print(f"\n[dim]Resume with: blackreach run --resume {result.get('session_id')}[/dim]")
+
+
+@cli.command()
+def sessions():
+    """List resumable sessions."""
+    from blackreach.memory import PersistentMemory
+
+    try:
+        mem = PersistentMemory(Path("./memory.db"))
+        resumable = mem.get_resumable_sessions()
+        mem.close()
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        return
+
+    if not resumable:
+        console.print("[dim]No resumable sessions found[/dim]")
+        return
+
+    table = Table(title="Resumable Sessions")
+    table.add_column("ID", style="cyan")
+    table.add_column("Goal", style="white")
+    table.add_column("Step", style="yellow")
+    table.add_column("Status", style="green")
+    table.add_column("Saved", style="dim")
+
+    for session in resumable:
+        goal = session.get("goal", "")[:50]
+        if len(session.get("goal", "")) > 50:
+            goal += "..."
+        table.add_row(
+            str(session["session_id"]),
+            goal,
+            str(session.get("current_step", 0)),
+            session.get("status", "unknown"),
+            session.get("saved_at", "")[:19]
+        )
+
+    console.print(table)
+    console.print("\n[dim]Resume with: blackreach run --resume <ID>[/dim]")
 
 
 @cli.command()
@@ -603,6 +704,70 @@ def interactive_mode():
                             else:
                                 console.print(f"  #{session_id}: {goal}... [yellow]incomplete[/yellow]")
                     console.print(f"\n  [dim]Logs: ~/.blackreach/logs/[/dim]")
+
+            elif cmd_lower in ['/sessions', '/resume', 'sessions']:
+                # Show resumable sessions
+                from blackreach.memory import PersistentMemory
+                try:
+                    mem = PersistentMemory(Path("./memory.db"))
+                    resumable = mem.get_resumable_sessions()
+                    mem.close()
+
+                    if not resumable:
+                        ui.print_info("No resumable sessions")
+                    else:
+                        console.print("\n[bold]Resumable Sessions:[/bold]")
+                        for session in resumable:
+                            goal = session.get("goal", "")[:40]
+                            if len(session.get("goal", "")) > 40:
+                                goal += "..."
+                            status_icon = "⏸" if session.get("status") == "paused" else "⚡"
+                            console.print(f"  {status_icon} [cyan]#{session['session_id']}[/cyan]: {goal} (step {session.get('current_step', 0)})")
+                        console.print("\n  [dim]Type /resume <ID> to continue a session[/dim]")
+                except Exception as e:
+                    ui.print_error(f"Failed to load sessions: {e}")
+
+            elif cmd_lower.startswith('/resume '):
+                # Resume a specific session
+                try:
+                    session_id = int(cmd.split(' ', 1)[1].strip())
+                    from blackreach.agent import Agent, AgentConfig, AgentCallbacks
+                    from blackreach.llm import LLMConfig
+
+                    # Check API key
+                    if provider != "ollama" and not config_manager.has_api_key(provider):
+                        ui.print_error(f"No API key configured for {provider}")
+                        continue
+
+                    with ui.spinner(f"Resuming session #{session_id}..."):
+                        llm_config = LLMConfig(
+                            provider=provider,
+                            model=model,
+                            api_key=config_manager.get_api_key(provider) if provider != "ollama" else None
+                        )
+
+                        agent_config = AgentConfig(
+                            max_steps=cfg.max_steps,
+                            headless=cfg.headless,
+                            download_dir=Path(cfg.download_dir)
+                        )
+
+                        agent = Agent(llm_config=llm_config, agent_config=agent_config)
+
+                    result = agent.resume(session_id, quiet=False)
+
+                    # Show completion
+                    if result.get('success'):
+                        ui.print_success(f"Session completed! Downloaded {len(result.get('downloads', []))} files")
+                    elif result.get('paused'):
+                        ui.print_info(f"Session paused. Resume with: /resume {result.get('session_id')}")
+                    else:
+                        ui.print_warning("Session ended without completing goal")
+
+                except ValueError as e:
+                    ui.print_error(str(e))
+                except Exception as e:
+                    ui.print_error(f"Resume failed: {e}")
 
             elif cmd_lower in ['/provider', '/p', 'provider']:
                 # Interactive provider selection menu

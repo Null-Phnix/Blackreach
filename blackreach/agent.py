@@ -98,6 +98,11 @@ class Agent:
         self._stuck_counter = 0  # Track how many times stuck detection triggered
         self._last_action = None  # Track repeated actions
 
+        # Session resume support
+        self._paused = False
+        self._current_step = 0
+        self._current_goal = ""
+
     def _emit(self, event: str, *args, **kwargs) -> None:
         """Emit a callback event if handler is set."""
         handler = getattr(self.callbacks, event, None)
@@ -197,6 +202,82 @@ class Agent:
             f"\n- DO NOT repeat the same action"
         )
 
+    def pause(self) -> None:
+        """Request the agent to pause at next opportunity."""
+        self._paused = True
+
+    def save_state(self) -> None:
+        """Save current session state for later resume."""
+        if not self.session_id or not self._current_goal:
+            return
+
+        current_url = self.hand.get_url() if self.hand else ""
+        self.persistent_memory.save_session_state(
+            session_id=self.session_id,
+            goal=self._current_goal,
+            current_step=self._current_step,
+            current_url=current_url,
+            session_memory=self.session_memory,
+            start_url=self.config.start_url,
+            max_steps=self.config.max_steps,
+            status="paused"
+        )
+
+    def resume(self, session_id: int, quiet: bool = False) -> Dict[str, Any]:
+        """
+        Resume a previously paused session.
+
+        Args:
+            session_id: The session ID to resume
+            quiet: If True, suppress print statements
+
+        Returns:
+            Dict with results
+        """
+        # Load saved state
+        state = self.persistent_memory.load_session_state(session_id)
+        if not state:
+            raise ValueError(f"No resumable session found with ID {session_id}")
+
+        # Restore state
+        self.session_id = state["session_id"]
+        self._current_goal = state["goal"]
+        self._current_step = state["current_step"]
+        self.session_memory = state["session_memory"]
+        self.config.start_url = state["start_url"]
+        self.config.max_steps = state["max_steps"]
+
+        def log(msg: str):
+            if not quiet:
+                print(msg)
+            self._emit("on_status", msg)
+
+        log(f"\n{'='*60}")
+        log(f"RESUMING SESSION #{session_id}")
+        log(f"GOAL: {self._current_goal}")
+        log(f"From step: {self._current_step}")
+        log(f"{'='*60}\n")
+
+        # Initialize browser and navigate to saved URL
+        log("Starting browser...")
+        self.hand = Hand(
+            headless=self.config.headless,
+            stealth_config=StealthConfig(),
+            retry_config=RetryConfig(),
+            download_dir=self.config.download_dir
+        )
+        self.hand.wake()
+
+        if state["current_url"]:
+            log(f"Navigating to saved URL: {state['current_url']}")
+            self.hand.goto(state["current_url"])
+        else:
+            log(f"Navigating to start URL: {self.config.start_url}")
+            self.hand.goto(self.config.start_url)
+
+        # Continue running from saved step
+        return self._run_loop(self._current_goal, start_step=self._current_step + 1, quiet=quiet)
+
     def run(self, goal: str, quiet: bool = False) -> Dict[str, Any]:
         """
         Run the agent to accomplish a goal.
@@ -212,6 +293,9 @@ class Agent:
             if not quiet:
                 print(msg)
             self._emit("on_status", msg)
+
+        self._current_goal = goal
+        self._paused = False
 
         log(f"\n{'='*60}")
         log(f"GOAL: {goal}")
@@ -243,15 +327,46 @@ class Agent:
         )
         self.hand.wake()
 
-        success = False
-        try:
-            # Navigate to start URL
-            log(f"Navigating to: {self.config.start_url}")
-            self.hand.goto(self.config.start_url)
-            self._record_visit(self.config.start_url)
+        # Navigate to start URL
+        log(f"Navigating to: {self.config.start_url}")
+        self.hand.goto(self.config.start_url)
+        self._record_visit(self.config.start_url)
 
+        # Run the main loop
+        return self._run_loop(goal, start_step=1, quiet=quiet)
+
+    def _run_loop(self, goal: str, start_step: int = 1, quiet: bool = False) -> Dict[str, Any]:
+        """
+        Main ReAct loop - can be called from run() or resume().
+
+        Args:
+            goal: The goal to accomplish
+            start_step: Step number to start from (for resume)
+            quiet: Suppress output
+
+        Returns:
+            Dict with results
+        """
+        def log(msg: str):
+            if not quiet:
+                print(msg)
+            self._emit("on_status", msg)
+
+        success = False
+        paused = False
+
+        try:
             # Main ReAct loop
-            for step in range(1, self.config.max_steps + 1):
+            for step in range(start_step, self.config.max_steps + 1):
+                self._current_step = step
+
+                # Check for pause request
+                if self._paused:
+                    log(f"\n⏸ PAUSED at step {step}")
+                    self.save_state()
+                    paused = True
+                    break
+
                 log(f"\n[Step {step}/{self.config.max_steps}]")
                 self._emit("on_step", step, self.config.max_steps, "step", "")
 
@@ -259,14 +374,30 @@ class Agent:
                 result = self._step(goal, step, quiet=quiet)
 
                 if result.get("done"):
-                    log(f"\n COMPLETE: {result.get('reason', 'Goal achieved')}")
+                    log(f"\n✓ COMPLETE: {result.get('reason', 'Goal achieved')}")
                     success = True
                     break
 
                 time.sleep(0.5)  # Brief pause between steps
 
             else:
-                log(f"\n Reached max steps ({self.config.max_steps})")
+                log(f"\n⚠ Reached max steps ({self.config.max_steps})")
+
+        except KeyboardInterrupt:
+            log(f"\n⏸ INTERRUPTED at step {self._current_step}")
+            # Save state for potential resume
+            self.persistent_memory.save_session_state(
+                session_id=self.session_id,
+                goal=goal,
+                current_step=self._current_step,
+                current_url=self.hand.get_url() if self.hand else "",
+                session_memory=self.session_memory,
+                start_url=self.config.start_url,
+                max_steps=self.config.max_steps,
+                status="interrupted"
+            )
+            log(f"Session state saved. Resume with: blackreach run --resume {self.session_id}")
+            paused = True
 
         finally:
             # Clean up
@@ -274,14 +405,18 @@ class Agent:
             if self.hand:
                 self.hand.sleep()
 
-            # End the session in persistent memory
-            self.persistent_memory.end_session(
-                self.session_id,
-                steps=len(self.session_memory.actions_taken),
-                downloads=len(self.session_memory.downloaded_files),
-                success=success
-            )
-            log(f"Session #{self.session_id} ended (success={success})")
+            # End or update the session in persistent memory
+            if not paused:
+                self.persistent_memory.end_session(
+                    self.session_id,
+                    steps=len(self.session_memory.actions_taken),
+                    downloads=len(self.session_memory.downloaded_files),
+                    success=success
+                )
+                # Clean up session state if completed successfully
+                if success:
+                    self.persistent_memory.delete_session_state(self.session_id)
+            log(f"Session #{self.session_id} ended (success={success}, paused={paused})")
 
             # Log session end
             if hasattr(self, '_logger'):
@@ -295,6 +430,7 @@ class Agent:
         result = {
             "goal": goal,
             "success": success,
+            "paused": paused,
             "downloads": self.session_memory.downloaded_files,
             "pages_visited": len(self.session_memory.visited_urls),
             "steps_taken": len(self.session_memory.actions_taken),
