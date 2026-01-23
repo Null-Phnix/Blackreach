@@ -363,3 +363,104 @@ class TestTypeSelectorFallbacks:
         # 'input' is in selector, so fallbacks are added
         # This test verifies the behavior
         assert 'input' in selector.lower()
+
+
+class TestHandStateTracking:
+    """Tests for Hand state tracking."""
+
+    def test_mouse_pos_updates(self):
+        """Mouse position can be updated."""
+        hand = Hand()
+        hand._mouse_pos = (100, 200)
+        assert hand._mouse_pos == (100, 200)
+
+    def test_detector_initialized(self):
+        """SiteDetector is initialized in Hand."""
+        hand = Hand()
+        assert hand._detector is not None
+
+    def test_download_callback_starts_none(self):
+        """Download callback starts as None."""
+        hand = Hand()
+        assert hand._download_callback is None
+
+
+class TestHandHelperProperties:
+    """Tests for helper property initialization."""
+
+    def test_selector_starts_none(self):
+        """_selector starts as None."""
+        hand = Hand()
+        assert hand._selector is None
+
+    def test_popups_starts_none(self):
+        """_popups starts as None."""
+        hand = Hand()
+        assert hand._popups is None
+
+    def test_waits_starts_none(self):
+        """_waits starts as None."""
+        hand = Hand()
+        assert hand._waits is None
+
+
+class TestMultipleHandInstances:
+    """Tests for multiple Hand instances."""
+
+    def test_independent_instances(self):
+        """Multiple Hand instances are independent."""
+        hand1 = Hand(headless=True)
+        hand2 = Hand(headless=False)
+
+        assert hand1.headless is True
+        assert hand2.headless is False
+
+    def test_independent_download_dirs(self):
+        """Each Hand can have its own download directory."""
+        hand1 = Hand(download_dir=Path("/tmp/downloads1"))
+        hand2 = Hand(download_dir=Path("/tmp/downloads2"))
+
+        assert hand1.download_dir != hand2.download_dir
+
+    def test_independent_pending_downloads(self):
+        """Each Hand tracks its own pending downloads."""
+        hand1 = Hand()
+        hand2 = Hand()
+
+        mock_download = Mock()
+        hand1._pending_downloads.append(mock_download)
+
+        assert len(hand1._pending_downloads) == 1
+        assert len(hand2._pending_downloads) == 0
+
+
+class TestHandCombinedConfigs:
+    """Tests for combined configuration options."""
+
+    def test_all_configs_custom(self):
+        """Hand accepts all custom configurations together."""
+        stealth = StealthConfig(min_delay=1.0)
+        retry = RetryConfig(max_attempts=10)
+        download = Path("/custom/downloads")
+
+        hand = Hand(
+            headless=True,
+            stealth_config=stealth,
+            retry_config=retry,
+            download_dir=download
+        )
+
+        assert hand.headless is True
+        assert hand.stealth.config.min_delay == 1.0
+        assert hand.retry_config.max_attempts == 10
+        assert hand.download_dir == download
+
+    def test_partial_configs(self):
+        """Hand works with partial custom configurations."""
+        hand = Hand(headless=True, download_dir=Path("/tmp"))
+
+        assert hand.headless is True
+        assert hand.download_dir == Path("/tmp")
+        # Defaults still applied
+        assert hand.retry_config is not None
+        assert hand.stealth is not None
