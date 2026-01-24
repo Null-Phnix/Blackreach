@@ -18,8 +18,9 @@ from blackreach.content_verify import ContentVerifier, VerificationStatus, get_v
 from blackreach.retry_strategy import RetryManager, RetryDecision, get_retry_manager
 from blackreach.timeout_manager import TimeoutManager, get_timeout_manager
 from blackreach.rate_limiter import RateLimiter, get_rate_limiter
+from blackreach.session_manager import SessionManager, SessionStatus, get_session_manager
 
-__version__ = "2.7.0"
+__version__ = "2.9.0"
 __all__ = [
     "Agent",
     "AgentConfig",
@@ -48,4 +49,7 @@ __all__ = [
     "get_timeout_manager",
     "RateLimiter",
     "get_rate_limiter",
+    "SessionManager",
+    "SessionStatus",
+    "get_session_manager",
 ]

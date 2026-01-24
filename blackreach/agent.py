@@ -42,6 +42,7 @@ from blackreach.content_verify import ContentVerifier, VerificationStatus, FileT
 from blackreach.retry_strategy import RetryManager, RetryDecision, get_retry_manager
 from blackreach.timeout_manager import TimeoutManager, get_timeout_manager
 from blackreach.rate_limiter import RateLimiter, get_rate_limiter
+from blackreach.session_manager import SessionManager, SessionStatus, get_session_manager
 
 
 # ============================================================================
@@ -170,6 +171,9 @@ class Agent:
 
         # Rate limiting
         self.rate_limiter = get_rate_limiter()
+
+        # Session management (v2.8.0+)
+        self.session_manager = get_session_manager(self.config.memory_db)
 
         # Load prompts
         self.prompts = self._load_prompts()
