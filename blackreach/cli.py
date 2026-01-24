@@ -56,7 +56,7 @@ except ValueError:
 console = Console()
 
 # Version
-__version__ = "3.4.0"
+__version__ = "4.0.0-beta.1"
 
 
 BANNER = """[bold cyan]

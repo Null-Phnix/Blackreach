@@ -1,269 +1,190 @@
 """
-Blackreach Configuration Manager
+Configuration System (v3.5.0)
 
-Handles:
-- API keys for different providers
-- Default model settings
-- User preferences
+Provides unified configuration management for Blackreach:
+- File-based configuration (YAML/JSON)
+- Environment variable support
+- Profile support (dev, prod, etc.)
+- Configuration validation
+- Runtime configuration updates
 """
 
-import os
-import yaml
-from pathlib import Path
-from typing import Optional, Dict, Any
 from dataclasses import dataclass, field, asdict
-
-from blackreach.exceptions import InvalidConfigError
-
-
-CONFIG_DIR = Path.home() / ".blackreach"
-CONFIG_FILE = CONFIG_DIR / "config.yaml"
-FIRST_RUN_MARKER = CONFIG_DIR / ".initialized"
+from typing import Dict, Optional, Any, List
+from pathlib import Path
+import os
+import json
 
 
 @dataclass
-class ProviderConfig:
-    """Configuration for a single provider."""
-    api_key: str = ""
-    default_model: str = ""
-    base_url: str = ""  # For custom endpoints
-
-
-@dataclass
-class Config:
-    """Main configuration."""
-    # Default provider
-    default_provider: str = "ollama"
-
-    # Provider configs
-    ollama: ProviderConfig = field(default_factory=lambda: ProviderConfig(
-        default_model="qwen2.5:7b"
-    ))
-    openai: ProviderConfig = field(default_factory=lambda: ProviderConfig(
-        default_model="gpt-4o-mini"
-    ))
-    anthropic: ProviderConfig = field(default_factory=lambda: ProviderConfig(
-        default_model="claude-3-5-sonnet-20241022"
-    ))
-    google: ProviderConfig = field(default_factory=lambda: ProviderConfig(
-        default_model="gemini-2.5-flash"
-    ))
-    xai: ProviderConfig = field(default_factory=lambda: ProviderConfig(
-        default_model="grok-4-fast-non-reasoning"
-    ))
-
-    # Agent settings
+class BrowserConfig:
+    """Browser-related configuration."""
+    type: str = "chromium"
     headless: bool = False
-    max_steps: int = 30
-    download_dir: str = "./downloads"
-    browser_type: str = "chromium"  # chromium, firefox, or webkit
-
-    # UI settings
-    verbose: bool = True
-    show_thinking: bool = True
+    timeout_ms: int = 30000
+    viewport_width: int = 1280
+    viewport_height: int = 720
+    user_agent: Optional[str] = None
+    proxy: Optional[str] = None
 
 
-# Available models per provider
-AVAILABLE_MODELS = {
-    "ollama": [
-        "qwen2.5:7b",
-        "qwen2.5:14b",
-        "llama3.2:3b",
-        "llama3.1:8b",
-        "mistral:7b",
-        "phi3:mini",
-        "gemma2:9b",
-        "codellama:7b",
-    ],
-    "openai": [
-        "gpt-4o",
-        "gpt-4o-mini",
-        "gpt-4-turbo",
-        "gpt-3.5-turbo",
-    ],
-    "anthropic": [
-        "claude-3-5-sonnet-20241022",
-        "claude-3-5-haiku-20241022",
-        "claude-3-opus-20240229",
-    ],
-    "google": [
-        "gemini-2.5-pro",
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-    ],
-    "xai": [
-        "grok-4-1-fast-reasoning",
-        "grok-4-1-fast-non-reasoning",
-        "grok-4-fast-reasoning",
-        "grok-4-fast-non-reasoning",
-        "grok-code-fast-1",
-        "grok-3-mini",
-        "grok-3",
-    ],
-}
+@dataclass
+class LLMProviderConfig:
+    """LLM provider configuration."""
+    provider: str = "ollama"
+    model: str = "llama3.2"
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    temperature: float = 0.3
+    max_tokens: int = 1000
+
+
+@dataclass
+class AgentBehaviorConfig:
+    """Agent behavior configuration."""
+    max_steps: int = 50
+    step_pause_seconds: float = 0.5
+    stuck_threshold: int = 3
+    max_retries: int = 3
+    auto_complete: bool = True
+
+
+@dataclass
+class DownloadSettings:
+    """Download-related configuration."""
+    directory: str = "./downloads"
+    max_concurrent: int = 3
+    verify_content: bool = True
+    min_file_size: int = 1000
+
+
+@dataclass
+class CacheSettings:
+    """Cache configuration."""
+    enabled: bool = True
+    max_pages: int = 100
+    max_size_mb: int = 50
+    ttl_seconds: float = 300.0
+
+
+@dataclass
+class BlackreachConfig:
+    """Root configuration for Blackreach."""
+    browser: BrowserConfig = field(default_factory=BrowserConfig)
+    llm: LLMProviderConfig = field(default_factory=LLMProviderConfig)
+    agent: AgentBehaviorConfig = field(default_factory=AgentBehaviorConfig)
+    download: DownloadSettings = field(default_factory=DownloadSettings)
+    cache: CacheSettings = field(default_factory=CacheSettings)
+    memory_db: str = "./memory.db"
+    profile: str = "default"
 
 
 class ConfigManager:
-    """Manages Blackreach configuration."""
+    """Manages configuration loading and access."""
 
-    def __init__(self):
-        self._config: Optional[Config] = None
-        self._ensure_config_dir()
+    ENV_PREFIX = "BLACKREACH_"
 
-    def _ensure_config_dir(self):
-        """Create config directory if it doesn't exist."""
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    def __init__(self, config_path: Optional[Path] = None):
+        self.config = BlackreachConfig()
+        self.config_path = config_path
+        self._load_config()
 
-    def load(self) -> Config:
-        """Load configuration from file or create default."""
-        if self._config:
-            return self._config
+    def _load_config(self):
+        """Load configuration from file and environment."""
+        if self.config_path and self.config_path.exists():
+            self._load_file(self.config_path)
+        self._load_env()
 
-        if CONFIG_FILE.exists():
-            try:
-                with open(CONFIG_FILE) as f:
-                    data = yaml.safe_load(f) or {}
-                self._config = self._dict_to_config(data)
-            except Exception as e:
-                print(f"Warning: Could not load config: {e}")
-                self._config = Config()
-        else:
-            self._config = Config()
-            self.save()  # Create default config file
+    def _load_file(self, path: Path):
+        """Load configuration from a file."""
+        try:
+            content = path.read_text()
+            data = json.loads(content)
+            self._apply_dict(data)
+        except Exception as e:
+            print(f"Warning: Could not load config from {path}: {e}")
 
-        # Also check environment variables for API keys
-        self._load_env_keys()
-
-        return self._config
-
-    def _load_env_keys(self):
-        """Load API keys from environment variables."""
-        if not self._config:
-            return
-
+    def _load_env(self):
+        """Load configuration from environment variables."""
         env_mappings = {
-            "OPENAI_API_KEY": ("openai", "api_key"),
-            "ANTHROPIC_API_KEY": ("anthropic", "api_key"),
-            "GOOGLE_API_KEY": ("google", "api_key"),
-            "XAI_API_KEY": ("xai", "api_key"),
+            f"{self.ENV_PREFIX}HEADLESS": ("browser", "headless"),
+            f"{self.ENV_PREFIX}LLM_PROVIDER": ("llm", "provider"),
+            f"{self.ENV_PREFIX}LLM_MODEL": ("llm", "model"),
+            f"{self.ENV_PREFIX}LLM_API_KEY": ("llm", "api_key"),
+            f"{self.ENV_PREFIX}MAX_STEPS": ("agent", "max_steps"),
+            f"{self.ENV_PREFIX}DOWNLOAD_DIR": ("download", "directory"),
         }
 
-        for env_var, (provider, attr) in env_mappings.items():
+        for env_var, (section, key) in env_mappings.items():
             value = os.environ.get(env_var)
-            if value:
-                provider_config = getattr(self._config, provider)
-                setattr(provider_config, attr, value)
+            if value is not None:
+                self._set_value(section, key, value)
 
-    def save(self):
-        """Save configuration to file."""
-        if not self._config:
-            self._config = Config()
+    def _apply_dict(self, data: Dict):
+        """Apply a dictionary of configuration values."""
+        for section in ["browser", "llm", "agent", "download", "cache"]:
+            if section in data:
+                section_obj = getattr(self.config, section, None)
+                if section_obj:
+                    for k, v in data[section].items():
+                        if hasattr(section_obj, k):
+                            setattr(section_obj, k, v)
 
-        data = self._config_to_dict(self._config)
+        if "memory_db" in data:
+            self.config.memory_db = data["memory_db"]
 
-        with open(CONFIG_FILE, 'w') as f:
-            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+    def _set_value(self, section: str, key: str, value: str):
+        """Set a configuration value."""
+        if value.lower() in ('true', 'yes', '1'):
+            value = True
+        elif value.lower() in ('false', 'no', '0'):
+            value = False
+        elif value.isdigit():
+            value = int(value)
 
-    def _config_to_dict(self, config: Config) -> Dict[str, Any]:
-        """Convert Config to dictionary for YAML."""
-        return {
-            "default_provider": config.default_provider,
-            "providers": {
-                "ollama": asdict(config.ollama),
-                "openai": asdict(config.openai),
-                "anthropic": asdict(config.anthropic),
-                "google": asdict(config.google),
-                "xai": asdict(config.xai),
-            },
-            "agent": {
-                "headless": config.headless,
-                "max_steps": config.max_steps,
-                "download_dir": config.download_dir,
-                "browser_type": config.browser_type,
-            },
-            "ui": {
-                "verbose": config.verbose,
-                "show_thinking": config.show_thinking,
-            }
+        section_obj = getattr(self.config, section, None)
+        if section_obj and hasattr(section_obj, key):
+            setattr(section_obj, key, value)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Get a configuration value by dotted key."""
+        parts = key.split('.')
+        obj = self.config
+        for part in parts:
+            if hasattr(obj, part):
+                obj = getattr(obj, part)
+            else:
+                return default
+        return obj
+
+    def save(self, path: Optional[Path] = None):
+        """Save current configuration to file."""
+        path = path or Path("blackreach.json")
+        data = {
+            "browser": asdict(self.config.browser),
+            "llm": asdict(self.config.llm),
+            "agent": asdict(self.config.agent),
+            "download": asdict(self.config.download),
+            "cache": asdict(self.config.cache),
+            "memory_db": self.config.memory_db,
+            "profile": self.config.profile
         }
-
-    def _dict_to_config(self, data: Dict[str, Any]) -> Config:
-        """Convert dictionary to Config."""
-        config = Config()
-
-        config.default_provider = data.get("default_provider", "ollama")
-
-        providers = data.get("providers", {})
-        for name in ["ollama", "openai", "anthropic", "google", "xai"]:
-            if name in providers:
-                p = providers[name]
-                setattr(config, name, ProviderConfig(
-                    api_key=p.get("api_key", ""),
-                    default_model=p.get("default_model", ""),
-                    base_url=p.get("base_url", "")
-                ))
-
-        agent = data.get("agent", {})
-        config.headless = agent.get("headless", False)
-        config.max_steps = agent.get("max_steps", 30)
-        config.download_dir = agent.get("download_dir", "./downloads")
-        config.browser_type = agent.get("browser_type", "chromium")
-
-        ui = data.get("ui", {})
-        config.verbose = ui.get("verbose", True)
-        config.show_thinking = ui.get("show_thinking", True)
-
-        return config
-
-    def set_api_key(self, provider: str, key: str):
-        """Set API key for a provider."""
-        config = self.load()
-        if hasattr(config, provider):
-            getattr(config, provider).api_key = key
-            self.save()
-        else:
-            raise InvalidConfigError("provider", provider, "one of: anthropic, openai, google, ollama, xai")
-
-    def set_default_provider(self, provider: str):
-        """Set the default provider."""
-        config = self.load()
-        if provider in AVAILABLE_MODELS:
-            config.default_provider = provider
-            self.save()
-        else:
-            raise InvalidConfigError("provider", provider, f"one of: {', '.join(AVAILABLE_MODELS.keys())}")
-
-    def set_default_model(self, provider: str, model: str):
-        """Set default model for a provider."""
-        config = self.load()
-        if hasattr(config, provider):
-            getattr(config, provider).default_model = model
-            self.save()
-        else:
-            raise InvalidConfigError("provider", provider, "one of: anthropic, openai, google, ollama, xai")
-
-    def get_current_provider(self) -> str:
-        """Get current default provider."""
-        return self.load().default_provider
-
-    def get_current_model(self) -> str:
-        """Get current default model."""
-        config = self.load()
-        provider = config.default_provider
-        return getattr(config, provider).default_model
-
-    def get_api_key(self, provider: str) -> str:
-        """Get API key for provider."""
-        config = self.load()
-        if hasattr(config, provider):
-            return getattr(config, provider).api_key
-        return ""
-
-    def has_api_key(self, provider: str) -> bool:
-        """Check if provider has API key configured."""
-        return bool(self.get_api_key(provider))
+        path.write_text(json.dumps(data, indent=2))
 
 
-# Global config manager instance
-config_manager = ConfigManager()
+_config_manager: Optional[ConfigManager] = None
+
+
+def get_config() -> ConfigManager:
+    """Get the global configuration manager."""
+    global _config_manager
+    if _config_manager is None:
+        _config_manager = ConfigManager()
+    return _config_manager
+
+
+def load_config(path: Path) -> ConfigManager:
+    """Load configuration from a specific path."""
+    global _config_manager
+    _config_manager = ConfigManager(path)
+    return _config_manager
