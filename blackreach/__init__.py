@@ -22,8 +22,10 @@ from blackreach.session_manager import SessionManager, SessionStatus, get_sessio
 from blackreach.multi_tab import SyncTabManager, TabStatus
 from blackreach.download_queue import DownloadQueue, DownloadPriority, get_download_queue
 from blackreach.task_scheduler import TaskScheduler, TaskPriority, get_scheduler
+from blackreach.cache import PageCache, ResultCache, get_page_cache, get_result_cache
+from blackreach.api import BlackreachAPI, browse, download, search, BrowseResult
 
-__version__ = "3.2.0"
+__version__ = "3.4.0"
 __all__ = [
     "Agent",
     "AgentConfig",
@@ -63,4 +65,13 @@ __all__ = [
     "TaskScheduler",
     "TaskPriority",
     "get_scheduler",
+    "PageCache",
+    "ResultCache",
+    "get_page_cache",
+    "get_result_cache",
+    "BlackreachAPI",
+    "browse",
+    "download",
+    "search",
+    "BrowseResult",
 ]
