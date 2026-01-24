@@ -35,6 +35,7 @@ from blackreach.stuck_detector import StuckDetector, RecoveryStrategy, compute_c
 from blackreach.error_recovery import ErrorRecovery, ErrorCategory, RecoveryAction
 from blackreach.source_manager import SourceManager, get_source_manager
 from blackreach.goal_engine import GoalEngine, GoalDecomposition, SubtaskStatus, get_goal_engine
+from blackreach.nav_context import NavigationContext, PageValue, get_nav_context
 
 
 # ============================================================================
@@ -144,6 +145,9 @@ class Agent:
         self.goal_engine = get_goal_engine()
         self._current_decomposition: Optional[GoalDecomposition] = None
         self._current_subtask_id: Optional[str] = None
+
+        # Context-aware navigation
+        self.nav_context = get_nav_context(self.persistent_memory)
 
         # Load prompts
         self.prompts = self._load_prompts()
@@ -935,6 +939,18 @@ class Agent:
         self._page_cache["parsed"] = parsed
         self._page_cache["elements"] = elements
 
+        # Record navigation breadcrumb for context-aware navigation
+        content_preview = parsed.get("text_preview", "") if isinstance(parsed, dict) else ""
+        links_count = len(parsed.get("links", [])) if isinstance(parsed, dict) else 0
+        self.nav_context.record_navigation(
+            url=url,
+            title=title,
+            content_preview=content_preview,
+            links_found=links_count,
+            from_action=self._last_action or "initial",
+            value=PageValue.NEUTRAL  # Will be updated based on action outcome
+        )
+
         # Build extra context (stuck hints, learned patterns, download landing hints, etc.)
         extra_context = ""
 
@@ -1047,6 +1063,17 @@ class Agent:
         if downloaded:
             filenames = [Path(f).name for f in downloaded[-5:]]
             extra_context += f"\nALREADY DOWNLOADED: {filenames}"
+
+        # Add navigation context - domain knowledge and path info
+        domain_summary = self.nav_context.get_domain_summary(domain)
+        if domain_summary and self.nav_context.domain_knowledge.get(domain, None):
+            dk = self.nav_context.domain_knowledge[domain]
+            if dk.visits > 2:  # Only add if we have meaningful history
+                if dk.best_entry_points:
+                    extra_context += f"\nKNOWN GOOD ENTRY POINTS for {domain}: {dk.best_entry_points[:2]}"
+                if dk.pages_to_avoid:
+                    avoid_list = list(dk.pages_to_avoid)[:3]
+                    extra_context += f"\nAVOID THESE PAGES: {avoid_list}"
 
         # Build unified prompt with elements so agent can see what's on page
         prompt = self.prompts["react"].format(
@@ -1792,6 +1819,15 @@ You navigate. You click. You download. That's it."""
                 self._selector_click_counts = {}
                 self._clicked_selectors = set()
 
+                # Mark current page as excellent in navigation context (we got a download!)
+                current_url = self.hand.get_url()
+                self.nav_context.mark_page_value(current_url, PageValue.EXCELLENT)
+
+                # Also record the selector that led to the download as valuable
+                domain = self._get_domain()
+                if selector:
+                    self.nav_context.record_valuable_selector(domain, selector)
+
                 print(f"  Downloaded: {result['filename']} ({result['size']} bytes)")
 
                 return {
@@ -1802,7 +1838,11 @@ You navigate. You click. You download. That's it."""
                 }
             except Exception as e:
                 error_str = str(e)
-                self._record_failure(self.hand.get_url(), "download", error_str)
+                current_url = self.hand.get_url()
+                self._record_failure(current_url, "download", error_str)
+
+                # Mark page as low value (download failed)
+                self.nav_context.mark_page_value(current_url, PageValue.LOW)
 
                 # Track failed download URL to avoid retrying
                 if url:
