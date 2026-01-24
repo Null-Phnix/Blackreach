@@ -15,8 +15,9 @@ from blackreach.nav_context import NavigationContext, PageValue
 from blackreach.site_handlers import get_handler_for_url, SiteHandler
 from blackreach.search_intel import SearchIntelligence, get_search_intel
 from blackreach.content_verify import ContentVerifier, VerificationStatus, get_verifier
+from blackreach.retry_strategy import RetryManager, RetryDecision, get_retry_manager
 
-__version__ = "2.4.0"
+__version__ = "2.5.0"
 __all__ = [
     "Agent",
     "AgentConfig",
@@ -38,4 +39,7 @@ __all__ = [
     "ContentVerifier",
     "VerificationStatus",
     "get_verifier",
+    "RetryManager",
+    "RetryDecision",
+    "get_retry_manager",
 ]

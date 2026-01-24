@@ -39,6 +39,7 @@ from blackreach.nav_context import NavigationContext, PageValue, get_nav_context
 from blackreach.site_handlers import get_handler_for_url, get_site_hints, get_download_sequence, SiteHandlerExecutor
 from blackreach.search_intel import SearchIntelligence, get_search_intel, SearchQuery
 from blackreach.content_verify import ContentVerifier, VerificationStatus, FileType, get_verifier
+from blackreach.retry_strategy import RetryManager, RetryDecision, get_retry_manager
 
 
 # ============================================================================
@@ -158,6 +159,9 @@ class Agent:
 
         # Content verification
         self.content_verifier = get_verifier()
+
+        # Retry strategies
+        self.retry_manager = get_retry_manager()
 
         # Load prompts
         self.prompts = self._load_prompts()
