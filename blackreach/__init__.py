@@ -14,8 +14,9 @@ from blackreach.knowledge import reason_about_goal, CONTENT_SOURCES
 from blackreach.nav_context import NavigationContext, PageValue
 from blackreach.site_handlers import get_handler_for_url, SiteHandler
 from blackreach.search_intel import SearchIntelligence, get_search_intel
+from blackreach.content_verify import ContentVerifier, VerificationStatus, get_verifier
 
-__version__ = "2.3.0"
+__version__ = "2.4.0"
 __all__ = [
     "Agent",
     "AgentConfig",
@@ -34,4 +35,7 @@ __all__ = [
     "SiteHandler",
     "SearchIntelligence",
     "get_search_intel",
+    "ContentVerifier",
+    "VerificationStatus",
+    "get_verifier",
 ]

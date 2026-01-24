@@ -38,6 +38,7 @@ from blackreach.goal_engine import GoalEngine, GoalDecomposition, SubtaskStatus,
 from blackreach.nav_context import NavigationContext, PageValue, get_nav_context
 from blackreach.site_handlers import get_handler_for_url, get_site_hints, get_download_sequence, SiteHandlerExecutor
 from blackreach.search_intel import SearchIntelligence, get_search_intel, SearchQuery
+from blackreach.content_verify import ContentVerifier, VerificationStatus, FileType, get_verifier
 
 
 # ============================================================================
@@ -154,6 +155,9 @@ class Agent:
         # Search intelligence
         self.search_intel = get_search_intel(self.persistent_memory)
         self._current_search_session = None
+
+        # Content verification
+        self.content_verifier = get_verifier()
 
         # Load prompts
         self.prompts = self._load_prompts()
@@ -1718,55 +1722,22 @@ You navigate. You click. You download. That's it."""
                     print(f"  SKIP: Duplicate content (same hash)")
                     return {"action": "download", "skipped": True, "reason": "duplicate content"}
 
-                # CRITICAL: Validate file type - don't accept HTML pages as downloads
-                # This catches cases where we downloaded a "download page" instead of the file
+                # Use centralized content verification
                 file_path = Path(result["path"])
                 if file_path.exists():
-                    # Read first 512 bytes to check file type
-                    with open(file_path, 'rb') as f:
-                        header = f.read(512)
+                    verification = self.content_verifier.verify_file(file_path)
 
-                    # Check if it's actually HTML (common mistake - downloading landing pages)
-                    is_html = (
-                        header.startswith(b'<!DOCTYPE') or
-                        header.startswith(b'<html') or
-                        header.startswith(b'<HTML') or
-                        b'<!DOCTYPE html' in header[:100] or
-                        b'<head>' in header[:200]
-                    )
-
-                    if is_html:
-                        # Delete the HTML file - it's not what we wanted
+                    if verification.status != VerificationStatus.VALID:
+                        # Delete invalid file
                         file_path.unlink()
-                        print(f"  INVALID: Downloaded HTML page instead of file - need to click actual download button")
-                        self.session_memory.add_failure("Downloaded HTML landing page, not actual file")
-                        return {"action": "download", "skipped": True, "reason": "got HTML page, not file"}
-
-                # Check if file is too small (likely a thumbnail or placeholder)
-                filename_lower = result["filename"].lower()
-                is_image = any(filename_lower.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'])
-                is_ebook = any(filename_lower.endswith(ext) for ext in ['.epub', '.pdf', '.mobi', '.azw', '.azw3'])
-
-                if is_image and result["size"] < MIN_FULL_IMAGE_SIZE:
-                    print(f"  WARNING: Small image ({result['size']} bytes) - likely thumbnail, not counted")
-                    Path(result["path"]).unlink()
-                    return {"action": "download", "skipped": True, "reason": "thumbnail (too small)"}
-
-                if is_ebook and result["size"] < MIN_EBOOK_SIZE:
-                    print(f"  WARNING: Tiny ebook ({result['size']} bytes) - likely placeholder, not valid")
-                    Path(result["path"]).unlink()
-                    return {"action": "download", "skipped": True, "reason": "ebook too small (placeholder?)"}
-
-                # Validate epub files specifically (they're ZIP files with specific structure)
-                if filename_lower.endswith('.epub'):
-                    file_path = Path(result["path"])
-                    with open(file_path, 'rb') as f:
-                        epub_header = f.read(4)
-                    # EPUB files are ZIP archives and start with PK (ZIP magic bytes)
-                    if epub_header[:2] != b'PK':
-                        print(f"  INVALID: File claims to be EPUB but isn't a valid ZIP archive")
-                        file_path.unlink()
-                        return {"action": "download", "skipped": True, "reason": "invalid epub format"}
+                        print(f"  INVALID: {verification.message}")
+                        self.session_memory.add_failure(verification.message)
+                        return {
+                            "action": "download",
+                            "skipped": True,
+                            "reason": verification.status.value,
+                            "verification": verification.message
+                        }
 
                 # Record the download
                 self._record_download(
