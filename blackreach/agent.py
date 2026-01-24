@@ -34,6 +34,7 @@ from blackreach.action_tracker import ActionTracker
 from blackreach.stuck_detector import StuckDetector, RecoveryStrategy, compute_content_hash
 from blackreach.error_recovery import ErrorRecovery, ErrorCategory, RecoveryAction
 from blackreach.source_manager import SourceManager, get_source_manager
+from blackreach.goal_engine import GoalEngine, GoalDecomposition, SubtaskStatus, get_goal_engine
 
 
 # ============================================================================
@@ -138,6 +139,11 @@ class Agent:
 
         # Source management - handles multi-source failover
         self.source_manager = get_source_manager()
+
+        # Goal decomposition engine
+        self.goal_engine = get_goal_engine()
+        self._current_decomposition: Optional[GoalDecomposition] = None
+        self._current_subtask_id: Optional[str] = None
 
         # Load prompts
         self.prompts = self._load_prompts()
@@ -456,6 +462,17 @@ class Agent:
         # Start a new session in persistent memory
         self.session_id = self.persistent_memory.start_session(goal)
         log(f"Session #{self.session_id} started\n")
+
+        # Decompose goal using goal engine
+        self._current_decomposition = self.goal_engine.decompose(goal)
+        if self._current_decomposition.subtasks:
+            log(f"Goal decomposed into {len(self._current_decomposition.subtasks)} subtasks:")
+            for i, st in enumerate(self._current_decomposition.subtasks[:5], 1):
+                optional = " (optional)" if st.optional else ""
+                log(f"  {i}. {st.description}{optional}")
+            if len(self._current_decomposition.subtasks) > 5:
+                log(f"  ... and {len(self._current_decomposition.subtasks) - 5} more")
+            log("")
 
         # Initialize session logger for structured logging
         self._logger = SessionLogger(self.session_id, goal)

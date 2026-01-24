@@ -395,7 +395,7 @@ def print_banner():
 ║   ██████╔╝███████╗██║  ██║╚██████╗██║  ██╗              ║
 ║   ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝              ║
 ║                                                          ║
-║   [white]Autonomous Browser Agent[/white]              [dim]v1.9.0[/dim]   ║
+║   [white]Autonomous Browser Agent[/white]              [dim]v2.0.0[/dim]   ║
 ╚══════════════════════════════════════════════════════════╝[/bold cyan]
 """
     console.print(banner)
