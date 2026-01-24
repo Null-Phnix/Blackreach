@@ -44,9 +44,11 @@ class Hand:
         headless: bool = False,
         stealth_config: Optional[StealthConfig] = None,
         retry_config: Optional[RetryConfig] = None,
-        download_dir: Optional[Path] = None
+        download_dir: Optional[Path] = None,
+        browser_type: str = "chromium"  # chromium, firefox, or webkit
     ):
         self.headless = headless
+        self.browser_type = browser_type.lower()
         self.stealth = Stealth(stealth_config or StealthConfig())
         self.retry_config = retry_config or RetryConfig()
         self.download_dir = download_dir or Path("./downloads")
@@ -76,23 +78,69 @@ class Hand:
         # Ensure download directory exists
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
-        # Browser launch args for stealth
+        # Browser launch args for stealth - comprehensive anti-detection
         launch_args = [
+            # Core anti-automation flags
             "--disable-blink-features=AutomationControlled",
+            "--disable-automation",
             "--disable-dev-shm-usage",
             "--no-first-run",
             "--no-default-browser-check",
+            # Hide headless indicators
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-background-timer-throttling",
+            "--disable-ipc-flooding-protection",
+            # Make it look like a real browser
+            "--enable-features=NetworkService,NetworkServiceInProcess",
+            "--disable-features=IsolateOrigins,site-per-process,TranslateUI",
+            "--disable-site-isolation-trials",
+            # GPU and rendering (helps avoid detection)
+            "--enable-webgl",
+            "--enable-webgl2-compute-context",
+            "--enable-accelerated-2d-canvas",
+            "--ignore-gpu-blocklist",
+            # Misc
+            "--lang=en-US",
+            "--disable-extensions",
+            "--disable-component-extensions-with-background-pages",
+            "--disable-default-apps",
+            "--disable-breakpad",
+            "--disable-component-update",
+            "--disable-domain-reliability",
+            "--disable-sync",
+            "--metrics-recording-only",
+            "--no-pings",
         ]
 
         # Get proxy if configured
         proxy = self.stealth.get_next_proxy()
         proxy_config = {"server": proxy} if proxy else None
 
-        self._browser = self._playwright.chromium.launch(
-            headless=self.headless,
-            args=launch_args,
-            downloads_path=str(self.download_dir)  # Set download path at browser level
-        )
+        # Select browser type
+        if self.browser_type == "firefox":
+            # Firefox-specific launch options
+            self._browser = self._playwright.firefox.launch(
+                headless=self.headless,
+                firefox_user_prefs={
+                    "dom.webdriver.enabled": False,
+                    "useAutomationExtension": False,
+                    "privacy.resistFingerprinting": False,  # We handle this ourselves
+                },
+                downloads_path=str(self.download_dir)
+            )
+        elif self.browser_type == "webkit":
+            self._browser = self._playwright.webkit.launch(
+                headless=self.headless,
+                downloads_path=str(self.download_dir)
+            )
+        else:
+            # Default to Chromium with full stealth args
+            self._browser = self._playwright.chromium.launch(
+                headless=self.headless,
+                args=launch_args,
+                downloads_path=str(self.download_dir)
+            )
 
         # Create context with randomized fingerprint
         viewport = self.stealth.get_random_viewport() if self.stealth.config.randomize_viewport else {"width": 1280, "height": 800}
@@ -102,6 +150,15 @@ class Hand:
             "viewport": viewport,
             "proxy": proxy_config,
             "accept_downloads": True,  # Enable downloads
+            "locale": "en-US",
+            "timezone_id": "America/New_York",
+            "color_scheme": "light",
+            "reduced_motion": "no-preference",
+            "has_touch": False,
+            "is_mobile": False,
+            "java_script_enabled": True,
+            "bypass_csp": True,  # Helps with some challenges
+            "ignore_https_errors": True,
         }
         if user_agent:
             context_options["user_agent"] = user_agent
@@ -226,9 +283,24 @@ class Hand:
 
     @retry_with_backoff()
     def goto(self, url: str, handle_popups: bool = True, wait_for_content: bool = True) -> dict:
-        """Navigate to a URL with retry logic and smart content waiting."""
+        """Navigate to a URL with retry logic and smart content waiting.
+
+        Args:
+            url: URL to navigate to
+            handle_popups: Whether to automatically dismiss popups
+            wait_for_content: Whether to wait for dynamic content to load
+
+        Returns:
+            Dict with action, url, title, content_found, and http_status
+        """
         # Navigate and wait for initial DOM
-        self.page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        response = self.page.goto(url, wait_until="domcontentloaded", timeout=45000)
+
+        # Track HTTP status for error detection
+        http_status = response.status if response else None
+        if http_status and http_status >= 400:
+            # Log HTTP errors but don't fail - page may still have useful content
+            print(f"  [HTTP {http_status}: {url[:50]}...]")
 
         # Wait for full page load (all resources including images, scripts)
         try:
@@ -275,19 +347,22 @@ class Hand:
             "action": "goto",
             "url": url,
             "title": self.page.title(),
-            "content_found": content_found
+            "content_found": content_found,
+            "http_status": http_status
         }
 
-    def _wait_for_challenge_resolution(self, max_wait: int = 15) -> bool:
+    def _wait_for_challenge_resolution(self, max_wait: int = 30) -> bool:
         """
         Wait for challenge/interstitial pages to resolve.
 
         DDoS-Guard, Cloudflare and similar services often show an interstitial
         page that auto-resolves after a few seconds. This method detects and
-        waits for such pages.
+        waits for such pages, with human-like interaction to help solve challenges.
 
         Returns True if a challenge was detected and resolved, False otherwise.
         """
+        import random
+
         for attempt in range(max_wait):
             html = self.page.content()
             result = self._detector.detect_challenge(html)
@@ -298,6 +373,32 @@ class Hand:
             # Challenge detected - wait and check again
             if attempt == 0:
                 print(f"  [Challenge detected: {result.details or 'unknown'} - waiting...]")
+
+            # Human-like interaction to help solve challenge
+            if attempt % 3 == 0:  # Every 3 seconds
+                try:
+                    # Move mouse randomly (some challenges check for mouse activity)
+                    viewport = self.page.viewport_size
+                    if viewport:
+                        x = random.randint(100, viewport['width'] - 100)
+                        y = random.randint(100, viewport['height'] - 100)
+                        self.page.mouse.move(x, y)
+                except Exception:
+                    pass
+
+            if attempt == 5:  # After 5 seconds, try scrolling
+                try:
+                    self.page.mouse.wheel(0, 100)
+                except Exception:
+                    pass
+
+            if attempt == 10:  # After 10 seconds, try clicking in center
+                try:
+                    viewport = self.page.viewport_size
+                    if viewport:
+                        self.page.mouse.click(viewport['width'] // 2, viewport['height'] // 2)
+                except Exception:
+                    pass
 
             time.sleep(1)
 

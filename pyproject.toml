@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blackreach"
-version = "0.3.0"
+version = "1.5.0"
 description = "Autonomous browser agent that accomplishes goals through web browsing"
 readme = "README.md"
 license = {text = "MIT"}
@@ -88,6 +88,10 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "network: marks tests as requiring network access",
+]
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",

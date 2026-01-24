@@ -29,17 +29,13 @@ CONTENT_SOURCES: List[ContentSource] = [
     # === EBOOKS / BOOKS ===
     ContentSource(
         name="Anna's Archive",
-        url="https://annas-archive.li",  # Primary mirror (.org is often down)
+        url="https://annas-archive.li",  # Primary mirror (has DDoS-Guard protection)
         description="Largest open library with books, papers, comics, magazines",
         content_types=["ebook", "book", "epub", "pdf", "paper", "textbook"],
         keywords=["book", "ebook", "epub", "pdf", "novel", "fiction", "textbook", "read"],
         priority=9,
         requires_search=True,
-        mirrors=[
-            "https://annas-archive.se",
-            "https://annas-archive.gs",
-            "https://annas-archive.org",
-        ]
+        mirrors=[]  # Mirrors are unreliable, removed
     ),
     ContentSource(
         name="Project Gutenberg",
@@ -53,39 +49,67 @@ CONTENT_SOURCES: List[ContentSource] = [
     ContentSource(
         name="Internet Archive Books",
         url="https://archive.org/details/texts",
-        description="Digital library with millions of free books",
-        content_types=["ebook", "book", "pdf", "scan"],
-        keywords=["archive", "scan", "historical", "rare book"],
-        priority=7,
+        description="Digital library with millions of free books - reliable and no DDoS protection",
+        content_types=["ebook", "book", "pdf", "scan", "epub"],
+        keywords=["archive", "scan", "historical", "rare book", "epub", "book", "novel"],
+        priority=8,  # Increased priority as reliable fallback
         requires_search=True
     ),
     ContentSource(
         name="Z-Library",
-        url="https://z-lib.gs",
-        description="Large ebook library",
+        url="https://singlelogin.re",  # Requires login, but more stable
+        description="Large ebook library (requires account)",
         content_types=["ebook", "book", "epub", "pdf"],
-        keywords=["zlibrary", "z-lib", "ebook"],
-        priority=8,
+        keywords=["zlibrary", "z-lib", "ebook", "epub", "pdf", "book", "novel"],
+        priority=7,  # Lowered - requires account
         requires_search=True,
-        mirrors=[
-            "https://z-lib.io",
-            "https://z-lib.fm",
-            "https://singlelogin.re",
-        ]
+        mirrors=[]  # Mirrors are unreliable
     ),
     ContentSource(
         name="Library Genesis",
-        url="https://libgen.rs",
+        url="https://libgen.li",  # Primary - the only working mirror
         description="Library Genesis - academic and general books",
         content_types=["ebook", "book", "textbook", "paper", "pdf"],
-        keywords=["libgen", "textbook", "academic", "scientific"],
+        keywords=["libgen", "textbook", "academic", "scientific", "epub", "pdf", "book", "novel"],
         priority=8,
         requires_search=True,
-        mirrors=[
-            "https://libgen.is",
-            "https://libgen.st",
-            "https://libgen.li",
-        ]
+        mirrors=[]  # Other mirrors are down
+    ),
+    ContentSource(
+        name="Standard Ebooks",
+        url="https://standardebooks.org",
+        description="Free, high-quality ebooks with modern formatting",
+        content_types=["ebook", "epub", "classic"],
+        keywords=["standard ebooks", "classic", "public domain", "well formatted"],
+        priority=8,
+        requires_search=True
+    ),
+    ContentSource(
+        name="ManyBooks",
+        url="https://manybooks.net",
+        description="Free ebooks in multiple formats",
+        content_types=["ebook", "book", "epub", "pdf"],
+        keywords=["manybooks", "free ebook", "epub"],
+        priority=7,
+        requires_search=True
+    ),
+    ContentSource(
+        name="Open Library",
+        url="https://openlibrary.org",
+        description="Internet Archive's open library project",
+        content_types=["ebook", "book", "borrow"],
+        keywords=["open library", "borrow", "lending library"],
+        priority=7,
+        requires_search=True
+    ),
+    ContentSource(
+        name="PDF Drive",
+        url="https://www.pdfdrive.com",
+        description="PDF ebook search engine - reliable, no DDoS protection",
+        content_types=["pdf", "ebook", "book", "epub"],
+        keywords=["pdf", "pdf drive", "ebook pdf", "epub", "book", "novel"],
+        priority=8,  # Increased priority as reliable alternative
+        requires_search=True
     ),
 
     # === ACADEMIC PAPERS ===
@@ -215,6 +239,62 @@ CONTENT_SOURCES: List[ContentSource] = [
         priority=7,
         requires_search=True
     ),
+    ContentSource(
+        name="Alpha Coders",
+        url="https://alphacoders.com",
+        description="Wallpapers, art, and images in multiple resolutions",
+        content_types=["wallpaper", "image", "art"],
+        keywords=["wallpaper", "4k", "8k", "ultra hd", "alphacoders"],
+        priority=8,
+        requires_search=True
+    ),
+    ContentSource(
+        name="WallpaperFlare",
+        url="https://www.wallpaperflare.com",
+        description="HD wallpapers with custom resolution downloads",
+        content_types=["wallpaper", "image", "desktop"],
+        keywords=["wallpaper", "hd", "desktop background"],
+        priority=7,
+        requires_search=True
+    ),
+    ContentSource(
+        name="Artstation",
+        url="https://www.artstation.com",
+        description="Professional art platform with high-quality artwork",
+        content_types=["art", "image", "digital art", "wallpaper"],
+        keywords=["artstation", "concept art", "game art", "digital art"],
+        priority=8,
+        requires_search=True
+    ),
+    ContentSource(
+        name="Imgur",
+        url="https://imgur.com",
+        description="Image hosting and sharing platform",
+        content_types=["image", "meme", "photo"],
+        keywords=["imgur", "image", "meme", "gallery"],
+        priority=6,
+        requires_search=True
+    ),
+
+    # === COMICS / MANGA ===
+    ContentSource(
+        name="GetComics",
+        url="https://getcomics.org",
+        description="Comic book downloads",
+        content_types=["comic", "cbr", "cbz", "graphic novel"],
+        keywords=["comic", "comics", "cbr", "cbz", "marvel", "dc", "graphic novel"],
+        priority=9,
+        requires_search=True
+    ),
+    ContentSource(
+        name="MangaDex",
+        url="https://mangadex.org",
+        description="Free manga reader",
+        content_types=["manga", "comic", "webtoon"],
+        keywords=["manga", "manhwa", "manhua", "webtoon", "japanese comic"],
+        priority=9,
+        requires_search=True
+    ),
 
     # === AUDIO / MUSIC ===
     ContentSource(
@@ -285,6 +365,95 @@ CONTENT_SOURCES: List[ContentSource] = [
         requires_search=True
     ),
 
+    # === FONTS ===
+    ContentSource(
+        name="Google Fonts",
+        url="https://fonts.google.com",
+        description="Free, open-source fonts",
+        content_types=["font", "ttf", "otf"],
+        keywords=["font", "google font", "typeface", "typography"],
+        priority=9,
+        requires_search=True
+    ),
+    ContentSource(
+        name="Font Squirrel",
+        url="https://www.fontsquirrel.com",
+        description="Free fonts for commercial use",
+        content_types=["font", "ttf", "otf", "woff"],
+        keywords=["font", "free font", "commercial font"],
+        priority=8,
+        requires_search=True
+    ),
+    ContentSource(
+        name="DaFont",
+        url="https://www.dafont.com",
+        description="Archive of freely downloadable fonts",
+        content_types=["font", "ttf"],
+        keywords=["dafont", "font", "free font", "decorative font"],
+        priority=7,
+        requires_search=True
+    ),
+
+    # === ICONS / DESIGN ASSETS ===
+    ContentSource(
+        name="Flaticon",
+        url="https://www.flaticon.com",
+        description="Database of free icons",
+        content_types=["icon", "svg", "png"],
+        keywords=["icon", "flaticon", "svg icon", "free icon"],
+        priority=8,
+        requires_search=True
+    ),
+    ContentSource(
+        name="Icons8",
+        url="https://icons8.com",
+        description="Icons, illustrations, and design tools",
+        content_types=["icon", "illustration", "image"],
+        keywords=["icon", "icons8", "illustration"],
+        priority=7,
+        requires_search=True
+    ),
+
+    # === SOFTWARE / TOOLS ===
+    ContentSource(
+        name="SourceForge",
+        url="https://sourceforge.net",
+        description="Open source software downloads",
+        content_types=["software", "app", "download"],
+        keywords=["sourceforge", "open source", "software", "download"],
+        priority=7,
+        requires_search=True
+    ),
+    ContentSource(
+        name="AlternativeTo",
+        url="https://alternativeto.net",
+        description="Find alternatives to software",
+        content_types=["software", "app", "alternative"],
+        keywords=["alternative", "software alternative", "app like"],
+        priority=6,
+        requires_search=True
+    ),
+
+    # === 3D MODELS ===
+    ContentSource(
+        name="Thingiverse",
+        url="https://www.thingiverse.com",
+        description="3D printable models",
+        content_types=["3d", "stl", "model", "print"],
+        keywords=["3d print", "stl", "thingiverse", "3d model"],
+        priority=9,
+        requires_search=True
+    ),
+    ContentSource(
+        name="Sketchfab",
+        url="https://sketchfab.com",
+        description="3D model platform with free downloads",
+        content_types=["3d", "model", "fbx", "obj"],
+        keywords=["3d model", "sketchfab", "fbx", "obj", "blender"],
+        priority=8,
+        requires_search=True
+    ),
+
     # === GENERAL ===
     ContentSource(
         name="Internet Archive",
@@ -323,12 +492,18 @@ def detect_content_type(goal: str) -> List[str]:
         "paper": [r'\bpaper\b', r'\bresearch\b', r'\bjournal\b', r'\barticle\b', r'\bstudy\b', r'\bpreprint\b'],
         "code": [r'\bcode\b', r'\brepo\b', r'\brepository\b', r'\bgithub\b', r'\bsource\b', r'\bproject\b'],
         "image": [r'\bimages?\b', r'\bpictures?\b', r'\bphotos?\b', r'\bjpg\b', r'\bpng\b'],
-        "wallpaper": [r'\bwallpaper\b', r'\bdesktop\b', r'\bbackground\b', r'\b4k\b', r'\bhd\b'],
+        "wallpaper": [r'\bwallpaper\b', r'\bdesktop\b', r'\bbackground\b', r'\b4k\b', r'\bhd\b', r'\b8k\b', r'\bultra\s*hd\b'],
         "video": [r'\bvideo\b', r'\bmovie\b', r'\bfilm\b', r'\bdocumentary\b', r'\bmp4\b'],
         "audio": [r'\baudio\b', r'\bmusic\b', r'\bsong\b', r'\bmp3\b', r'\bpodcast\b', r'\balbum\b'],
         "dataset": [r'\bdataset\b', r'\bdata\b', r'\bcsv\b', r'\btraining data\b'],
         "pdf": [r'\bpdf\b'],
         "package": [r'\bpackage\b', r'\blibrary\b', r'\bmodule\b', r'\bpip\b', r'\bnpm\b'],
+        "comic": [r'\bcomic\b', r'\bcomics\b', r'\bcbr\b', r'\bcbz\b', r'\bgraphic novel\b', r'\bmarvel\b', r'\bdc\b'],
+        "manga": [r'\bmanga\b', r'\bmanhwa\b', r'\bmanhua\b', r'\bwebtoon\b', r'\banime\b'],
+        "font": [r'\bfont\b', r'\bfonts\b', r'\btypeface\b', r'\bttf\b', r'\botf\b', r'\btypography\b'],
+        "icon": [r'\bicon\b', r'\bicons\b', r'\bsvg\b', r'\bemoji\b'],
+        "3d": [r'\b3d\b', r'\bstl\b', r'\bmodel\b', r'\bfbx\b', r'\bobj\b', r'\bblender\b', r'\b3d\s*print\b'],
+        "software": [r'\bsoftware\b', r'\bapp\b', r'\bapplication\b', r'\bprogram\b', r'\btool\b', r'\bdownload\b'],
     }
 
     for content_type, patterns in type_patterns.items():
@@ -387,8 +562,8 @@ def extract_subject(goal: str) -> str:
 
     # Remove quantity indicators and file types
     subject = re.sub(r'\b(a\s+single|one|some|a\s+few|several|multiple)\s+', '', subject)
-    subject = re.sub(r'\b(epub|pdf|mobi|mp3|mp4|jpg|png|zip|rar)\b', '', subject)
-    subject = re.sub(r'\b(ebook|e-book|book|paper|image|video|file|wallpaper)\b', '', subject)
+    subject = re.sub(r'\b(epub|pdf|mobi|mp3|mp4|jpg|png|zip|rar|cbr|cbz|stl|fbx|obj|ttf|otf|svg)\b', '', subject)
+    subject = re.sub(r'\b(ebook|e-book|book|paper|image|video|file|wallpaper|comic|manga|font|icon|model)\b', '', subject)
 
     # Remove prepositions that might be left over
     subject = re.sub(r'\b(for|about|of|on|the|a|an)\s+', ' ', subject)
@@ -544,3 +719,76 @@ def get_working_url(source: ContentSource, timeout: float = 5.0) -> Optional[str
         if check_url_reachable(url, timeout):
             return url
     return None
+
+
+def check_sources_health(
+    content_types: Optional[List[str]] = None,
+    timeout: float = 5.0
+) -> Dict[str, Dict]:
+    """
+    Check health status of all content sources.
+
+    Args:
+        content_types: Optional list of content types to filter (e.g., ['ebook', 'wallpaper'])
+        timeout: Request timeout in seconds
+
+    Returns:
+        Dict mapping source names to their health status:
+        {
+            "Anna's Archive": {
+                "url": "https://annas-archive.li",
+                "reachable": True,
+                "content_types": ["ebook", "book", ...],
+                "priority": 9
+            },
+            ...
+        }
+    """
+    results = {}
+
+    for source in CONTENT_SOURCES:
+        # Filter by content type if specified
+        if content_types:
+            if not any(ct in source.content_types for ct in content_types):
+                continue
+
+        is_reachable = check_url_reachable(source.url, timeout)
+
+        results[source.name] = {
+            "url": source.url,
+            "reachable": is_reachable,
+            "content_types": source.content_types,
+            "priority": source.priority,
+            "has_mirrors": len(source.mirrors) > 0
+        }
+
+        # If primary is down but has mirrors, check them
+        if not is_reachable and source.mirrors:
+            for mirror in source.mirrors:
+                if check_url_reachable(mirror, timeout):
+                    results[source.name]["reachable"] = True
+                    results[source.name]["working_mirror"] = mirror
+                    break
+
+    return results
+
+
+def get_healthy_sources(content_types: Optional[List[str]] = None, timeout: float = 5.0) -> List[ContentSource]:
+    """
+    Get list of currently reachable sources for given content types.
+
+    Args:
+        content_types: Optional list of content types to filter
+        timeout: Request timeout in seconds
+
+    Returns:
+        List of ContentSource objects that are currently reachable
+    """
+    health = check_sources_health(content_types, timeout)
+    healthy = []
+
+    for source in CONTENT_SOURCES:
+        if source.name in health and health[source.name]["reachable"]:
+            healthy.append(source)
+
+    return sorted(healthy, key=lambda s: s.priority, reverse=True)

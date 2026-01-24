@@ -12,6 +12,12 @@ import re
 import hashlib
 
 
+# Precompiled regex patterns for performance
+RE_WHITESPACE = re.compile(r'\s+')
+RE_PAGE_NUMBER = re.compile(r'^\d+$')
+RE_ACTIVE_CURRENT = re.compile(r'active|current')
+
+
 @dataclass
 class EyesConfig:
     """Configuration for the Eyes parser."""
@@ -170,7 +176,14 @@ class Eyes:
         }
 
     def see_simple(self, html: str) -> str:
-        """Compact text representation for quick overview."""
+        """Get a compact text representation of the page for quick overview.
+
+        Args:
+            html: Raw HTML content of the page
+
+        Returns:
+            Formatted string with page content, input fields, buttons, and links
+        """
         result = self.see(html)
 
         lines = []
@@ -198,9 +211,17 @@ class Eyes:
         return "\n".join(lines)
 
     def see_for_llm(self, html: str, max_tokens: int = 4000) -> str:
-        """
-        Optimized output format for LLM consumption.
-        Prioritizes actionable information and structure.
+        """Get optimized output format for LLM consumption.
+
+        Prioritizes actionable information and structure for efficient
+        LLM processing. Limits output to stay within token budgets.
+
+        Args:
+            html: Raw HTML content of the page
+            max_tokens: Approximate maximum tokens for output (default 4000)
+
+        Returns:
+            Formatted string optimized for LLM context windows
         """
         result = self.see(html)
 
@@ -312,6 +333,12 @@ class Eyes:
         '/attachment/', '/attachments/', '/asset/', '/assets/',
         '/media/', '/uploads/', '/static/', '/content/',
         'download=', 'file=', 'get=',
+        # Anna's Archive patterns
+        '/slow_download', '/fast_download',
+        # LibGen patterns
+        'get.php', 'download.php', '/get/', '/ads.php',
+        # General ebook site patterns
+        '/libro/', '/book/', '/ebook/',
     ]
 
     # URL patterns that indicate detail/content pages (worth visiting)
@@ -370,6 +397,14 @@ class Eyes:
             text_lower = text.lower()
             if any(word in text_lower for word in ['download', 'pdf', 'view', 'full', 'open', 'get']):
                 score += 15
+
+            # Extra boost for Anna's Archive specific patterns
+            if any(word in text_lower for word in ['slow download', 'fast download', 'partner server']):
+                score += 30  # High priority - these are actual download links
+
+            # Boost LibGen patterns
+            if any(word in text_lower for word in ['libgen', 'library.lol', 'cloudflare', 'ipfs']):
+                score += 20
 
             # Deprioritize navigation links
             if a.find_parent(['nav', 'header', 'footer']):
@@ -524,7 +559,7 @@ class Eyes:
             for a in soup.find_all('a', href=True):
                 href = a.get('href', '').lower()
                 text = a.get_text(strip=True)
-                if 'page=' in href or 'p=' in href or re.match(r'^\d+$', text):
+                if 'page=' in href or 'p=' in href or RE_PAGE_NUMBER.match(text):
                     pag_container = a.find_parent(['div', 'nav', 'ul'])
                     if pag_container:
                         break
@@ -541,7 +576,7 @@ class Eyes:
             classes = str(a.get('class', [])).lower()
 
             # Detect current page
-            if 'active' in classes or 'current' in classes or a.find_parent(class_=re.compile(r'active|current')):
+            if 'active' in classes or 'current' in classes or a.find_parent(class_=RE_ACTIVE_CURRENT):
                 try:
                     pagination["current_page"] = int(text)
                 except ValueError:
@@ -556,7 +591,7 @@ class Eyes:
                 pagination["prev_page"] = href
 
             # Collect numbered page links
-            if re.match(r'^\d+$', text):
+            if RE_PAGE_NUMBER.match(text):
                 pagination["page_links"].append({
                     "page": int(text),
                     "href": href
@@ -661,7 +696,7 @@ class Eyes:
     def _clean_text(self, text: str) -> str:
         """Clean and normalize text."""
         # Replace multiple whitespace with single space
-        text = re.sub(r'\s+', ' ', text)
+        text = RE_WHITESPACE.sub(' ', text)
         # Remove leading/trailing whitespace
         text = text.strip()
         return text

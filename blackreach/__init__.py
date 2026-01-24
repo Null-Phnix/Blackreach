@@ -12,7 +12,7 @@ from blackreach.browser import Hand
 from blackreach.observer import Eyes
 from blackreach.knowledge import reason_about_goal, CONTENT_SOURCES
 
-__version__ = "0.3.0"
+__version__ = "1.5.0"
 __all__ = [
     "Agent",
     "AgentConfig",

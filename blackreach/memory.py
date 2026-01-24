@@ -418,6 +418,46 @@ class PersistentMemory:
         """, (steps, downloads, success, session_id))
         self._conn.commit()
 
+    def get_sessions(self, limit: int = 50) -> List[Dict]:
+        """Get recent sessions with their stats.
+
+        Returns:
+            List of session dicts with id, goal, success, steps, downloads, duration
+        """
+        cursor = self._conn.cursor()
+        cursor.execute("""
+            SELECT
+                id,
+                goal,
+                start_time,
+                end_time,
+                steps_taken,
+                downloads_count,
+                success
+            FROM sessions
+            ORDER BY start_time DESC
+            LIMIT ?
+        """, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_session_by_id(self, session_id: int) -> Optional[Dict]:
+        """Get a specific session by ID."""
+        cursor = self._conn.cursor()
+        cursor.execute("""
+            SELECT
+                id,
+                goal,
+                start_time,
+                end_time,
+                steps_taken,
+                downloads_count,
+                success
+            FROM sessions
+            WHERE id = ?
+        """, (session_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
     # -------------------------------------------------------------------------
     # Stats
     # -------------------------------------------------------------------------
@@ -449,6 +489,87 @@ class PersistentMemory:
             "known_domains": known_domains,
             "db_path": str(self.db_path)
         }
+
+    def get_detailed_stats(self) -> Dict:
+        """Get detailed analytics about agent performance.
+
+        Returns:
+            Dict with detailed stats including success rate, average steps,
+            top download sources, and session performance metrics.
+        """
+        cursor = self._conn.cursor()
+        stats = self.get_stats()
+
+        # Session success rate
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
+            FROM sessions
+            WHERE end_time IS NOT NULL
+        """)
+        row = cursor.fetchone()
+        if row and row[0] > 0:
+            stats["session_success_rate"] = round(row[1] / row[0] * 100, 1)
+            stats["completed_sessions"] = row[0]
+            stats["successful_sessions"] = row[1]
+        else:
+            stats["session_success_rate"] = 0.0
+            stats["completed_sessions"] = 0
+            stats["successful_sessions"] = 0
+
+        # Average steps per session
+        cursor.execute("""
+            SELECT AVG(steps_taken), AVG(downloads_count)
+            FROM sessions
+            WHERE end_time IS NOT NULL AND steps_taken > 0
+        """)
+        row = cursor.fetchone()
+        stats["avg_steps_per_session"] = round(row[0], 1) if row and row[0] else 0.0
+        stats["avg_downloads_per_session"] = round(row[1], 1) if row and row[1] else 0.0
+
+        # Top download sources
+        cursor.execute("""
+            SELECT source_site, COUNT(*) as count
+            FROM downloads
+            WHERE source_site != ''
+            GROUP BY source_site
+            ORDER BY count DESC
+            LIMIT 5
+        """)
+        stats["top_sources"] = [{"site": row[0], "count": row[1]} for row in cursor.fetchall()]
+
+        # Recent session performance (last 10)
+        cursor.execute("""
+            SELECT goal, success, steps_taken, downloads_count
+            FROM sessions
+            WHERE end_time IS NOT NULL
+            ORDER BY end_time DESC
+            LIMIT 10
+        """)
+        stats["recent_sessions"] = [
+            {
+                "goal": row[0][:50] + "..." if len(row[0]) > 50 else row[0],
+                "success": bool(row[1]),
+                "steps": row[2],
+                "downloads": row[3]
+            }
+            for row in cursor.fetchall()
+        ]
+
+        # Total file size downloaded
+        cursor.execute("SELECT SUM(file_size) FROM downloads WHERE file_size > 0")
+        total_size = cursor.fetchone()[0] or 0
+        if total_size > 1024 * 1024 * 1024:  # GB
+            stats["total_downloaded_size"] = f"{total_size / (1024**3):.2f} GB"
+        elif total_size > 1024 * 1024:  # MB
+            stats["total_downloaded_size"] = f"{total_size / (1024**2):.1f} MB"
+        elif total_size > 1024:  # KB
+            stats["total_downloaded_size"] = f"{total_size / 1024:.0f} KB"
+        else:
+            stats["total_downloaded_size"] = f"{total_size} bytes"
+
+        return stats
 
     # -------------------------------------------------------------------------
     # Session State (Resume functionality)

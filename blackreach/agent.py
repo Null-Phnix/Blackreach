@@ -29,7 +29,44 @@ from blackreach.resilience import RetryConfig
 from blackreach.memory import SessionMemory, PersistentMemory
 from blackreach.logging import SessionLogger
 from blackreach.exceptions import InvalidActionArgsError, UnknownActionError, SessionNotFoundError
-from blackreach.knowledge import reason_about_goal, extract_subject, get_working_url, get_all_urls_for_source
+from blackreach.knowledge import reason_about_goal, extract_subject, get_working_url, get_all_urls_for_source, find_best_sources
+
+
+# ============================================================================
+# Constants
+# ============================================================================
+
+# Timing constants (in seconds)
+STEP_PAUSE_SECONDS = 0.5          # Pause between agent steps
+CHALLENGE_WAIT_SECONDS = 15       # Max wait for challenge page resolution
+RENDER_WAIT_SECONDS = 3           # Wait for page render
+SCROLL_WAIT_SECONDS = 2           # Wait after scrolling
+EXPANSION_WAIT_SECONDS = 0.8      # Wait after clicking expansion buttons
+DYNAMIC_CONTENT_TIMEOUT_MS = 10000  # Timeout for dynamic content loading
+
+# File validation thresholds (in bytes)
+MIN_FULL_IMAGE_SIZE = 200000      # 200KB - thumbnails are usually smaller
+MIN_EBOOK_SIZE = 50000            # 50KB - real ebooks are at least this size
+
+# URL tracking limits
+MAX_RECENT_URLS = 10              # Number of recent URLs to track for stuck detection
+
+# Precompiled regex patterns for performance
+RE_URL = re.compile(r'https?://\S+')
+RE_DOMAIN = re.compile(r'\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}\b')
+RE_JSON_BLOCK = re.compile(r'```json\s*')
+RE_CODE_BLOCK = re.compile(r'```\s*')
+RE_NUMBER = re.compile(r'\b(\d+)\b')
+RE_QUOTED_TEXT = re.compile(r"['\"]([^'\"]+)['\"]")
+RE_ARXIV_ID = re.compile(r'arxiv\.org/(?:abs|pdf)/(\d+\.\d+)')
+RE_CLICK_PATTERN = re.compile(
+    r"click(?:\s+(?:the|on|a))?\s+['\"]?(\w+(?:\s+\w+){0,3})['\"]?\s*(?:button|link|tab)?",
+    re.IGNORECASE
+)
+RE_SLOW_DOWNLOAD = re.compile(r'(slow\s+download)', re.IGNORECASE)
+RE_FAST_DOWNLOAD = re.compile(r'(fast\s+download)', re.IGNORECASE)
+RE_SLOW_PARTNER = re.compile(r'(slow\s+partner\s+server)', re.IGNORECASE)
+RE_FAST_PARTNER = re.compile(r'(fast\s+partner\s+server)', re.IGNORECASE)
 
 
 @dataclass
@@ -52,6 +89,7 @@ class AgentConfig:
     download_dir: Path = field(default_factory=lambda: Path("./downloads"))
     start_url: str = "https://www.google.com"  # Google is more flexible for searches
     memory_db: Path = field(default_factory=lambda: Path("./memory.db"))
+    browser_type: str = "chromium"  # chromium, firefox, or webkit
 
 
 class Agent:
@@ -103,6 +141,25 @@ class Agent:
         self._max_consecutive_failures = 3
         self._stuck_counter = 0  # Track how many times stuck detection triggered
         self._last_action = None  # Track repeated actions
+        self._last_failed_action = None  # Track last failed action for stuck detection
+        self._repeated_failure_count = 0  # Count how many times same action failed
+
+        # Track clicked elements to avoid re-clicking expansion buttons
+        self._clicked_selectors = set()  # Selectors clicked on current page
+        self._clicked_page_url = None  # URL when selectors were clicked (reset on navigate)
+        self._selector_click_counts = {}  # Count clicks per selector on current page
+        self._max_same_selector_clicks = 2  # Max times to click same selector before skipping
+        self._expansion_buttons = {  # Buttons that expand content (need to skip on re-click)
+            'button:has-text("Downloads")',
+            'a:has-text("Downloads")',
+            'button:has-text("Download")',  # Might be expansion on Anna's Archive
+            'a:has-text("Download")',
+            'button:has-text("Show")',
+            'button:has-text("Expand")',
+            'button:has-text("More")',
+            '[class*="download"] button',
+            '[class*="download"] a',
+        }
 
         # Session resume support
         self._paused = False
@@ -113,15 +170,38 @@ class Agent:
         self._refusal_count = 0
         self._max_refusals = 3  # After this many, try alternate search
 
+        # Download retry tracking
+        self._failed_download_urls = set()  # URLs that failed to download
+
+        # Challenge/DDoS protection tracking
+        self._consecutive_challenges = 0  # Track persistent challenge pages
+        self._failed_urls = set()  # Specific URLs where challenges didn't resolve
+        self._current_source = None  # Track current content source for failover
+
+        # Callback error rate limiting
+        self._callback_errors: Dict[str, int] = {}  # Track errors per event type
+        self._max_callback_errors_per_event = 3  # Stop logging after this many
+
     def _emit(self, event: str, *args, **kwargs) -> None:
-        """Emit a callback event if handler is set."""
+        """Emit a callback event if handler is set.
+
+        Silently catches and logs callback errors to prevent user-provided
+        callbacks from breaking the agent. Rate-limits error logging to
+        avoid spam.
+        """
         handler = getattr(self.callbacks, event, None)
         if handler:
             try:
                 handler(*args, **kwargs)
             except Exception as e:
-                # Log but don't break the agent
-                print(f"[callback error] {event}: {e}", file=sys.stderr)
+                # Rate-limit callback error logging
+                error_count = self._callback_errors.get(event, 0) + 1
+                self._callback_errors[event] = error_count
+
+                if error_count <= self._max_callback_errors_per_event:
+                    print(f"[callback error] {event}: {e}", file=sys.stderr)
+                    if error_count == self._max_callback_errors_per_event:
+                        print(f"[callback error] {event}: suppressing further errors", file=sys.stderr)
 
     def _load_prompts(self) -> Dict[str, str]:
         """Load ReAct prompts from files."""
@@ -184,22 +264,64 @@ class Agent:
         """Track current URL for stuck detection."""
         self._recent_urls.append(url)
         # Keep only recent history
-        if len(self._recent_urls) > 10:
+        if len(self._recent_urls) > MAX_RECENT_URLS:
             self._recent_urls.pop(0)
 
     def _get_stuck_hint(self) -> str:
-        """Get a hint for the LLM when stuck."""
-        if not self._is_stuck():
+        """Get a hint for the LLM when stuck or repeating failed actions."""
+        hints = []
+
+        # Check if stuck on same page
+        if self._is_stuck():
+            start_url = self.config.start_url
+            current_url = self._recent_urls[-1] if self._recent_urls else ""
+
+            # Provide site-specific hints for common ebook sites
+            url_lower = current_url.lower()
+            if 'annas-archive' in url_lower:
+                hints.append(
+                    "STUCK ON ANNA'S ARCHIVE! You may need to:"
+                    "\n1. First click 'Downloads' button to expand the section"
+                    "\n2. Then look for 'Slow download' or 'Fast download' links"
+                    "\n3. The actual download links have '/slow_download' or '/fast_download' in URL"
+                    "\n4. If that doesn't work, try scrolling down to see more options"
+                )
+            elif 'libgen' in url_lower or 'library.lol' in url_lower:
+                hints.append(
+                    "STUCK ON LIBGEN! Look for:"
+                    "\n- 'GET' button (main download)"
+                    "\n- Mirror links like 'Libgen.li' or 'Libgen.rs'"
+                    "\n- 'Cloudflare' or 'IPFS' download options"
+                )
+            else:
+                hints.append(
+                    f"STUCK! You've been on the same page too long. Try:"
+                    f"\n- Go back to: {start_url}"
+                    f"\n- Or navigate to a DIFFERENT link/page"
+                )
+
+        # Check for repeated failures
+        if self._repeated_failure_count >= 2:
+            hints.append(
+                f"ACTION FAILING! The same action has failed {self._repeated_failure_count} times."
+                f"\n- Try a COMPLETELY DIFFERENT approach"
+                f"\n- Look for other buttons, links, or selectors"
+                f"\n- If clicking fails, try using text-based click with button text"
+            )
+
+        # Check for consecutive failures
+        if self._consecutive_failures >= 2:
+            hints.append(
+                f"MULTIPLE FAILURES! {self._consecutive_failures} actions failed in a row."
+                f"\n- The page might have different structure than expected"
+                f"\n- Try scrolling to see more content"
+                f"\n- Or navigate to a different page/source"
+            )
+
+        if not hints:
             return ""
 
-        start_url = self.config.start_url
-
-        return (
-            f"\n\nSTUCK! You've been on the same page too long. Try:"
-            f"\n- Go back to: {start_url}"
-            f"\n- Or navigate to a DIFFERENT link/page"
-            f"\n- DO NOT repeat the same action"
-        )
+        return "\n\n" + "\n\n".join(hints) + "\n\nDO NOT repeat the same failed action!"
 
     def pause(self) -> None:
         """Request the agent to pause at next opportunity."""
@@ -263,7 +385,8 @@ class Agent:
             headless=self.config.headless,
             stealth_config=StealthConfig(),
             retry_config=RetryConfig(),
-            download_dir=self.config.download_dir
+            download_dir=self.config.download_dir,
+            browser_type=self.config.browser_type
         )
         self.hand.wake()
 
@@ -322,7 +445,8 @@ class Agent:
             headless=self.config.headless,
             stealth_config=StealthConfig(),
             retry_config=RetryConfig(),
-            download_dir=self.config.download_dir
+            download_dir=self.config.download_dir,
+            browser_type=self.config.browser_type
         )
         self.hand.wake()
 
@@ -354,13 +478,13 @@ class Agent:
                 print(msg)
 
         # If user specified a URL in the goal, use that directly
-        url_match = re.search(r'https?://\S+', goal)
+        url_match = RE_URL.search(goal)
         if url_match:
             url = url_match.group()
             return (url, f"Using URL specified in goal", "")
 
         # Also check for bare domain names (e.g., "google.com", "example.org")
-        domain_match = re.search(r'\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}\b', goal)
+        domain_match = RE_DOMAIN.search(goal)
         if domain_match:
             domain = domain_match.group()
             # Common domains that users might mention
@@ -456,7 +580,7 @@ class Agent:
                     success = True
                     break
 
-                time.sleep(0.5)  # Brief pause between steps
+                time.sleep(STEP_PAUSE_SECONDS)
 
             else:
                 log(f"\n⚠ Reached max steps ({self.config.max_steps})")
@@ -549,14 +673,95 @@ class Agent:
         challenge = self.detector.detect_challenge(html)
         if challenge.detected:
             log(f"  [Challenge page detected: {challenge.details} - waiting...]")
-            for attempt in range(15):  # Wait up to 15 seconds
+            challenge_resolved = False
+            for attempt in range(CHALLENGE_WAIT_SECONDS):
                 time.sleep(1)
                 html = self.hand.get_html()
                 if not self.detector.detect_challenge(html).detected:
                     log(f"  [Challenge resolved after {attempt+1}s]")
+                    challenge_resolved = True
+                    self._consecutive_challenges = 0  # Reset counter
                     break
+
+            if not challenge_resolved:
+                self._consecutive_challenges += 1
+                current_url = self.hand.get_url()
+                # Extract base URL (scheme + domain) for comparison
+                parsed = urlparse(current_url)
+                base_url = f"{parsed.scheme}://{parsed.netloc}"
+                self._failed_urls.add(base_url)  # Track base URL (domain) not full path
+                log(f"  [Challenge NOT resolved - consecutive failures: {self._consecutive_challenges}]")
+
+                # After 2 consecutive unresolved challenges, try alternate URL/source
+                if self._consecutive_challenges >= 2:
+                    log(f"  [FAILOVER: {base_url} blocked by challenge protection]")
+
+                    # Try to find an alternate source/mirror
+                    goal = self._current_goal
+                    if goal:
+                        sources = find_best_sources(goal, max_sources=8)
+                        found_working = False
+                        for source in sources:
+                            # Get all URLs for this source (primary + mirrors)
+                            all_urls = get_all_urls_for_source(source)
+                            # Filter out URLs we've already tried - compare base URLs
+                            available_urls = []
+                            for u in all_urls:
+                                u_parsed = urlparse(u)
+                                u_base = f"{u_parsed.scheme}://{u_parsed.netloc}"
+                                if u_base not in self._failed_urls:
+                                    available_urls.append(u)
+
+                            if not available_urls:
+                                continue  # All URLs for this source have failed
+
+                            # Try the first available URL
+                            next_url = available_urls[0]
+                            log(f"  [SWITCHING TO: {source.name} at {next_url}]")
+                            self.hand.goto(next_url)
+                            self._consecutive_challenges = 0
+                            # Re-fetch page state
+                            html = self.hand.get_html()
+                            found_working = True
+                            break
+
+                        if not found_working:
+                            log(f"  [WARNING: All known sources blocked - continuing with current page]")
+
             url = self.hand.get_url()
             title = self.hand.get_title()
+        else:
+            # Reset challenge counter when page loads normally
+            self._consecutive_challenges = 0
+
+        # Check for download landing pages (need another click to get file)
+        download_landing = self.detector.detect_download_landing(html, url)
+        download_landing_hint = ""
+        if download_landing.detected:
+            log(f"  [Download landing page detected - look for download button]")
+
+            # Site-specific download hints
+            url_lower = url.lower()
+            if 'annas-archive' in url_lower:
+                download_landing_hint = (
+                    "\n\nANNA'S ARCHIVE DOWNLOAD PAGE: "
+                    "1) First click 'Downloads' to expand the download section. "
+                    "2) Then look for 'Slow download' or 'Fast download' links and click one. "
+                    "3) The link should have '/slow_download' or '/fast_download' in the URL. "
+                    "DO NOT keep clicking 'Downloads' - after it expands, click the actual download link!"
+                )
+            elif 'libgen' in url_lower or 'library.lol' in url_lower:
+                download_landing_hint = (
+                    "\n\nLIBGEN DOWNLOAD PAGE: "
+                    "Look for 'GET' button or 'Libgen.li' / 'Libgen.rs' mirror links. "
+                    "These lead to the actual file download."
+                )
+            else:
+                download_landing_hint = (
+                    "\n\nDOWNLOAD PAGE DETECTED: This is a landing page, NOT the actual file. "
+                    "You must click a download button (like 'Download', 'Get', 'Start Download') "
+                    "to get the real file. Look for buttons with download-related text."
+                )
 
         # Debug: Check HTML content before parsing
         debug_info = self.eyes.debug_html(html)
@@ -569,7 +774,7 @@ class Agent:
 
             if render_attempts == 1:
                 # First attempt: just wait longer
-                time.sleep(3)
+                time.sleep(RENDER_WAIT_SECONDS)
             elif render_attempts == 2:
                 # Second attempt: use force_render
                 log("  [Forcing render...]")
@@ -578,8 +783,8 @@ class Agent:
                 # Third attempt: refresh and wait
                 log("  [Refreshing page...]")
                 self.hand.refresh()
-                time.sleep(3)
-                self.hand._wait_for_dynamic_content(timeout=10000)
+                time.sleep(RENDER_WAIT_SECONDS)
+                self.hand._wait_for_dynamic_content(timeout=DYNAMIC_CONTENT_TIMEOUT_MS)
 
             html = self.hand.get_html()
             debug_info = self.eyes.debug_html(html)
@@ -610,9 +815,9 @@ class Agent:
 
             # Scroll the entire page to trigger any lazy loading
             self.hand.scroll("down", 1000)
-            time.sleep(2)
+            time.sleep(SCROLL_WAIT_SECONDS)
             self.hand.scroll("up", 500)
-            time.sleep(2)
+            time.sleep(SCROLL_WAIT_SECONDS)
 
             # Force render one more time
             self.hand.force_render()
@@ -627,13 +832,66 @@ class Agent:
         self._page_cache["parsed"] = parsed
         self._page_cache["elements"] = elements
 
-        # Build extra context (stuck hints, learned patterns, etc.)
+        # Build extra context (stuck hints, learned patterns, download landing hints, etc.)
         extra_context = ""
+
+        # Add download landing page hint if detected
+        if download_landing_hint:
+            extra_context += download_landing_hint
+
         stuck_hint = self._get_stuck_hint()
         if stuck_hint:
             self._stuck_counter += 1
             extra_context += stuck_hint
             log("  [STUCK DETECTED]")
+
+            # Try direct intervention for known sites before giving up
+            url_lower = url.lower()
+            if self._stuck_counter >= 2:
+                fallback_selectors = []
+
+                if 'annas-archive' in url_lower:
+                    log("  [ANNA'S ARCHIVE FALLBACK - trying direct download links]")
+                    fallback_selectors = [
+                        'a[href*="/slow_download"]',
+                        'a[href*="/fast_download"]',
+                        'a:has-text("Slow download")',
+                        'a:has-text("Fast download")',
+                        'a:has-text("Slow Partner Server")',
+                        'a:has-text("Fast Partner Server")',
+                    ]
+                elif 'libgen' in url_lower or 'library.lol' in url_lower:
+                    log("  [LIBGEN FALLBACK - trying direct download links]")
+                    fallback_selectors = [
+                        'a[href*="get.php"]',
+                        'a[href*="download.php"]',
+                        'a:has-text("GET")',
+                        'a:has-text("Libgen.li")',
+                        'a:has-text("Libgen.rs")',
+                        'a:has-text("Cloudflare")',
+                        'a:has-text("IPFS")',
+                    ]
+                elif 'z-lib' in url_lower or 'zlibrary' in url_lower:
+                    log("  [Z-LIBRARY FALLBACK - trying direct download links]")
+                    fallback_selectors = [
+                        'a:has-text("Download")',
+                        'button:has-text("Download")',
+                        '.dlButton',
+                        'a[href*="/download/"]',
+                    ]
+
+                for sel in fallback_selectors:
+                    try:
+                        loc = self.hand.page.locator(sel)
+                        if loc.count() > 0 and loc.first.is_visible():
+                            log(f"  [CLICKING: {sel}]")
+                            loc.first.click()
+                            time.sleep(1)
+                            # Reset stuck counter on successful click
+                            self._stuck_counter = 0
+                            return {"done": False, "fallback": True, "clicked": sel}
+                    except Exception:
+                        continue
 
             # Force reset after being stuck too many times
             if self._stuck_counter >= 5:
@@ -655,6 +913,21 @@ class Agent:
         last_failure = self.session_memory.last_failure
         if last_failure:
             extra_context += f"\nLAST ERROR: {last_failure}"
+
+        # Add hint if we recently clicked an expansion button (look for new content)
+        if self._clicked_selectors:
+            expansion_clicked = [s for s in self._clicked_selectors if s in self._expansion_buttons]
+            if expansion_clicked:
+                extra_context += "\nNOTE: Download section should now be expanded - look for 'Slow download' or 'Fast download' links, or direct file links (.epub, .pdf)"
+
+        # Add hint if selectors are being clicked repeatedly without success
+        high_click_selectors = [s for s, count in self._selector_click_counts.items() if count >= self._max_same_selector_clicks]
+        if high_click_selectors:
+            extra_context += f"\nWARNING: These buttons have been clicked {self._max_same_selector_clicks}+ times without result - try something DIFFERENT: {high_click_selectors[:3]}"
+
+        # Add hint about failed download URLs
+        if self._failed_download_urls:
+            extra_context += f"\nFAILED DOWNLOADS ({len(self._failed_download_urls)} URLs) - try different mirrors or sources"
 
         # Add list of already visited detail pages (to avoid re-navigating)
         # Detect detail pages by common URL patterns
@@ -737,10 +1010,10 @@ You navigate. You click. You download. That's it."""
 
         # Strip markdown code blocks (common with reasoning models)
         if "```json" in response_clean:
-            response_clean = re.sub(r'```json\s*', '', response_clean)
-            response_clean = re.sub(r'```\s*$', '', response_clean)
+            response_clean = RE_JSON_BLOCK.sub('', response_clean)
+            response_clean = RE_CODE_BLOCK.sub('', response_clean)
         elif "```" in response_clean:
-            response_clean = re.sub(r'```\s*', '', response_clean)
+            response_clean = RE_CODE_BLOCK.sub('', response_clean)
 
         # Find all JSON-like structures and try to parse
         data = {}
@@ -903,7 +1176,7 @@ You navigate. You click. You download. That's it."""
         goal_lower = goal.lower()
         if download_count > 0 and any(word in goal_lower for word in ['download', 'wallpaper', 'image', 'file', 'picture', 'photo']):
             # Check if we've met a numeric goal
-            numbers = re.findall(r'\b(\d+)\b', goal)
+            numbers = RE_NUMBER.findall(goal)
             target = int(numbers[0]) if numbers else 1
             if download_count >= target:
                 log(f" [AUTO-COMPLETE: Downloaded {download_count}/{target}]")
@@ -939,11 +1212,13 @@ You navigate. You click. You download. That's it."""
             return {"done": False, "error": "Parse failed"}
 
         try:
+            # Pass thought to execute_action for text extraction when args are missing
+            args["_thought"] = thought
             result = self._execute_action(action, args)
             # Record action in session memory
             self.session_memory.add_action({
                 "action": action,
-                "args": args,
+                "args": {k: v for k, v in args.items() if not k.startswith("_")},
                 "thought": thought
             })
 
@@ -970,6 +1245,14 @@ You navigate. You click. You download. That's it."""
             self._record_failure(url, action, error_msg)
             self._consecutive_failures += 1
 
+            # Track repeated failures of the same action type
+            current_action_key = f"{action}:{args.get('selector', '')}:{args.get('text', '')}"
+            if current_action_key == self._last_failed_action:
+                self._repeated_failure_count += 1
+            else:
+                self._last_failed_action = current_action_key
+                self._repeated_failure_count = 1
+
             # Record failed pattern
             selector = args.get("selector", "")
             if selector:
@@ -985,6 +1268,14 @@ You navigate. You click. You download. That's it."""
 
             if hasattr(self, '_logger'):
                 self._logger.error(step_num, error_msg, action)
+
+            # If repeating the same failed action too many times, add hint for LLM
+            if self._repeated_failure_count >= 3:
+                log(f"  [REPEATED FAILURE x{self._repeated_failure_count} - same action keeps failing]")
+                self.session_memory.add_failure(
+                    f"Action '{action}' failed {self._repeated_failure_count} times - try a DIFFERENT approach"
+                )
+                self._repeated_failure_count = 0  # Reset to avoid spam
 
             # If too many consecutive failures, reset counter
             if self._consecutive_failures >= self._max_consecutive_failures:
@@ -1015,10 +1306,38 @@ You navigate. You click. You download. That's it."""
         if action == "click":
             selector = args.get("selector", "")
             text = args.get("text", "")
+            thought = args.get("_thought", "")  # Internal: thought passed from step
 
             # Clean text - strip brackets and quotes that may come from formatting
             if text:
                 text = text.strip('[]"\'')
+
+            # If no text provided but thought mentions clicking something, extract it
+            # Common patterns: "click 'Button'", "click the Download button", "click on Submit"
+            if not text and not selector and thought:
+                # Look for quoted text in thought (highest priority)
+                quoted = RE_QUOTED_TEXT.findall(thought)
+                if quoted:
+                    text = quoted[0].strip('[]"\'')
+                else:
+                    # Look for Anna's Archive specific patterns first (precompiled)
+                    annas_patterns = [
+                        RE_SLOW_DOWNLOAD,
+                        RE_FAST_DOWNLOAD,
+                        RE_SLOW_PARTNER,
+                        RE_FAST_PARTNER,
+                    ]
+                    for pattern in annas_patterns:
+                        match = pattern.search(thought)
+                        if match:
+                            text = match.group(1).strip()
+                            break
+
+                    # Look for "click X button" or "click the X" patterns (more words allowed)
+                    if not text:
+                        click_match = RE_CLICK_PATTERN.search(thought)
+                        if click_match:
+                            text = click_match.group(1).strip()
 
             # If we have text, always try text-based clicking first
             if text:
@@ -1031,8 +1350,54 @@ You navigate. You click. You download. That's it."""
             # If selector is too generic, try to find a visible link instead
             generic_selectors = ['a', 'button', 'div', 'span', 'input', 'li', 'p']
             if selector in generic_selectors or not selector:
-                # Try clicking the first visible content link (prioritize image galleries)
+                # Try clicking the first visible content link (prioritize downloads, then galleries)
+                # IMPORTANT: Order matters! Actual download links must come BEFORE expansion buttons
+                # to avoid re-clicking buttons that just reveal more content
                 result_selectors = [
+                    # TIER 1: Direct download links (highest priority - these actually download files)
+                    # Anna's Archive actual download links (appear after clicking Downloads button)
+                    'a[href*="/slow_download"]',
+                    'a[href*="/fast_download"]',
+                    'a:has-text("Slow download")',
+                    'a:has-text("Fast download")',
+                    'a:has-text("Slow Partner Server")',
+                    'a:has-text("Fast Partner Server")',
+                    # Library Genesis / Z-Library direct downloads
+                    'a[href*="get.php"]',
+                    'a[href*="download.php"]',
+                    'a[href*=".epub"]',
+                    'a[href*=".pdf"]',
+                    'a[href$=".epub"]',
+                    'a[href$=".pdf"]',
+                    # Direct download attributes
+                    'a[download]',
+                    'a[href*="/download/"]',
+
+                    # TIER 2: Specific download buttons (these usually trigger downloads)
+                    'a:has-text("Download EPUB")',
+                    'a:has-text("Download PDF")',
+                    'a:has-text("Get EPUB")',
+                    'a:has-text("Get PDF")',
+                    '#download-button',
+                    '.download-btn',
+                    'button:has-text("Download Now")',
+                    'a:has-text("Download Now")',
+                    'a:has-text("GET")',
+
+                    # TIER 3: Generic download buttons (may be expansion buttons)
+                    'button:has-text("Download")',
+                    'a:has-text("Download")',
+                    '[class*="download"] button',
+                    '[class*="download"] a',
+                    'button[class*="download"]',
+                    'a[class*="download"]',
+                    'a[href*="download"]',
+                    'button:has-text("Get")',
+
+                    # TIER 4: Expansion buttons (last resort - these may need multiple clicks)
+                    'button:has-text("Downloads")',  # Anna's Archive expansion button
+                    'a:has-text("Downloads")',
+
                     # Image gallery selectors (wallpaper sites)
                     'a:has(img)',          # Links containing images
                     '.thumb a',            # Thumbnail links
@@ -1053,11 +1418,38 @@ You navigate. You click. You download. That's it."""
                     'a[href^="http"]:not([href*="duck"])',
                     'a[href*=".html"]',
                 ]
+
+                # Reset clicked selector tracking if we're on a new page
+                current_url = self.hand.get_url()
+                if current_url != self._clicked_page_url:
+                    self._clicked_selectors = set()
+                    self._clicked_page_url = current_url
+                    self._selector_click_counts = {}
+
                 for sel in result_selectors:
                     try:
+                        # Skip selectors clicked too many times without a download
+                        click_count = self._selector_click_counts.get(sel, 0)
+                        if click_count >= self._max_same_selector_clicks:
+                            continue
+
+                        # Skip expansion buttons we've already clicked on this page
+                        if sel in self._expansion_buttons and sel in self._clicked_selectors:
+                            continue
+
                         loc = self.hand.page.locator(sel)
                         if loc.count() > 0 and loc.first.is_visible():
                             loc.first.click()
+
+                            # Track clicked selector and count
+                            self._clicked_selectors.add(sel)
+                            self._selector_click_counts[sel] = click_count + 1
+
+                            # If this is an expansion button, wait for content to load
+                            if sel in self._expansion_buttons:
+                                time.sleep(EXPANSION_WAIT_SECONDS)
+                                print(f"  -> (expansion button clicked, waiting for content)")
+
                             return {"action": "click", "selector": sel}
                     except Exception:
                         continue
@@ -1078,7 +1470,7 @@ You navigate. You click. You download. That's it."""
             self.hand.type(selector, text)
             if submit:
                 self.hand.page.keyboard.press("Enter")
-                time.sleep(0.5)  # Wait for page to respond
+                time.sleep(STEP_PAUSE_SECONDS)  # Wait for page to respond
             return {"action": "type", "selector": selector, "text": text, "submit": submit}
 
         elif action == "press":
@@ -1100,8 +1492,13 @@ You navigate. You click. You download. That's it."""
             if url and not url.startswith(('http://', 'https://')):
                 url = urljoin(current_url, url)
 
-            # Skip if navigating to the same or similar URL
-            if url == current_url or url in current_url or current_url in url:
+            # Skip only if navigating to the exact same URL (normalized)
+            # Compare without trailing slash and fragment
+            def normalize_url(u):
+                u = u.rstrip('/').split('#')[0]
+                return u
+
+            if normalize_url(url) == normalize_url(current_url):
                 print(f"  -> (skipped: already on {url[:50]})")
                 return {"action": "navigate", "skipped": True, "url": url}
 
@@ -1135,14 +1532,26 @@ You navigate. You click. You download. That's it."""
                 self.session_memory.add_failure(f"Already downloaded {url[:50]}... Try a different item!")
                 return {"action": "download", "skipped": True, "reason": "already downloaded"}
 
+            # Check if this URL previously failed
+            if url and url in self._failed_download_urls:
+                print(f"  SKIP: URL previously failed - try a different mirror!")
+                self.session_memory.add_failure(f"Download URL failed before - use a different link")
+                return {"action": "download", "skipped": True, "reason": "previously failed"}
+
             # Perform the download
             try:
+                print(f"  -> Starting download...")
+                download_start = time.time()
+
                 if url:
                     result = self.hand.download_link(url)
                 elif selector:
                     result = self.hand.click_and_download(selector)
                 else:
                     raise InvalidActionArgsError("download", "Must provide either url or selector")
+
+                download_time = time.time() - download_start
+                print(f"  -> Download completed in {download_time:.1f}s")
 
                 # Check if we already have this file (by hash)
                 if self.persistent_memory.has_downloaded(file_hash=result["hash"]):
@@ -1151,17 +1560,55 @@ You navigate. You click. You download. That's it."""
                     print(f"  SKIP: Duplicate content (same hash)")
                     return {"action": "download", "skipped": True, "reason": "duplicate content"}
 
-                # Check if file is too small (likely a thumbnail) - only for images
+                # CRITICAL: Validate file type - don't accept HTML pages as downloads
+                # This catches cases where we downloaded a "download page" instead of the file
+                file_path = Path(result["path"])
+                if file_path.exists():
+                    # Read first 512 bytes to check file type
+                    with open(file_path, 'rb') as f:
+                        header = f.read(512)
+
+                    # Check if it's actually HTML (common mistake - downloading landing pages)
+                    is_html = (
+                        header.startswith(b'<!DOCTYPE') or
+                        header.startswith(b'<html') or
+                        header.startswith(b'<HTML') or
+                        b'<!DOCTYPE html' in header[:100] or
+                        b'<head>' in header[:200]
+                    )
+
+                    if is_html:
+                        # Delete the HTML file - it's not what we wanted
+                        file_path.unlink()
+                        print(f"  INVALID: Downloaded HTML page instead of file - need to click actual download button")
+                        self.session_memory.add_failure("Downloaded HTML landing page, not actual file")
+                        return {"action": "download", "skipped": True, "reason": "got HTML page, not file"}
+
+                # Check if file is too small (likely a thumbnail or placeholder)
                 filename_lower = result["filename"].lower()
                 is_image = any(filename_lower.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'])
-                MIN_FULL_IMAGE_SIZE = 200000  # 200KB - thumbnails are usually smaller
+                is_ebook = any(filename_lower.endswith(ext) for ext in ['.epub', '.pdf', '.mobi', '.azw', '.azw3'])
 
                 if is_image and result["size"] < MIN_FULL_IMAGE_SIZE:
-                    # Keep the file but don't count it as a real download
                     print(f"  WARNING: Small image ({result['size']} bytes) - likely thumbnail, not counted")
-                    # Delete small image files (thumbnails)
                     Path(result["path"]).unlink()
                     return {"action": "download", "skipped": True, "reason": "thumbnail (too small)"}
+
+                if is_ebook and result["size"] < MIN_EBOOK_SIZE:
+                    print(f"  WARNING: Tiny ebook ({result['size']} bytes) - likely placeholder, not valid")
+                    Path(result["path"]).unlink()
+                    return {"action": "download", "skipped": True, "reason": "ebook too small (placeholder?)"}
+
+                # Validate epub files specifically (they're ZIP files with specific structure)
+                if filename_lower.endswith('.epub'):
+                    file_path = Path(result["path"])
+                    with open(file_path, 'rb') as f:
+                        epub_header = f.read(4)
+                    # EPUB files are ZIP archives and start with PK (ZIP magic bytes)
+                    if epub_header[:2] != b'PK':
+                        print(f"  INVALID: File claims to be EPUB but isn't a valid ZIP archive")
+                        file_path.unlink()
+                        return {"action": "download", "skipped": True, "reason": "invalid epub format"}
 
                 # Record the download
                 self._record_download(
@@ -1178,6 +1625,10 @@ You navigate. You click. You download. That's it."""
                     file_size=result["size"]
                 )
 
+                # Reset selector click counts on successful download (we made progress!)
+                self._selector_click_counts = {}
+                self._clicked_selectors = set()
+
                 print(f"  Downloaded: {result['filename']} ({result['size']} bytes)")
 
                 return {
@@ -1187,7 +1638,33 @@ You navigate. You click. You download. That's it."""
                     "size": result["size"]
                 }
             except Exception as e:
-                self._record_failure(self.hand.get_url(), "download", str(e))
+                error_str = str(e)
+                self._record_failure(self.hand.get_url(), "download", error_str)
+
+                # Track failed download URL to avoid retrying
+                if url:
+                    self._failed_download_urls.add(url)
+
+                # Provide helpful hints for common download failures
+                if "Timeout" in error_str:
+                    print(f"  TIMEOUT: Download took too long - file may be very large or server is slow")
+                    self.session_memory.add_failure("Download timed out - try a different mirror or source")
+                elif "Download is starting" in error_str:
+                    # This usually means the page didn't trigger a download
+                    print(f"  NO DOWNLOAD: Page didn't trigger a file download - may need to click a different button")
+                    self.session_memory.add_failure("No download triggered - look for actual file download links")
+                elif "net::ERR" in error_str or "NetworkError" in error_str:
+                    print(f"  NETWORK ERROR: Failed to connect - try a different mirror")
+                    self.session_memory.add_failure("Network error - try alternative download source")
+                else:
+                    print(f"  DOWNLOAD FAILED: {error_str[:100]}")
+
+                # Add hint about failed URLs for LLM
+                if len(self._failed_download_urls) > 0:
+                    self.session_memory.add_failure(
+                        f"Already tried {len(self._failed_download_urls)} download URLs that failed - use a different link"
+                    )
+
                 raise
 
         elif action == "done":
@@ -1210,8 +1687,8 @@ You navigate. You click. You download. That's it."""
         def extract_content_id(url: str) -> str:
             """Extract content ID from various URL patterns."""
             url_lower = url.lower()
-            # ArXiv pattern
-            arxiv_match = re.search(r'arxiv\.org/(?:abs|pdf)/(\d+\.\d+)', url_lower)
+            # ArXiv pattern (precompiled)
+            arxiv_match = RE_ARXIV_ID.search(url_lower)
             if arxiv_match:
                 return f"arxiv:{arxiv_match.group(1)}"
             # Generic ID patterns

@@ -124,7 +124,18 @@ class LLM:
             raise ProviderNotInstalledError("xai", "openai")
 
     def generate(self, system_prompt: str, user_message: str) -> str:
-        """Generate a response from the LLM."""
+        """Generate a response from the LLM.
+
+        Args:
+            system_prompt: System-level instructions for the LLM
+            user_message: The user's message/prompt to respond to
+
+        Returns:
+            The generated text response from the LLM
+
+        Raises:
+            Exception: If all retry attempts fail
+        """
         for attempt in range(self.config.max_retries):
             try:
                 if self._provider_type == "ollama":
