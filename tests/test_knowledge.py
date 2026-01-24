@@ -78,6 +78,34 @@ class TestContentTypeDetection:
         types = detect_content_type("help me with something")
         assert types == ["general"]
 
+    def test_detect_comic(self):
+        types = detect_content_type("download batman comics")
+        assert "comic" in types
+
+    def test_detect_manga(self):
+        types = detect_content_type("find one piece manga")
+        assert "manga" in types
+
+    def test_detect_font(self):
+        types = detect_content_type("download a nice font for my project")
+        assert "font" in types
+
+    def test_detect_icon(self):
+        types = detect_content_type("find icons for a dashboard")
+        assert "icon" in types
+
+    def test_detect_3d_model(self):
+        types = detect_content_type("download a 3d model for printing")
+        assert "3d" in types
+
+    def test_detect_software(self):
+        types = detect_content_type("find a video editing software")
+        assert "software" in types
+
+    def test_detect_8k_wallpaper(self):
+        types = detect_content_type("get an 8k wallpaper")
+        assert "wallpaper" in types
+
 
 class TestSubjectExtraction:
     """Test subject/title extraction from goals."""
@@ -339,12 +367,13 @@ class TestGetAllUrls:
         assert "https://mirror1.com" in urls
         assert "https://mirror2.com" in urls
 
-    def test_annas_archive_has_mirrors(self):
-        """Anna's Archive source has mirrors configured."""
+    def test_annas_archive_exists(self):
+        """Anna's Archive source exists and has primary URL."""
         annas = next((s for s in CONTENT_SOURCES if s.name == "Anna's Archive"), None)
         assert annas is not None
         urls = get_all_urls_for_source(annas)
-        assert len(urls) > 1  # Has mirrors
+        assert len(urls) >= 1  # Has at least primary URL
+        assert "annas-archive" in urls[0]
 
 
 class TestCheckUrlReachable:

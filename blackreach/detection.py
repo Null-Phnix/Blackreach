@@ -424,6 +424,95 @@ class SiteDetector:
             indicators=indicators
         )
 
+    def detect_download_landing(self, html: str, url: str = "") -> DetectionResult:
+        """
+        Detect if page is a download landing page (not the file itself).
+
+        These pages show file info but require another click to actually download.
+        Common on sites like: vdoc.pub, mediafire, mega.nz, 4shared, etc.
+        """
+        indicators = []
+        confidence = 0.0
+        html_lower = html.lower()
+        url_lower = url.lower()
+
+        # Known download landing page domains
+        landing_page_domains = [
+            'vdoc.pub', 'mediafire.com', '4shared.com', 'depositfiles.com',
+            'zippyshare.com', 'mega.nz', 'drive.google.com', 'dropbox.com',
+            'sendspace.com', 'uploaded.net', 'rapidgator.net', 'nitroflare.com',
+            'annas-archive.org', 'annas-archive.li', 'annas-archive.se',
+            'libgen.is', 'libgen.rs', 'library.lol', 'z-lib.org', 'z-lib.is',
+        ]
+        for domain in landing_page_domains:
+            if domain in url_lower:
+                indicators.append(f"Known landing domain: {domain}")
+                confidence += 0.4
+
+        # URL patterns indicating download pages
+        download_url_patterns = ['/download/', '/get/', '/file/', '/d/', '/files/']
+        for pattern in download_url_patterns:
+            if pattern in url_lower:
+                indicators.append(f"URL pattern: {pattern}")
+                confidence += 0.2
+
+        # Common download button text (these indicate need to click again)
+        download_button_patterns = [
+            r'click\s*(here\s*)?to\s*download',
+            r'download\s*(now|file|pdf|epub)',
+            r'start\s*download',
+            r'get\s*(your\s*)?(file|download)',
+            r'direct\s*download',
+            r'slow\s*download',
+            r'fast\s*download',
+            r'free\s*download',
+            # Anna's Archive specific patterns
+            r'slow\s*partner\s*server',
+            r'fast\s*partner\s*server',
+            r'libgen\.li',
+            r'libgen\.rs',
+            r'z-library',
+            r'ipfs\.io',
+            # LibGen patterns
+            r'get\s*this\s*book',
+            r'download\s*from',
+            r'mirror\s*\d+',
+        ]
+        for pattern in download_button_patterns:
+            if re.search(pattern, html_lower):
+                indicators.append(f"Button text: {pattern}")
+                confidence += 0.2
+
+        # Check for file info display (size, format, pages)
+        file_info_patterns = [
+            r'file\s*size[:\s]*[\d.]+\s*(mb|kb|gb)',
+            r'format[:\s]*(pdf|epub|mobi|doc)',
+            r'pages?[:\s]*\d+',
+            r'author[:\s]',
+            r'isbn[:\s]',
+        ]
+        for pattern in file_info_patterns:
+            if re.search(pattern, html_lower):
+                indicators.append(f"File info: {pattern}")
+                confidence += 0.1
+
+        # Check for countdown timers (common on file hosting sites)
+        if 'countdown' in html_lower or 'timer' in html_lower or 'wait' in html_lower:
+            if re.search(r'seconds?|wait\s*\d+', html_lower):
+                indicators.append("Countdown timer detected")
+                confidence += 0.3
+
+        confidence = min(confidence, 1.0)
+        detected = confidence >= 0.4
+
+        return DetectionResult(
+            detected=detected,
+            condition="download_landing" if detected else None,
+            confidence=confidence,
+            details="Click download button to get actual file",
+            indicators=indicators
+        )
+
     def detect_all(self, html: str, url: str = "", status_code: int = None) -> List[DetectionResult]:
         """Run all detections and return any positive results."""
         results = []

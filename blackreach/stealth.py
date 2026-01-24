@@ -520,6 +520,203 @@ class Stealth:
         }})();
         """
 
+    def get_clientrects_spoofing_script(self) -> str:
+        """
+        ClientRects fingerprint spoofing.
+        DOMRect measurements are used for fingerprinting.
+        """
+        noise = random.uniform(0.0001, 0.001)
+        return f"""
+        (function() {{
+            const NOISE = {noise};
+
+            // Add subtle noise to DOMRect measurements
+            const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+            Element.prototype.getBoundingClientRect = function() {{
+                const rect = originalGetBoundingClientRect.apply(this, arguments);
+                const noise = () => (Math.random() - 0.5) * NOISE;
+                return new DOMRect(
+                    rect.x + noise(),
+                    rect.y + noise(),
+                    rect.width + noise(),
+                    rect.height + noise()
+                );
+            }};
+
+            const originalGetClientRects = Element.prototype.getClientRects;
+            Element.prototype.getClientRects = function() {{
+                const rects = originalGetClientRects.apply(this, arguments);
+                const noise = () => (Math.random() - 0.5) * NOISE;
+                // Return a modified DOMRectList-like object
+                const result = [];
+                for (let i = 0; i < rects.length; i++) {{
+                    result.push(new DOMRect(
+                        rects[i].x + noise(),
+                        rects[i].y + noise(),
+                        rects[i].width + noise(),
+                        rects[i].height + noise()
+                    ));
+                }}
+                result.item = (index) => result[index];
+                return result;
+            }};
+        }})();
+        """
+
+    def get_screen_spoofing_script(self) -> str:
+        """
+        Screen dimension spoofing.
+        Makes screen properties match common configurations.
+        """
+        screens = [
+            {"width": 1920, "height": 1080, "availWidth": 1920, "availHeight": 1040, "colorDepth": 24, "pixelDepth": 24},
+            {"width": 1366, "height": 768, "availWidth": 1366, "availHeight": 728, "colorDepth": 24, "pixelDepth": 24},
+            {"width": 2560, "height": 1440, "availWidth": 2560, "availHeight": 1400, "colorDepth": 24, "pixelDepth": 24},
+            {"width": 1536, "height": 864, "availWidth": 1536, "availHeight": 824, "colorDepth": 24, "pixelDepth": 24},
+        ]
+        screen = random.choice(screens)
+
+        return f"""
+        (function() {{
+            Object.defineProperty(screen, 'width', {{ get: () => {screen['width']} }});
+            Object.defineProperty(screen, 'height', {{ get: () => {screen['height']} }});
+            Object.defineProperty(screen, 'availWidth', {{ get: () => {screen['availWidth']} }});
+            Object.defineProperty(screen, 'availHeight', {{ get: () => {screen['availHeight']} }});
+            Object.defineProperty(screen, 'colorDepth', {{ get: () => {screen['colorDepth']} }});
+            Object.defineProperty(screen, 'pixelDepth', {{ get: () => {screen['pixelDepth']} }});
+
+            // Also set window dimensions to match
+            Object.defineProperty(window, 'outerWidth', {{ get: () => {screen['width']} }});
+            Object.defineProperty(window, 'outerHeight', {{ get: () => {screen['height']} }});
+            Object.defineProperty(window, 'innerWidth', {{ get: () => {screen['availWidth'] - 100} }});
+            Object.defineProperty(window, 'innerHeight', {{ get: () => {screen['availHeight'] - 100} }});
+        }})();
+        """
+
+    def get_connection_spoofing_script(self) -> str:
+        """
+        Network Information API spoofing.
+        Masks connection fingerprinting.
+        """
+        return """
+        (function() {
+            // Spoof navigator.connection
+            if ('connection' in navigator) {
+                Object.defineProperty(navigator, 'connection', {
+                    get: () => ({
+                        effectiveType: '4g',
+                        rtt: 50,
+                        downlink: 10,
+                        saveData: false
+                    })
+                });
+            }
+
+            // Spoof battery API if present
+            if ('getBattery' in navigator) {
+                navigator.getBattery = () => Promise.resolve({
+                    charging: true,
+                    chargingTime: 0,
+                    dischargingTime: Infinity,
+                    level: 1.0,
+                    addEventListener: () => {},
+                    removeEventListener: () => {}
+                });
+            }
+        })();
+        """
+
+    def get_automation_hiding_script(self) -> str:
+        """
+        Hide Playwright/automation signatures.
+        DDoS-Guard and Cloudflare check for these.
+        """
+        return """
+        (function() {
+            // Delete playwright/puppeteer markers
+            delete window.__playwright;
+            delete window.__pw_manual;
+            delete window.__PW_inspect;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+
+            // Remove selenium markers
+            delete document.$cdc_asdjflasutopfhvcZLmcfl_;
+            delete document.$chrome_asyncScriptInfo;
+            delete document.__webdriver_evaluate;
+            delete document.__webdriver_script_fn;
+            delete document.__webdriver_script_func;
+            delete document.__webdriver_unwrapped;
+            delete document.__fxdriver_evaluate;
+            delete document.__driver_evaluate;
+            delete document.__driver_unwrapped;
+            delete document.__selenium_evaluate;
+            delete document.__selenium_unwrapped;
+            delete document.callSelenium;
+            delete document.calledSelenium;
+            delete document.domAutomation;
+            delete document.domAutomationController;
+
+            // Override navigator.webdriver simply
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined,
+                configurable: true
+            });
+
+            // Fix HeadlessChrome in user agent - store original first
+            const originalUserAgent = navigator.userAgent;
+            if (originalUserAgent.includes('HeadlessChrome')) {
+                Object.defineProperty(navigator, 'userAgent', {
+                    get: () => originalUserAgent.replace('HeadlessChrome', 'Chrome'),
+                    configurable: true
+                });
+            }
+
+            // Override toString to hide modifications
+            const nativeToStringFunctionString = Error.toString().replace(/Error/g, 'toString');
+            const originalToString = Function.prototype.toString;
+            Function.prototype.toString = function() {
+                if (this === Function.prototype.toString) return nativeToStringFunctionString;
+                if (this.name === '' || this.name === 'toString') {
+                    return originalToString.call(this);
+                }
+                return `function ${this.name}() { [native code] }`;
+            };
+        })();
+        """
+
+    def get_iframe_contentwindow_script(self) -> str:
+        """
+        Fix iframe contentWindow detection.
+        Some bot detectors check iframe behavior.
+        """
+        return """
+        (function() {
+            // Ensure iframe contentWindow works as expected
+            const originalContentWindow = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+            Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+                get: function() {
+                    const win = originalContentWindow.get.call(this);
+                    if (!win) return win;
+
+                    // Ensure window.chrome exists in iframes too
+                    if (!win.chrome) {
+                        try {
+                            win.chrome = {
+                                runtime: { id: undefined },
+                                loadTimes: function() { return {}; },
+                                csi: function() { return {}; },
+                                app: { isInstalled: false }
+                            };
+                        } catch(e) {}
+                    }
+                    return win;
+                }
+            });
+        })();
+        """
+
     def get_all_stealth_scripts(self) -> List[str]:
         """Get all stealth scripts combined."""
         scripts = self.get_stealth_scripts()
@@ -528,5 +725,11 @@ class Stealth:
         scripts.append(self.get_audio_spoofing_script())
         scripts.append(self.get_font_spoofing_script())
         scripts.append(self.get_timezone_spoofing_script())
+        # New enhanced stealth scripts for DDoS-Guard bypass
+        scripts.append(self.get_clientrects_spoofing_script())
+        scripts.append(self.get_screen_spoofing_script())
+        scripts.append(self.get_connection_spoofing_script())
+        scripts.append(self.get_automation_hiding_script())
+        scripts.append(self.get_iframe_contentwindow_script())
         return scripts
 

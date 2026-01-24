@@ -284,6 +284,90 @@ class TestActionAliases:
         assert agent is not None
 
 
+class TestClickTextExtraction:
+    """Tests for click text extraction from LLM thoughts."""
+
+    def test_extract_quoted_text(self):
+        """Extract text from quotes in thought."""
+        import re
+        thought = "I should click 'Download EPUB' button"
+        quoted = re.findall(r"['\"]([^'\"]+)['\"]", thought)
+        assert quoted
+        assert quoted[0] == "Download EPUB"
+
+    def test_extract_slow_download_pattern(self):
+        """Extract 'slow download' from thought."""
+        import re
+        thought = "I need to click slow download link"
+        patterns = [
+            r'(slow\s+download)',
+            r'(fast\s+download)',
+        ]
+        found = None
+        for pattern in patterns:
+            match = re.search(pattern, thought, re.IGNORECASE)
+            if match:
+                found = match.group(1).strip()
+                break
+        assert found == "slow download"
+
+    def test_extract_fast_download_pattern(self):
+        """Extract 'fast download' from thought."""
+        import re
+        thought = "Click on Fast Download"
+        patterns = [
+            r'(slow\s+download)',
+            r'(fast\s+download)',
+        ]
+        found = None
+        for pattern in patterns:
+            match = re.search(pattern, thought, re.IGNORECASE)
+            if match:
+                found = match.group(1).strip()
+                break
+        assert found == "Fast Download"
+
+    def test_extract_partner_server_pattern(self):
+        """Extract 'slow partner server' from thought."""
+        import re
+        thought = "Click Slow Partner Server download"
+        patterns = [
+            r'(slow\s+partner\s+server)',
+            r'(fast\s+partner\s+server)',
+        ]
+        found = None
+        for pattern in patterns:
+            match = re.search(pattern, thought, re.IGNORECASE)
+            if match:
+                found = match.group(1).strip()
+                break
+        assert found == "Slow Partner Server"
+
+    def test_extract_click_x_button_pattern(self):
+        """Extract 'X button' pattern from thought."""
+        import re
+        thought = "click the Download button"
+        click_match = re.search(
+            r"click(?:\s+(?:the|on|a))?\s+['\"]?(\w+(?:\s+\w+){0,3})['\"]?\s*(?:button|link|tab)?",
+            thought, re.IGNORECASE
+        )
+        assert click_match
+        # "Download button" is captured, which is fine for text matching
+        assert "Download" in click_match.group(1).strip()
+
+    def test_extract_multi_word_text(self):
+        """Extract multi-word text from thought."""
+        import re
+        thought = "I will click the Get This Book button"
+        click_match = re.search(
+            r"click(?:\s+(?:the|on|a))?\s+['\"]?(\w+(?:\s+\w+){0,3})['\"]?\s*(?:button|link|tab)?",
+            thought, re.IGNORECASE
+        )
+        assert click_match
+        # Should capture up to 4 words (base + 3 more)
+        assert "Get This Book" in click_match.group(1)
+
+
 class TestAgentRecording:
     """Tests for visit/download/failure recording."""
 
@@ -697,6 +781,62 @@ class TestAgentStuckHint:
         hint = agent._get_stuck_hint()
 
         assert "DO NOT repeat" in hint or "different" in hint.lower()
+
+    def test_stuck_hint_annas_archive_specific(self, tmp_path):
+        """_get_stuck_hint provides Anna's Archive specific guidance."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        # Simulate being stuck on Anna's Archive
+        annas_url = "https://annas-archive.org/md5/abc123"
+        agent._recent_urls = [annas_url, annas_url, annas_url]
+
+        hint = agent._get_stuck_hint()
+
+        assert "ANNA'S ARCHIVE" in hint
+        assert "Downloads" in hint or "download" in hint.lower()
+
+    def test_stuck_hint_libgen_specific(self, tmp_path):
+        """_get_stuck_hint provides LibGen specific guidance."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        # Simulate being stuck on LibGen
+        libgen_url = "https://libgen.is/book/index.php?md5=abc"
+        agent._recent_urls = [libgen_url, libgen_url, libgen_url]
+
+        hint = agent._get_stuck_hint()
+
+        assert "LIBGEN" in hint
+        assert "GET" in hint or "mirror" in hint.lower()
+
+
+class TestAgentClickTracking:
+    """Tests for click tracking to prevent repeated expansion button clicks."""
+
+    def test_expansion_buttons_defined(self):
+        """Expansion buttons set is defined and non-empty."""
+        agent = Agent()
+        assert agent._expansion_buttons is not None
+        assert len(agent._expansion_buttons) > 0
+        assert 'button:has-text("Downloads")' in agent._expansion_buttons
+
+    def test_clicked_selectors_initialized(self):
+        """Clicked selectors set is initialized."""
+        agent = Agent()
+        assert agent._clicked_selectors is not None
+        assert isinstance(agent._clicked_selectors, set)
+
+    def test_selector_click_counts_initialized(self):
+        """Selector click counts dict is initialized."""
+        agent = Agent()
+        assert agent._selector_click_counts is not None
+        assert isinstance(agent._selector_click_counts, dict)
+
+    def test_max_same_selector_clicks_set(self):
+        """Max same selector clicks limit is set."""
+        agent = Agent()
+        assert agent._max_same_selector_clicks == 2
 
 
 class TestGetSmartStartUrl:

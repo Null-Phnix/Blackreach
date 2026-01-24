@@ -56,6 +56,7 @@ class Config:
     headless: bool = False
     max_steps: int = 30
     download_dir: str = "./downloads"
+    browser_type: str = "chromium"  # chromium, firefox, or webkit
 
     # UI settings
     verbose: bool = True
@@ -179,6 +180,7 @@ class ConfigManager:
                 "headless": config.headless,
                 "max_steps": config.max_steps,
                 "download_dir": config.download_dir,
+                "browser_type": config.browser_type,
             },
             "ui": {
                 "verbose": config.verbose,
@@ -206,6 +208,7 @@ class ConfigManager:
         config.headless = agent.get("headless", False)
         config.max_steps = agent.get("max_steps", 30)
         config.download_dir = agent.get("download_dir", "./downloads")
+        config.browser_type = agent.get("browser_type", "chromium")
 
         ui = data.get("ui", {})
         config.verbose = ui.get("verbose", True)
