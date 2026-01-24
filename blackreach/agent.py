@@ -37,6 +37,7 @@ from blackreach.source_manager import SourceManager, get_source_manager
 from blackreach.goal_engine import GoalEngine, GoalDecomposition, SubtaskStatus, get_goal_engine
 from blackreach.nav_context import NavigationContext, PageValue, get_nav_context
 from blackreach.site_handlers import get_handler_for_url, get_site_hints, get_download_sequence, SiteHandlerExecutor
+from blackreach.search_intel import SearchIntelligence, get_search_intel, SearchQuery
 
 
 # ============================================================================
@@ -149,6 +150,10 @@ class Agent:
 
         # Context-aware navigation
         self.nav_context = get_nav_context(self.persistent_memory)
+
+        # Search intelligence
+        self.search_intel = get_search_intel(self.persistent_memory)
+        self._current_search_session = None
 
         # Load prompts
         self.prompts = self._load_prompts()
@@ -528,10 +533,18 @@ class Agent:
         # Use the knowledge base to reason about the best source
         result = reason_about_goal(goal)
 
+        # Use search intelligence for optimized query formulation
+        content_type = result['content_types'][0] if result['content_types'] else ""
+        search_query = self.search_intel.create_search(goal, content_type)
+
+        # Start a search session for learning
+        self._current_search_session = self.search_intel.start_session(search_query)
+
         # Log the reasoning
         log(f"\n🧠 REASONING:")
         log(f"   Content type: {', '.join(result['content_types'])}")
         log(f"   Subject: \"{result['subject']}\"")
+        log(f"   Optimized query: \"{search_query.query}\"")
         log(f"   Decision: {result['reasoning']}")
 
         if result.get("alternate_sources"):

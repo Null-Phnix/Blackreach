@@ -13,8 +13,9 @@ from blackreach.observer import Eyes
 from blackreach.knowledge import reason_about_goal, CONTENT_SOURCES
 from blackreach.nav_context import NavigationContext, PageValue
 from blackreach.site_handlers import get_handler_for_url, SiteHandler
+from blackreach.search_intel import SearchIntelligence, get_search_intel
 
-__version__ = "2.2.0"
+__version__ = "2.3.0"
 __all__ = [
     "Agent",
     "AgentConfig",
@@ -31,4 +32,6 @@ __all__ = [
     "PageValue",
     "get_handler_for_url",
     "SiteHandler",
+    "SearchIntelligence",
+    "get_search_intel",
 ]
