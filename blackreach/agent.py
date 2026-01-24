@@ -36,6 +36,7 @@ from blackreach.error_recovery import ErrorRecovery, ErrorCategory, RecoveryActi
 from blackreach.source_manager import SourceManager, get_source_manager
 from blackreach.goal_engine import GoalEngine, GoalDecomposition, SubtaskStatus, get_goal_engine
 from blackreach.nav_context import NavigationContext, PageValue, get_nav_context
+from blackreach.site_handlers import get_handler_for_url, get_site_hints, get_download_sequence, SiteHandlerExecutor
 
 
 # ============================================================================
@@ -310,23 +311,10 @@ class Agent:
             start_url = self.config.start_url
             current_url = self._recent_urls[-1] if self._recent_urls else ""
 
-            # Provide site-specific hints for common ebook sites
-            url_lower = current_url.lower()
-            if 'annas-archive' in url_lower:
-                hints.append(
-                    "STUCK ON ANNA'S ARCHIVE! You may need to:"
-                    "\n1. First click 'Downloads' button to expand the section"
-                    "\n2. Then look for 'Slow download' or 'Fast download' links"
-                    "\n3. The actual download links have '/slow_download' or '/fast_download' in URL"
-                    "\n4. If that doesn't work, try scrolling down to see more options"
-                )
-            elif 'libgen' in url_lower or 'library.lol' in url_lower:
-                hints.append(
-                    "STUCK ON LIBGEN! Look for:"
-                    "\n- 'GET' button (main download)"
-                    "\n- Mirror links like 'Libgen.li' or 'Libgen.rs'"
-                    "\n- 'Cloudflare' or 'IPFS' download options"
-                )
+            # Use centralized site handlers for stuck hints
+            site_hint = get_site_hints(current_url, "", self._current_goal)
+            if site_hint:
+                hints.append(f"STUCK! {site_hint}")
             else:
                 hints.append(
                     f"STUCK! You've been on the same page too long. Try:"
@@ -847,22 +835,10 @@ class Agent:
         if download_landing.detected:
             log(f"  [Download landing page detected - look for download button]")
 
-            # Site-specific download hints
-            url_lower = url.lower()
-            if 'annas-archive' in url_lower:
-                download_landing_hint = (
-                    "\n\nANNA'S ARCHIVE DOWNLOAD PAGE: "
-                    "1) First click 'Downloads' to expand the download section. "
-                    "2) Then look for 'Slow download' or 'Fast download' links and click one. "
-                    "3) The link should have '/slow_download' or '/fast_download' in the URL. "
-                    "DO NOT keep clicking 'Downloads' - after it expands, click the actual download link!"
-                )
-            elif 'libgen' in url_lower or 'library.lol' in url_lower:
-                download_landing_hint = (
-                    "\n\nLIBGEN DOWNLOAD PAGE: "
-                    "Look for 'GET' button or 'Libgen.li' / 'Libgen.rs' mirror links. "
-                    "These lead to the actual file download."
-                )
+            # Use centralized site handlers for hints
+            site_hint = get_site_hints(url, html, goal)
+            if site_hint:
+                download_landing_hint = f"\n\n{site_hint}"
             else:
                 download_landing_hint = (
                     "\n\nDOWNLOAD PAGE DETECTED: This is a landing page, NOT the actual file. "
@@ -964,40 +940,19 @@ class Agent:
             extra_context += stuck_hint
             log("  [STUCK DETECTED]")
 
-            # Try direct intervention for known sites before giving up
-            url_lower = url.lower()
+            # Try direct intervention using site-specific handlers
             if self._stuck_counter >= 2:
-                fallback_selectors = []
+                # Get download actions from site handler
+                download_actions = get_download_sequence(url, html)
+                fallback_selectors = [
+                    action.target for action in download_actions
+                    if action.action_type == "click"
+                ]
 
-                if 'annas-archive' in url_lower:
-                    log("  [ANNA'S ARCHIVE FALLBACK - trying direct download links]")
-                    fallback_selectors = [
-                        'a[href*="/slow_download"]',
-                        'a[href*="/fast_download"]',
-                        'a:has-text("Slow download")',
-                        'a:has-text("Fast download")',
-                        'a:has-text("Slow Partner Server")',
-                        'a:has-text("Fast Partner Server")',
-                    ]
-                elif 'libgen' in url_lower or 'library.lol' in url_lower:
-                    log("  [LIBGEN FALLBACK - trying direct download links]")
-                    fallback_selectors = [
-                        'a[href*="get.php"]',
-                        'a[href*="download.php"]',
-                        'a:has-text("GET")',
-                        'a:has-text("Libgen.li")',
-                        'a:has-text("Libgen.rs")',
-                        'a:has-text("Cloudflare")',
-                        'a:has-text("IPFS")',
-                    ]
-                elif 'z-lib' in url_lower or 'zlibrary' in url_lower:
-                    log("  [Z-LIBRARY FALLBACK - trying direct download links]")
-                    fallback_selectors = [
-                        'a:has-text("Download")',
-                        'button:has-text("Download")',
-                        '.dlButton',
-                        'a[href*="/download/"]',
-                    ]
+                if fallback_selectors:
+                    handler = get_handler_for_url(url)
+                    handler_name = handler.__class__.__name__ if handler else "Unknown"
+                    log(f"  [{handler_name} FALLBACK - trying site-specific download selectors]")
 
                 for sel in fallback_selectors:
                     try:

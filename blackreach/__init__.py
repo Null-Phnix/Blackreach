@@ -12,8 +12,9 @@ from blackreach.browser import Hand
 from blackreach.observer import Eyes
 from blackreach.knowledge import reason_about_goal, CONTENT_SOURCES
 from blackreach.nav_context import NavigationContext, PageValue
+from blackreach.site_handlers import get_handler_for_url, SiteHandler
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 __all__ = [
     "Agent",
     "AgentConfig",
@@ -28,4 +29,6 @@ __all__ = [
     "CONTENT_SOURCES",
     "NavigationContext",
     "PageValue",
+    "get_handler_for_url",
+    "SiteHandler",
 ]
