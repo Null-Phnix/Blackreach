@@ -40,6 +40,8 @@ from blackreach.site_handlers import get_handler_for_url, get_site_hints, get_do
 from blackreach.search_intel import SearchIntelligence, get_search_intel, SearchQuery
 from blackreach.content_verify import ContentVerifier, VerificationStatus, FileType, get_verifier
 from blackreach.retry_strategy import RetryManager, RetryDecision, get_retry_manager
+from blackreach.timeout_manager import TimeoutManager, get_timeout_manager
+from blackreach.rate_limiter import RateLimiter, get_rate_limiter
 
 
 # ============================================================================
@@ -162,6 +164,12 @@ class Agent:
 
         # Retry strategies
         self.retry_manager = get_retry_manager()
+
+        # Timeout management
+        self.timeout_manager = get_timeout_manager()
+
+        # Rate limiting
+        self.rate_limiter = get_rate_limiter()
 
         # Load prompts
         self.prompts = self._load_prompts()

@@ -16,8 +16,10 @@ from blackreach.site_handlers import get_handler_for_url, SiteHandler
 from blackreach.search_intel import SearchIntelligence, get_search_intel
 from blackreach.content_verify import ContentVerifier, VerificationStatus, get_verifier
 from blackreach.retry_strategy import RetryManager, RetryDecision, get_retry_manager
+from blackreach.timeout_manager import TimeoutManager, get_timeout_manager
+from blackreach.rate_limiter import RateLimiter, get_rate_limiter
 
-__version__ = "2.5.0"
+__version__ = "2.7.0"
 __all__ = [
     "Agent",
     "AgentConfig",
@@ -42,4 +44,8 @@ __all__ = [
     "RetryManager",
     "RetryDecision",
     "get_retry_manager",
+    "TimeoutManager",
+    "get_timeout_manager",
+    "RateLimiter",
+    "get_rate_limiter",
 ]
