@@ -1,8 +1,16 @@
 """
-Site-Specific Handlers (v2.2.0)
+Site-Specific Handlers (v4.0.0-beta.2)
 
 Centralized logic for handling specific sites that the agent encounters frequently.
 Each handler knows how to navigate and extract content from a particular site.
+
+Supported Sites:
+- Book/Document: Anna's Archive, LibGen, Z-Library, arXiv
+- Search Engines: Google, DuckDuckGo
+- Images: Wallhaven, Unsplash, Pexels, Pixabay
+- Code/Tech: GitHub, Stack Overflow, Hugging Face
+- Information: Wikipedia, Reddit, YouTube
+- Shopping: Amazon
 """
 
 from dataclasses import dataclass, field
@@ -447,6 +455,402 @@ class UnsplashHandler(SiteHandler):
         ]
 
 
+class GitHubHandler(SiteHandler):
+    """Handler for GitHub repositories and releases."""
+
+    domains = ["github.com"]
+
+    def get_download_actions(self, html: str, url: str) -> List[SiteAction]:
+        """Get download sequence for GitHub releases."""
+        actions = []
+
+        if "/releases" in url:
+            # On releases page, look for download assets
+            actions.append(SiteAction(
+                action_type="click",
+                target='a[href*="/releases/download/"]',
+                description="Click release download link",
+                optional=True
+            ))
+            # Or expand assets section
+            actions.append(SiteAction(
+                action_type="click",
+                target='summary:has-text("Assets")',
+                description="Expand assets section",
+                optional=True
+            ))
+
+        return actions
+
+    def get_search_actions(self, query: str) -> List[SiteAction]:
+        """Search on GitHub."""
+        return [
+            SiteAction(
+                action_type="type",
+                target='input[name="q"]',
+                description=f"Type search query: {query}",
+                wait_after=0.5
+            ),
+            SiteAction(
+                action_type="click",
+                target='button[type="submit"]',
+                description="Submit search",
+                wait_after=2.0
+            )
+        ]
+
+    def get_navigation_hints(self, html: str, url: str, goal: str) -> str:
+        """Navigation hints for GitHub."""
+        if "/releases" in url:
+            return "GITHUB RELEASES: Click on a release asset to download, or expand 'Assets' to see all files."
+        elif "/blob/" in url:
+            return "GITHUB FILE VIEW: Click 'Raw' to view raw file, or 'Download' button if available."
+        elif "/tree/" in url or url.endswith((".com", ".com/")):
+            return "GITHUB REPO: Navigate to 'Releases' for downloadable files, or browse the file tree."
+        return "GITHUB: Use the search bar or navigate to a repository."
+
+
+class WikipediaHandler(SiteHandler):
+    """Handler for Wikipedia."""
+
+    domains = ["wikipedia.org", "en.wikipedia", "en.m.wikipedia"]
+
+    def get_download_actions(self, html: str, url: str) -> List[SiteAction]:
+        """Wikipedia doesn't have traditional downloads."""
+        return []
+
+    def get_search_actions(self, query: str) -> List[SiteAction]:
+        """Search on Wikipedia."""
+        return [
+            SiteAction(
+                action_type="type",
+                target='input[name="search"]',
+                description=f"Type search query: {query}",
+                wait_after=0.5
+            ),
+            SiteAction(
+                action_type="click",
+                target='button[type="submit"]',
+                description="Submit search",
+                wait_after=2.0
+            )
+        ]
+
+    def get_navigation_hints(self, html: str, url: str, goal: str) -> str:
+        """Navigation hints for Wikipedia."""
+        if "/wiki/" in url:
+            return "WIKIPEDIA ARTICLE: Scroll to find information, click section links in Contents, or use internal links."
+        return "WIKIPEDIA: Type in the search box to find articles."
+
+
+class DuckDuckGoHandler(SiteHandler):
+    """Handler for DuckDuckGo search engine."""
+
+    domains = ["duckduckgo.com"]
+
+    def get_download_actions(self, html: str, url: str) -> List[SiteAction]:
+        """DuckDuckGo doesn't have downloads."""
+        return []
+
+    def get_search_actions(self, query: str) -> List[SiteAction]:
+        """Search on DuckDuckGo."""
+        return [
+            SiteAction(
+                action_type="type",
+                target='input[name="q"]',
+                description=f"Type search query: {query}",
+                wait_after=0.5
+            ),
+            SiteAction(
+                action_type="click",
+                target='button[type="submit"]',
+                description="Submit search",
+                wait_after=2.0
+            )
+        ]
+
+    def get_navigation_hints(self, html: str, url: str, goal: str) -> str:
+        """Navigation hints for DuckDuckGo."""
+        if "q=" in url:
+            return "DUCKDUCKGO RESULTS: Click on a result link to visit that page. Results are not tracked."
+        return "DUCKDUCKGO: Type your search query in the search box."
+
+
+class RedditHandler(SiteHandler):
+    """Handler for Reddit."""
+
+    domains = ["reddit.com", "old.reddit.com", "www.reddit.com"]
+
+    def get_download_actions(self, html: str, url: str) -> List[SiteAction]:
+        """Reddit has media but complex download patterns."""
+        actions = []
+
+        # For image posts
+        actions.append(SiteAction(
+            action_type="click",
+            target='a[href*="i.redd.it"], a[href*="i.imgur"]',
+            description="Click image link",
+            optional=True
+        ))
+
+        return actions
+
+    def get_search_actions(self, query: str) -> List[SiteAction]:
+        """Search on Reddit."""
+        return [
+            SiteAction(
+                action_type="type",
+                target='input[name="q"]',
+                description=f"Type search query: {query}",
+                wait_after=0.5
+            ),
+            SiteAction(
+                action_type="click",
+                target='button[type="submit"]',
+                description="Submit search",
+                wait_after=2.0
+            )
+        ]
+
+    def get_navigation_hints(self, html: str, url: str, goal: str) -> str:
+        """Navigation hints for Reddit."""
+        if "/comments/" in url:
+            return "REDDIT POST: Scroll through comments, click links shared by users, or view media attachments."
+        elif "/r/" in url:
+            return "REDDIT SUBREDDIT: Browse posts, click titles to view full post and comments."
+        return "REDDIT: Use search or navigate to a subreddit (r/subreddit)."
+
+
+class YouTubeHandler(SiteHandler):
+    """Handler for YouTube (navigation only - no downloads)."""
+
+    domains = ["youtube.com", "youtu.be", "www.youtube.com"]
+
+    def get_download_actions(self, html: str, url: str) -> List[SiteAction]:
+        """YouTube doesn't allow direct downloads."""
+        return []
+
+    def get_search_actions(self, query: str) -> List[SiteAction]:
+        """Search on YouTube."""
+        return [
+            SiteAction(
+                action_type="type",
+                target='input#search, input[name="search_query"]',
+                description=f"Type search query: {query}",
+                wait_after=0.5
+            ),
+            SiteAction(
+                action_type="click",
+                target='button#search-icon-legacy',
+                description="Submit search",
+                wait_after=2.0
+            )
+        ]
+
+    def get_navigation_hints(self, html: str, url: str, goal: str) -> str:
+        """Navigation hints for YouTube."""
+        if "/watch" in url:
+            return "YOUTUBE VIDEO: View video info, read description, check comments. Cannot download directly."
+        elif "/results" in url:
+            return "YOUTUBE SEARCH: Click on a video thumbnail or title to watch it."
+        return "YOUTUBE: Use search bar to find videos."
+
+
+class StackOverflowHandler(SiteHandler):
+    """Handler for Stack Overflow and Stack Exchange sites."""
+
+    domains = ["stackoverflow.com", "stackexchange.com", "superuser.com", "serverfault.com"]
+
+    def get_download_actions(self, html: str, url: str) -> List[SiteAction]:
+        """Stack Overflow doesn't have downloads."""
+        return []
+
+    def get_search_actions(self, query: str) -> List[SiteAction]:
+        """Search on Stack Overflow."""
+        return [
+            SiteAction(
+                action_type="type",
+                target='input[name="q"]',
+                description=f"Type search query: {query}",
+                wait_after=0.5
+            ),
+            SiteAction(
+                action_type="click",
+                target='button[type="submit"]',
+                description="Submit search",
+                wait_after=2.0
+            )
+        ]
+
+    def get_navigation_hints(self, html: str, url: str, goal: str) -> str:
+        """Navigation hints for Stack Overflow."""
+        if "/questions/" in url:
+            return "STACKOVERFLOW QUESTION: Read answers (sorted by votes), check accepted answer (green checkmark)."
+        return "STACKOVERFLOW: Search for programming questions or browse by tags."
+
+
+class PexelsHandler(SiteHandler):
+    """Handler for Pexels free stock photos."""
+
+    domains = ["pexels.com"]
+
+    def get_download_actions(self, html: str, url: str) -> List[SiteAction]:
+        """Get download sequence for Pexels."""
+        return [
+            SiteAction(
+                action_type="click",
+                target='button:has-text("Free Download")',
+                description="Click free download button",
+                wait_after=1.0
+            ),
+            SiteAction(
+                action_type="click",
+                target='a[download]',
+                description="Click download link",
+                optional=True
+            )
+        ]
+
+    def get_search_actions(self, query: str) -> List[SiteAction]:
+        """Search on Pexels."""
+        return [
+            SiteAction(
+                action_type="type",
+                target='input[type="search"]',
+                description=f"Type search query: {query}",
+                wait_after=0.5
+            ),
+            SiteAction(
+                action_type="click",
+                target='button[type="submit"]',
+                description="Submit search",
+                wait_after=2.0
+            )
+        ]
+
+
+class PixabayHandler(SiteHandler):
+    """Handler for Pixabay free images."""
+
+    domains = ["pixabay.com"]
+
+    def get_download_actions(self, html: str, url: str) -> List[SiteAction]:
+        """Get download sequence for Pixabay."""
+        return [
+            SiteAction(
+                action_type="click",
+                target='button:has-text("Download")',
+                description="Click download button",
+                wait_after=1.0
+            ),
+            SiteAction(
+                action_type="click",
+                target='a:has-text("Download")',
+                description="Click download link in modal",
+                optional=True
+            )
+        ]
+
+    def get_search_actions(self, query: str) -> List[SiteAction]:
+        """Search on Pixabay."""
+        return [
+            SiteAction(
+                action_type="type",
+                target='input[name="q"]',
+                description=f"Type search query: {query}",
+                wait_after=0.5
+            ),
+            SiteAction(
+                action_type="click",
+                target='button[type="submit"]',
+                description="Submit search",
+                wait_after=2.0
+            )
+        ]
+
+
+class AmazonHandler(SiteHandler):
+    """Handler for Amazon (product search, no downloads)."""
+
+    domains = ["amazon.com", "amazon.co.uk", "amazon.de", "amazon.fr"]
+
+    def get_download_actions(self, html: str, url: str) -> List[SiteAction]:
+        """Amazon doesn't have direct file downloads."""
+        return []
+
+    def get_search_actions(self, query: str) -> List[SiteAction]:
+        """Search on Amazon."""
+        return [
+            SiteAction(
+                action_type="type",
+                target='input#twotabsearchtextbox, input[name="field-keywords"]',
+                description=f"Type search query: {query}",
+                wait_after=0.5
+            ),
+            SiteAction(
+                action_type="click",
+                target='input#nav-search-submit-button',
+                description="Submit search",
+                wait_after=2.0
+            )
+        ]
+
+    def get_navigation_hints(self, html: str, url: str, goal: str) -> str:
+        """Navigation hints for Amazon."""
+        if "/dp/" in url or "/product/" in url:
+            return "AMAZON PRODUCT: View product details, price, reviews. Check 'Buy Now' or 'Add to Cart'."
+        elif "/s?" in url:
+            return "AMAZON SEARCH: Click on product titles or images to view details. Check ratings and prices."
+        return "AMAZON: Use search bar to find products."
+
+
+class HuggingFaceHandler(SiteHandler):
+    """Handler for Hugging Face model hub."""
+
+    domains = ["huggingface.co"]
+
+    def get_download_actions(self, html: str, url: str) -> List[SiteAction]:
+        """Get download sequence for Hugging Face models."""
+        return [
+            SiteAction(
+                action_type="click",
+                target='a:has-text("Files and versions")',
+                description="Go to files tab",
+                optional=True,
+                wait_after=1.0
+            ),
+            SiteAction(
+                action_type="click",
+                target='a[download]',
+                description="Click download link",
+                optional=True
+            )
+        ]
+
+    def get_search_actions(self, query: str) -> List[SiteAction]:
+        """Search on Hugging Face."""
+        return [
+            SiteAction(
+                action_type="type",
+                target='input[placeholder*="Search"]',
+                description=f"Type search query: {query}",
+                wait_after=0.5
+            ),
+            SiteAction(
+                action_type="click",
+                target='button[type="submit"]',
+                description="Submit search",
+                wait_after=2.0
+            )
+        ]
+
+    def get_navigation_hints(self, html: str, url: str, goal: str) -> str:
+        """Navigation hints for Hugging Face."""
+        if "/models/" in url or url.endswith("/models"):
+            return "HUGGINGFACE MODELS: Browse models, filter by task type, click to view model details."
+        return "HUGGINGFACE: Search for AI models, datasets, or spaces."
+
+
 # Registry of all handlers
 SITE_HANDLERS: List[type] = [
     AnnasArchiveHandler,
@@ -456,6 +860,16 @@ SITE_HANDLERS: List[type] = [
     ArxivHandler,
     WallhavenHandler,
     UnsplashHandler,
+    GitHubHandler,
+    WikipediaHandler,
+    DuckDuckGoHandler,
+    RedditHandler,
+    YouTubeHandler,
+    StackOverflowHandler,
+    PexelsHandler,
+    PixabayHandler,
+    AmazonHandler,
+    HuggingFaceHandler,
 ]
 
 

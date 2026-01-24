@@ -56,7 +56,7 @@ except ValueError:
 console = Console()
 
 # Version
-__version__ = "4.0.0-beta.1"
+__version__ = "4.0.0-beta.2"
 
 
 BANNER = """[bold cyan]
@@ -68,7 +68,7 @@ BANNER = """[bold cyan]
 ║   ██████╔╝███████╗██║  ██║╚██████╗██║  ██╗              ║
 ║   ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝              ║
 ║                                                          ║
-║   [white]Autonomous Browser Agent[/white]        [dim]v4.0.0-beta.1[/dim]   ║
+║   [white]Autonomous Browser Agent[/white]        [dim]v4.0.0-beta.2[/dim]   ║
 ╚══════════════════════════════════════════════════════════╝[/bold cyan]
 """
 

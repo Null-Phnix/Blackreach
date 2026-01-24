@@ -25,8 +25,13 @@ from blackreach.task_scheduler import TaskScheduler, TaskPriority, get_scheduler
 from blackreach.cache import PageCache, ResultCache, get_page_cache, get_result_cache
 from blackreach.api import BlackreachAPI, browse, download, search, BrowseResult
 from blackreach.config import Config, ProviderConfig, ConfigManager, config_manager, AVAILABLE_MODELS
+from blackreach.parallel_ops import (
+    ParallelFetcher, ParallelDownloader, ParallelSearcher,
+    ParallelOperationManager, ParallelResult, ParallelTask,
+    get_parallel_manager
+)
 
-__version__ = "4.0.0-beta.1"
+__version__ = "4.0.0-beta.2"
 __all__ = [
     "Agent",
     "AgentConfig",
@@ -80,4 +85,11 @@ __all__ = [
     "ConfigManager",
     "config_manager",
     "AVAILABLE_MODELS",
+    "ParallelFetcher",
+    "ParallelDownloader",
+    "ParallelSearcher",
+    "ParallelOperationManager",
+    "ParallelResult",
+    "ParallelTask",
+    "get_parallel_manager",
 ]
