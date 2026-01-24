@@ -68,7 +68,7 @@ BANNER = """[bold cyan]
 ║   ██████╔╝███████╗██║  ██║╚██████╗██║  ██╗              ║
 ║   ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝              ║
 ║                                                          ║
-║   [white]Autonomous Browser Agent[/white]              [dim]v2.0.0[/dim]   ║
+║   [white]Autonomous Browser Agent[/white]        [dim]v4.0.0-beta.1[/dim]   ║
 ╚══════════════════════════════════════════════════════════╝[/bold cyan]
 """
 

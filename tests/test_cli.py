@@ -26,7 +26,9 @@ class TestCLIBasics:
     def test_cli_version_format(self):
         """CLI version has correct format."""
         from blackreach.cli import __version__
-        parts = __version__.split(".")
+        # Support pre-release versions like 4.0.0-beta.1
+        base_version = __version__.split("-")[0]
+        parts = base_version.split(".")
         assert len(parts) == 3  # Major.Minor.Patch
 
     def test_banner_exists(self):
@@ -501,7 +503,9 @@ class TestCLIVersionInfo:
     def test_version_is_semantic(self):
         """Version follows semantic versioning."""
         from blackreach.cli import __version__
-        parts = __version__.split(".")
+        # Support pre-release versions like 4.0.0-beta.1
+        base_version = __version__.split("-")[0]
+        parts = base_version.split(".")
         assert len(parts) == 3
         # All parts should be numeric
         for part in parts:
@@ -668,7 +672,9 @@ class TestCLIConstants:
         """Version has correct format."""
         from blackreach.cli import __version__
 
-        parts = __version__.split('.')
+        # Support pre-release versions like 4.0.0-beta.1
+        base_version = __version__.split('-')[0]
+        parts = base_version.split('.')
         assert len(parts) == 3
         for part in parts:
             assert part.isdigit()

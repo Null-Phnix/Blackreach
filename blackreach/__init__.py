@@ -24,7 +24,7 @@ from blackreach.download_queue import DownloadQueue, DownloadPriority, get_downl
 from blackreach.task_scheduler import TaskScheduler, TaskPriority, get_scheduler
 from blackreach.cache import PageCache, ResultCache, get_page_cache, get_result_cache
 from blackreach.api import BlackreachAPI, browse, download, search, BrowseResult
-from blackreach.config import ConfigManager, BlackreachConfig, get_config, load_config
+from blackreach.config import Config, ProviderConfig, ConfigManager, config_manager, AVAILABLE_MODELS
 
 __version__ = "4.0.0-beta.1"
 __all__ = [
@@ -75,8 +75,9 @@ __all__ = [
     "download",
     "search",
     "BrowseResult",
+    "Config",
+    "ProviderConfig",
     "ConfigManager",
-    "BlackreachConfig",
-    "get_config",
-    "load_config",
+    "config_manager",
+    "AVAILABLE_MODELS",
 ]
