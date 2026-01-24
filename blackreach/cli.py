@@ -56,7 +56,7 @@ except ValueError:
 console = Console()
 
 # Version
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 
 
 BANNER = """[bold cyan]
@@ -68,7 +68,7 @@ BANNER = """[bold cyan]
 ║   ██████╔╝███████╗██║  ██║╚██████╗██║  ██╗              ║
 ║   ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝              ║
 ║                                                          ║
-║   [white]Autonomous Browser Agent[/white]              [dim]v1.8.0[/dim]   ║
+║   [white]Autonomous Browser Agent[/white]              [dim]v1.9.0[/dim]   ║
 ╚══════════════════════════════════════════════════════════╝[/bold cyan]
 """
 
@@ -643,6 +643,65 @@ def actions(domain: str):
                 for sel in good_selectors[:5]:
                     console.print(f"  [green]✓[/green] {sel}")
                 console.print()
+
+
+@cli.command()
+@click.option('--type', '-t', 'content_type', help='Filter by content type')
+def sources(content_type: str):
+    """Show content source health and availability."""
+    from blackreach.source_manager import get_source_manager, SourceStatus
+
+    console.print(BANNER)
+    console.print("[bold]Content Source Status[/bold]\n")
+
+    manager = get_source_manager()
+    all_status = manager.get_all_status()
+
+    if not all_status:
+        console.print("[dim]No source activity recorded yet.[/dim]")
+        console.print("\nRun 'blackreach health' to check source availability.")
+        return
+
+    # Status table
+    table = Table(title="Source Health")
+    table.add_column("Domain", style="cyan", max_width=30)
+    table.add_column("Status")
+    table.add_column("Success Rate", justify="right")
+    table.add_column("Success", justify="right")
+    table.add_column("Failures", justify="right")
+    table.add_column("Available")
+
+    status_colors = {
+        "healthy": "green",
+        "degraded": "yellow",
+        "rate_limited": "yellow",
+        "blocked": "red",
+        "down": "red",
+        "unknown": "dim",
+    }
+
+    for domain, info in sorted(all_status.items(), key=lambda x: x[1]["success_rate"], reverse=True):
+        status = info["status"]
+        color = status_colors.get(status, "white")
+        status_display = f"[{color}]{status}[/{color}]"
+
+        available = "[green]Yes[/green]" if info["available"] else "[red]No[/red]"
+
+        table.add_row(
+            domain[:30],
+            status_display,
+            f"{info['success_rate']:.0%}",
+            str(info["success_count"]),
+            str(info["failure_count"]),
+            available
+        )
+
+    console.print(table)
+
+    # Session summary
+    summary = manager.get_session_summary()
+    if summary["sources_used"] > 0:
+        console.print(f"\n[bold]Session:[/bold] {summary['sources_used']} sources used, {summary['failovers']} failovers")
 
 
 @cli.command()

@@ -33,6 +33,7 @@ from blackreach.knowledge import reason_about_goal, extract_subject, get_working
 from blackreach.action_tracker import ActionTracker
 from blackreach.stuck_detector import StuckDetector, RecoveryStrategy, compute_content_hash
 from blackreach.error_recovery import ErrorRecovery, ErrorCategory, RecoveryAction
+from blackreach.source_manager import SourceManager, get_source_manager
 
 
 # ============================================================================
@@ -134,6 +135,9 @@ class Agent:
 
         # Error recovery - handles errors gracefully
         self.error_recovery = ErrorRecovery()
+
+        # Source management - handles multi-source failover
+        self.source_manager = get_source_manager()
 
         # Load prompts
         self.prompts = self._load_prompts()
@@ -242,7 +246,7 @@ class Agent:
         self.persistent_memory.add_visit(url, title=title, goal="", success=success)
 
     def _record_download(self, filename: str, url: str = "") -> None:
-        """Record a download to both memory systems."""
+        """Record a download to both memory systems and source manager."""
         domain = urlparse(url).netloc if url else ""
         self.session_memory.add_download(filename, url)
         self.persistent_memory.add_download(
@@ -250,11 +254,19 @@ class Agent:
             url=url,
             source_site=domain
         )
+        # Record success in source manager
+        if domain:
+            self.source_manager.record_success(domain)
+            self.error_recovery.record_success()
 
     def _record_failure(self, url: str, action: str, error: str) -> None:
-        """Record a failure to both memory systems."""
+        """Record a failure to both memory systems and source manager."""
         self.session_memory.add_failure(error)
         self.persistent_memory.add_failure(url, action, error)
+        # Record failure in source manager
+        domain = urlparse(url).netloc if url else ""
+        if domain:
+            self.source_manager.record_failure(domain, error)
 
     def _get_domain(self, url: str = None) -> str:
         """Extract domain from URL or current page."""
@@ -756,37 +768,51 @@ class Agent:
                 if self._consecutive_challenges >= 2:
                     log(f"  [FAILOVER: {base_url} blocked by challenge protection]")
 
-                    # Try to find an alternate source/mirror
+                    # Record failure in source manager
+                    failed_domain = urlparse(base_url).netloc
+                    self.source_manager.record_failure(failed_domain, "challenge_blocked")
+
+                    # Use source manager for intelligent failover
                     goal = self._current_goal
                     if goal:
-                        sources = find_best_sources(goal, max_sources=8)
-                        found_working = False
-                        for source in sources:
-                            # Get all URLs for this source (primary + mirrors)
-                            all_urls = get_all_urls_for_source(source)
-                            # Filter out URLs we've already tried - compare base URLs
-                            available_urls = []
-                            for u in all_urls:
-                                u_parsed = urlparse(u)
-                                u_base = f"{u_parsed.scheme}://{u_parsed.netloc}"
-                                if u_base not in self._failed_urls:
-                                    available_urls.append(u)
-
-                            if not available_urls:
-                                continue  # All URLs for this source have failed
-
-                            # Try the first available URL
-                            next_url = available_urls[0]
-                            log(f"  [SWITCHING TO: {source.name} at {next_url}]")
+                        # Try getting a failover from source manager first
+                        failover = self.source_manager.get_failover(failed_domain, content_type="ebook")
+                        if failover:
+                            source, next_url = failover
+                            log(f"  [SMART FAILOVER: {source.name} at {next_url}]")
                             self.hand.goto(next_url)
                             self._consecutive_challenges = 0
-                            # Re-fetch page state
                             html = self.hand.get_html()
-                            found_working = True
-                            break
+                        else:
+                            # Fall back to original logic
+                            sources = find_best_sources(goal, max_sources=8)
+                            found_working = False
+                            for source in sources:
+                                # Get all URLs for this source (primary + mirrors)
+                                all_urls = get_all_urls_for_source(source)
+                                # Filter out URLs we've already tried - compare base URLs
+                                available_urls = []
+                                for u in all_urls:
+                                    u_parsed = urlparse(u)
+                                    u_base = f"{u_parsed.scheme}://{u_parsed.netloc}"
+                                    if u_base not in self._failed_urls:
+                                        available_urls.append(u)
 
-                        if not found_working:
-                            log(f"  [WARNING: All known sources blocked - continuing with current page]")
+                                if not available_urls:
+                                    continue  # All URLs for this source have failed
+
+                                # Try the first available URL
+                                next_url = available_urls[0]
+                                log(f"  [SWITCHING TO: {source.name} at {next_url}]")
+                                self.hand.goto(next_url)
+                                self._consecutive_challenges = 0
+                                # Re-fetch page state
+                                html = self.hand.get_html()
+                                found_working = True
+                                break
+
+                            if not found_working:
+                                log(f"  [WARNING: All known sources blocked - continuing with current page]")
 
             url = self.hand.get_url()
             title = self.hand.get_title()
