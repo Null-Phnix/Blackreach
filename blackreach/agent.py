@@ -30,6 +30,9 @@ from blackreach.memory import SessionMemory, PersistentMemory
 from blackreach.logging import SessionLogger
 from blackreach.exceptions import InvalidActionArgsError, UnknownActionError, SessionNotFoundError
 from blackreach.knowledge import reason_about_goal, extract_subject, get_working_url, get_all_urls_for_source, find_best_sources
+from blackreach.action_tracker import ActionTracker
+from blackreach.stuck_detector import StuckDetector, RecoveryStrategy, compute_content_hash
+from blackreach.error_recovery import ErrorRecovery, ErrorCategory, RecoveryAction
 
 
 # ============================================================================
@@ -122,6 +125,15 @@ class Agent:
         self.hand: Optional[Hand] = None
         self.eyes = Eyes()
         self.detector = SiteDetector()
+
+        # Action tracking - learns from action outcomes
+        self.action_tracker = ActionTracker(self.persistent_memory)
+
+        # Stuck detection - identifies when agent is in a loop
+        self.stuck_detector = StuckDetector()
+
+        # Error recovery - handles errors gracefully
+        self.error_recovery = ErrorRecovery()
 
         # Load prompts
         self.prompts = self._load_prompts()
@@ -669,6 +681,54 @@ class Agent:
         url = self.hand.get_url()
         title = self.hand.get_title()
 
+        # Update stuck detector with current state
+        content_hash = compute_content_hash(html)
+        download_count = len(self.session_memory.downloaded_files)
+        self.stuck_detector.observe(
+            url=url,
+            content_hash=content_hash,
+            action=self._last_action or "observe",
+            action_target="",
+            download_count=download_count,
+            step_number=step_num
+        )
+
+        # Check if stuck using advanced detector
+        stuck_state = self.stuck_detector.check()
+        if stuck_state.is_stuck:
+            strategy, explanation = self.stuck_detector.suggest_strategy()
+            log(f"  [STUCK DETECTED: {stuck_state.reason.value}]")
+            log(f"  [STRATEGY: {strategy.value} - {explanation}]")
+
+            # Apply recovery strategy
+            if strategy == RecoveryStrategy.GO_BACK:
+                backtrack_url = self.stuck_detector.get_backtrack_url()
+                if backtrack_url:
+                    log(f"  [BACKTRACKING to: {backtrack_url[:50]}]")
+                    self.hand.goto(backtrack_url)
+                    self.stuck_detector.record_recovery_attempt(strategy)
+                    self.stuck_detector.soft_reset()
+                    # Re-fetch page state
+                    html = self.hand.get_html()
+                    url = self.hand.get_url()
+                    title = self.hand.get_title()
+                else:
+                    self.hand.back()
+                    self.stuck_detector.record_recovery_attempt(strategy)
+
+            elif strategy == RecoveryStrategy.TRY_ALTERNATE_SOURCE:
+                # Find alternate source - handled by existing failover logic below
+                self.stuck_detector.record_recovery_attempt(strategy)
+                self._consecutive_challenges = 2  # Trigger failover logic
+
+            elif strategy == RecoveryStrategy.SCROLL_AND_EXPLORE:
+                log(f"  [SCROLLING to find more content]")
+                self.hand.scroll("down", 800)
+                time.sleep(1)
+                self.stuck_detector.record_recovery_attempt(strategy)
+                self.stuck_detector.soft_reset()
+                html = self.hand.get_html()
+
         # Check for challenge/interstitial pages (reuse instance for performance)
         challenge = self.detector.detect_challenge(html)
         if challenge.detected:
@@ -1212,9 +1272,32 @@ You navigate. You click. You download. That's it."""
             return {"done": False, "error": "Parse failed"}
 
         try:
+            # Check if action should be avoided based on history
+            target = args.get("selector", args.get("url", args.get("text", "")))
+            if self.action_tracker.should_avoid(action, target, domain):
+                confidence = self.action_tracker.get_confidence(action, target, domain)
+                log(f"  [AVOIDED: {action} has {confidence:.0%} success rate on {domain}]")
+                alternatives = self.action_tracker.get_alternative_actions(action, target, domain)
+                if alternatives:
+                    log(f"  [ALTERNATIVES: {', '.join(alternatives[:3])}]")
+                return {"done": False, "skipped": True, "reason": "action historically fails"}
+
             # Pass thought to execute_action for text extraction when args are missing
             args["_thought"] = thought
             result = self._execute_action(action, args)
+
+            # Track last action for stuck detector
+            self._last_action = action
+
+            # Record successful action in tracker
+            self.action_tracker.record(
+                action_type=action,
+                target=target,
+                success=True,
+                domain=domain,
+                context=self.hand.get_title() if self.hand else ""
+            )
+
             # Record action in session memory
             self.session_memory.add_action({
                 "action": action,
@@ -1245,6 +1328,28 @@ You navigate. You click. You download. That's it."""
             self._record_failure(url, action, error_msg)
             self._consecutive_failures += 1
 
+            # Use error recovery system to categorize and handle
+            recovery_result = self.error_recovery.handle(e, context={
+                "url": url,
+                "action": action,
+                "domain": domain,
+                "args": args,
+            })
+
+            error_info = self.error_recovery.categorize(e)
+            log(f" ({error_info.category.value}: {error_msg[:40]})")
+
+            # Record failed action in tracker
+            target = args.get("selector", args.get("url", args.get("text", "")))
+            self.action_tracker.record(
+                action_type=action,
+                target=target,
+                success=False,
+                domain=domain,
+                context=self.hand.get_title() if self.hand else "",
+                error=error_msg
+            )
+
             # Track repeated failures of the same action type
             current_action_key = f"{action}:{args.get('selector', '')}:{args.get('text', '')}"
             if current_action_key == self._last_failed_action:
@@ -1263,11 +1368,26 @@ You navigate. You click. You download. That's it."""
                     success=False
                 )
 
-            log(f" (failure {self._consecutive_failures}/{self._max_consecutive_failures})")
             self._emit("on_error", error_msg)
 
             if hasattr(self, '_logger'):
                 self._logger.error(step_num, error_msg, action)
+
+            # Apply recovery strategy suggestions
+            if recovery_result.should_skip:
+                log(f"  [SKIPPING: {recovery_result.message}]")
+                return {"done": False, "skipped": True, "reason": recovery_result.message}
+
+            if recovery_result.new_context.get("switch_source"):
+                log(f"  [RECOVERY: Switching source due to {error_info.category.value}]")
+                self._consecutive_challenges = 2  # Trigger source failover
+
+            if recovery_result.new_context.get("use_alternative"):
+                log(f"  [RECOVERY: Trying alternative approach]")
+                # Get alternative selectors from action tracker
+                alternatives = self.action_tracker.get_alternative_actions(action, target, domain)
+                if alternatives:
+                    log(f"  [ALTERNATIVES: {', '.join(alternatives[:3])}]")
 
             # If repeating the same failed action too many times, add hint for LLM
             if self._repeated_failure_count >= 3:
@@ -1282,7 +1402,7 @@ You navigate. You click. You download. That's it."""
                 log(f"  [TOO MANY FAILURES - trying different approach]")
                 self._consecutive_failures = 0
 
-            return {"done": False, "error": error_msg, "action": action}
+            return {"done": False, "error": error_msg, "action": action, "recoverable": error_info.recoverable}
 
     def _execute_action(self, action: str, args: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a browser action."""

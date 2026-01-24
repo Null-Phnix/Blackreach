@@ -56,7 +56,7 @@ except ValueError:
 console = Console()
 
 # Version
-__version__ = "1.5.0"
+__version__ = "1.8.0"
 
 
 BANNER = """[bold cyan]
@@ -68,7 +68,7 @@ BANNER = """[bold cyan]
 ║   ██████╔╝███████╗██║  ██║╚██████╗██║  ██╗              ║
 ║   ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝              ║
 ║                                                          ║
-║   [white]Autonomous Browser Agent[/white]              [dim]v1.5.0[/dim]   ║
+║   [white]Autonomous Browser Agent[/white]              [dim]v1.8.0[/dim]   ║
 ╚══════════════════════════════════════════════════════════╝[/bold cyan]
 """
 
@@ -565,6 +565,84 @@ def version():
     import platform
     console.print(f"[bold cyan]Blackreach[/bold cyan] v{__version__}")
     console.print(f"[dim]Python {platform.python_version()} on {platform.system()} {platform.release()}[/dim]")
+
+
+@cli.command()
+@click.option('--domain', '-d', help='Filter by domain')
+def actions(domain: str):
+    """Show action tracking statistics."""
+    from blackreach.memory import PersistentMemory
+    from blackreach.action_tracker import ActionTracker
+
+    console.print(BANNER)
+    console.print("[bold]Action Tracking Statistics[/bold]\n")
+
+    memory = PersistentMemory()
+    tracker = ActionTracker(memory)
+
+    stats = tracker.get_stats_summary()
+
+    # Overview
+    overview = Table(title="Overview")
+    overview.add_column("Metric", style="cyan")
+    overview.add_column("Value", justify="right")
+
+    overview.add_row("Total Tracked Actions", str(stats["total_tracked_actions"]))
+    overview.add_row("Total Successes", str(stats["total_successes"]))
+    overview.add_row("Overall Success Rate", f"{stats['overall_success_rate']:.1%}")
+    overview.add_row("Unique Action Patterns", str(stats["unique_action_patterns"]))
+    overview.add_row("Domains Tracked", str(stats["domains_tracked"]))
+
+    console.print(overview)
+    console.print()
+
+    # Problem actions (low success rate)
+    if stats.get("problem_actions"):
+        problems = Table(title="Problem Actions (Low Success Rate)")
+        problems.add_column("Domain", style="cyan")
+        problems.add_column("Action")
+        problems.add_column("Target", max_width=30)
+        problems.add_column("Success", justify="right")
+        problems.add_column("Failures", justify="right")
+
+        for pa in stats["problem_actions"][:10]:
+            problems.add_row(
+                pa["domain"][:20] or "-",
+                pa["action"],
+                pa["target"][:30] if pa["target"] else "-",
+                f"{pa['success_rate']:.0%}",
+                str(pa["failures"])
+            )
+
+        console.print(problems)
+        console.print()
+
+    # Domain-specific stats if requested
+    if domain:
+        domain_stats = tracker.get_domain_summary(domain)
+        if domain_stats:
+            dom_table = Table(title=f"Actions on {domain}")
+            dom_table.add_column("Action Type", style="cyan")
+            dom_table.add_column("Success Rate", justify="right")
+            dom_table.add_column("Total", justify="right")
+
+            for action_type, data in domain_stats.items():
+                dom_table.add_row(
+                    action_type,
+                    f"{data['success_rate']:.0%}",
+                    str(data['total_actions'])
+                )
+
+            console.print(dom_table)
+            console.print()
+
+            # Good selectors for domain
+            good_selectors = tracker.get_good_selectors(domain)
+            if good_selectors:
+                console.print(f"[bold]Best selectors for {domain}:[/bold]")
+                for sel in good_selectors[:5]:
+                    console.print(f"  [green]✓[/green] {sel}")
+                console.print()
 
 
 @cli.command()
