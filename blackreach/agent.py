@@ -311,9 +311,79 @@ class Agent:
         """Extract domain from URL or current page."""
         if url:
             return urlparse(url).netloc
-        if self.hand:
-            return urlparse(self.hand.get_url()).netloc
+        if self.hand and self.hand.is_awake:
+            try:
+                return urlparse(self.hand.get_url()).netloc
+            except Exception:
+                return ""
         return ""
+
+    def _create_browser(self) -> Hand:
+        """
+        Create and configure a new browser instance.
+
+        Returns:
+            Configured Hand instance (not yet started).
+        """
+        return Hand(
+            headless=self.config.headless,
+            stealth_config=StealthConfig(),
+            retry_config=RetryConfig(),
+            download_dir=self.config.download_dir,
+            browser_type=self.config.browser_type
+        )
+
+    def ensure_browser(self) -> bool:
+        """
+        Ensure browser is ready for use, creating/starting it if needed.
+
+        This method is idempotent - safe to call multiple times.
+
+        Returns:
+            True if browser is ready, False if failed to start.
+        """
+        # Create browser instance if it doesn't exist
+        if self.hand is None:
+            self.hand = self._create_browser()
+
+        # Ensure browser is awake and healthy
+        return self.hand.ensure_awake()
+
+    def restart_browser(self, navigate_to: str = None) -> bool:
+        """
+        Restart the browser, optionally navigating to a URL after restart.
+
+        Args:
+            navigate_to: URL to navigate to after restart (optional).
+
+        Returns:
+            True if restart successful.
+        """
+        if self.hand is None:
+            self.hand = self._create_browser()
+
+        # Use Hand's restart method
+        success = self.hand.restart()
+
+        # Navigate to specified URL if provided and restart succeeded
+        if success and navigate_to:
+            try:
+                self.hand.goto(navigate_to)
+            except Exception:
+                pass  # Navigation may fail, that's ok
+
+        return success
+
+    def check_browser_health(self) -> bool:
+        """
+        Check if browser is healthy and responsive.
+
+        Returns:
+            True if browser is healthy, False otherwise.
+        """
+        if self.hand is None:
+            return False
+        return self.hand.is_healthy()
 
     def _is_stuck(self) -> bool:
         """Check if agent is stuck on the same page."""
@@ -429,16 +499,21 @@ class Agent:
         log(f"From step: {self._current_step}")
         log(f"{'='*60}\n")
 
-        # Initialize browser and navigate to saved URL
+        # Start or ensure browser is ready (auto-starts if not initialized)
         log("Starting browser...")
-        self.hand = Hand(
-            headless=self.config.headless,
-            stealth_config=StealthConfig(),
-            retry_config=RetryConfig(),
-            download_dir=self.config.download_dir,
-            browser_type=self.config.browser_type
-        )
-        self.hand.wake()
+        if not self.ensure_browser():
+            log("ERROR: Failed to start browser")
+            return {
+                "goal": self._current_goal,
+                "success": False,
+                "paused": False,
+                "downloads": [],
+                "pages_visited": 0,
+                "steps_taken": 0,
+                "failures": 1,
+                "session_id": self.session_id,
+                "error": "Failed to start browser"
+            }
 
         if state["current_url"]:
             log(f"Navigating to saved URL: {state['current_url']}")
@@ -500,16 +575,21 @@ class Agent:
         # Ensure download dir exists
         self.config.download_dir.mkdir(parents=True, exist_ok=True)
 
-        # Wake up the browser
+        # Start or ensure browser is ready (auto-starts if not initialized)
         log("Starting browser...")
-        self.hand = Hand(
-            headless=self.config.headless,
-            stealth_config=StealthConfig(),
-            retry_config=RetryConfig(),
-            download_dir=self.config.download_dir,
-            browser_type=self.config.browser_type
-        )
-        self.hand.wake()
+        if not self.ensure_browser():
+            log("ERROR: Failed to start browser")
+            return {
+                "goal": goal,
+                "success": False,
+                "paused": False,
+                "downloads": [],
+                "pages_visited": 0,
+                "steps_taken": 0,
+                "failures": 1,
+                "session_id": self.session_id,
+                "error": "Failed to start browser"
+            }
 
         # Use deep reasoning to determine the best starting point
         start_url, reasoning, search_query = self._get_smart_start_url(goal, quiet=quiet)
@@ -721,6 +801,22 @@ class Agent:
         def log(msg: str, end="\n"):
             if not quiet:
                 print(msg, end=end, flush=True)
+
+        # Health check: ensure browser is healthy before proceeding
+        if not self.check_browser_health():
+            log("  [Browser unhealthy - attempting restart...]")
+            if not self.restart_browser():
+                log("  [FATAL: Browser restart failed]")
+                return {"done": False, "error": "Browser restart failed", "fatal": True}
+            log("  [Browser restarted successfully]")
+
+            # Try to navigate back to where we were
+            if self._recent_urls:
+                last_url = self._recent_urls[-1]
+                try:
+                    self.hand.goto(last_url, wait_for_content=False)
+                except Exception:
+                    pass  # Navigation may fail, continue anyway
 
         # Track current URL for stuck detection
         current_url = self.hand.get_url()

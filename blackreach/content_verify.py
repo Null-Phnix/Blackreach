@@ -17,6 +17,7 @@ import hashlib
 import struct
 import zipfile
 import io
+import os
 
 
 class VerificationStatus(Enum):
@@ -440,6 +441,219 @@ class ContentVerifier:
 def compute_hash(data: bytes) -> str:
     """Compute SHA-256 hash of data."""
     return hashlib.sha256(data).hexdigest()
+
+
+def compute_md5(data: bytes) -> str:
+    """Compute MD5 hash of data."""
+    return hashlib.md5(data).hexdigest()
+
+
+def compute_checksums(data: bytes) -> Dict[str, str]:
+    """Compute both MD5 and SHA256 checksums.
+
+    Returns:
+        Dictionary with 'md5' and 'sha256' keys.
+    """
+    return {
+        "md5": hashlib.md5(data).hexdigest(),
+        "sha256": hashlib.sha256(data).hexdigest()
+    }
+
+
+def compute_file_checksums(file_path: Path) -> Dict[str, str]:
+    """Compute checksums from file path efficiently.
+
+    Uses streaming to handle large files without loading into memory.
+
+    Returns:
+        Dictionary with 'md5' and 'sha256' keys.
+    """
+    md5 = hashlib.md5()
+    sha256 = hashlib.sha256()
+
+    with open(file_path, 'rb') as f:
+        while chunk := f.read(8192):
+            md5.update(chunk)
+            sha256.update(chunk)
+
+    return {
+        "md5": md5.hexdigest(),
+        "sha256": sha256.hexdigest()
+    }
+
+
+def verify_checksum(
+    file_path: Path = None,
+    data: bytes = None,
+    expected_md5: str = None,
+    expected_sha256: str = None
+) -> Tuple[bool, str]:
+    """Verify file or data against expected checksum(s).
+
+    Args:
+        file_path: Path to file to verify
+        data: Raw bytes to verify (alternative to file_path)
+        expected_md5: Expected MD5 hash (optional)
+        expected_sha256: Expected SHA256 hash (optional)
+
+    Returns:
+        Tuple of (is_valid, message)
+    """
+    if file_path is not None:
+        checksums = compute_file_checksums(file_path)
+    elif data is not None:
+        checksums = compute_checksums(data)
+    else:
+        return False, "No file or data provided"
+
+    # Check SHA256 first (more secure)
+    if expected_sha256:
+        if checksums["sha256"].lower() != expected_sha256.lower():
+            return False, f"SHA256 mismatch: expected {expected_sha256[:16]}..., got {checksums['sha256'][:16]}..."
+        return True, "SHA256 checksum verified"
+
+    # Check MD5 if no SHA256 provided
+    if expected_md5:
+        if checksums["md5"].lower() != expected_md5.lower():
+            return False, f"MD5 mismatch: expected {expected_md5}, got {checksums['md5']}"
+        return True, "MD5 checksum verified"
+
+    return False, "No expected checksum provided"
+
+
+@dataclass
+class IntegrityResult:
+    """Result of integrity verification."""
+    is_valid: bool
+    md5_hash: str
+    sha256_hash: str
+    verification_status: VerificationStatus
+    message: str
+    file_size: int = 0
+
+
+class IntegrityVerifier:
+    """Comprehensive file integrity verification."""
+
+    def __init__(self):
+        self.content_verifier = ContentVerifier()
+
+    def verify_with_checksum(
+        self,
+        file_path: Path,
+        expected_md5: str = None,
+        expected_sha256: str = None,
+        expected_type: FileType = None
+    ) -> IntegrityResult:
+        """Verify file integrity with optional checksum validation.
+
+        Args:
+            file_path: Path to file
+            expected_md5: Expected MD5 hash (optional)
+            expected_sha256: Expected SHA256 hash (optional)
+            expected_type: Expected file type (optional)
+
+        Returns:
+            IntegrityResult with verification details.
+        """
+        if not file_path.exists():
+            return IntegrityResult(
+                is_valid=False,
+                md5_hash="",
+                sha256_hash="",
+                verification_status=VerificationStatus.INVALID,
+                message="File does not exist"
+            )
+
+        # Compute checksums
+        checksums = compute_file_checksums(file_path)
+        file_size = file_path.stat().st_size
+
+        # Verify checksum if provided
+        if expected_sha256:
+            if checksums["sha256"].lower() != expected_sha256.lower():
+                return IntegrityResult(
+                    is_valid=False,
+                    md5_hash=checksums["md5"],
+                    sha256_hash=checksums["sha256"],
+                    verification_status=VerificationStatus.CORRUPTED,
+                    message="SHA256 checksum mismatch - file may be corrupted or incomplete",
+                    file_size=file_size
+                )
+
+        if expected_md5:
+            if checksums["md5"].lower() != expected_md5.lower():
+                return IntegrityResult(
+                    is_valid=False,
+                    md5_hash=checksums["md5"],
+                    sha256_hash=checksums["sha256"],
+                    verification_status=VerificationStatus.CORRUPTED,
+                    message="MD5 checksum mismatch - file may be corrupted or incomplete",
+                    file_size=file_size
+                )
+
+        # Perform content verification
+        content_result = self.content_verifier.verify_file(file_path, expected_type)
+
+        return IntegrityResult(
+            is_valid=content_result.status == VerificationStatus.VALID,
+            md5_hash=checksums["md5"],
+            sha256_hash=checksums["sha256"],
+            verification_status=content_result.status,
+            message=content_result.message,
+            file_size=file_size
+        )
+
+    def verify_data_with_checksum(
+        self,
+        data: bytes,
+        expected_md5: str = None,
+        expected_sha256: str = None,
+        expected_type: FileType = None,
+        extension: str = ""
+    ) -> IntegrityResult:
+        """Verify data integrity with optional checksum validation."""
+        checksums = compute_checksums(data)
+
+        # Verify checksum if provided
+        if expected_sha256:
+            if checksums["sha256"].lower() != expected_sha256.lower():
+                return IntegrityResult(
+                    is_valid=False,
+                    md5_hash=checksums["md5"],
+                    sha256_hash=checksums["sha256"],
+                    verification_status=VerificationStatus.CORRUPTED,
+                    message="SHA256 checksum mismatch",
+                    file_size=len(data)
+                )
+
+        if expected_md5:
+            if checksums["md5"].lower() != expected_md5.lower():
+                return IntegrityResult(
+                    is_valid=False,
+                    md5_hash=checksums["md5"],
+                    sha256_hash=checksums["sha256"],
+                    verification_status=VerificationStatus.CORRUPTED,
+                    message="MD5 checksum mismatch",
+                    file_size=len(data)
+                )
+
+        # Perform content verification
+        content_result = self.content_verifier.verify_data(data, expected_type, extension)
+
+        return IntegrityResult(
+            is_valid=content_result.status == VerificationStatus.VALID,
+            md5_hash=checksums["md5"],
+            sha256_hash=checksums["sha256"],
+            verification_status=content_result.status,
+            message=content_result.message,
+            file_size=len(data)
+        )
+
+
+def get_integrity_verifier() -> IntegrityVerifier:
+    """Get an integrity verifier instance."""
+    return IntegrityVerifier()
 
 
 def quick_verify(file_path: Path) -> Tuple[bool, str]:

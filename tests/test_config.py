@@ -12,6 +12,10 @@ from blackreach.config import (
     ProviderConfig,
     ConfigManager,
     AVAILABLE_MODELS,
+    ValidationResult,
+    ConfigValidator,
+    validate_config,
+    validate_for_run,
 )
 
 
@@ -461,3 +465,236 @@ class TestConfigManagerSetters:
         model = manager.get_current_model()
 
         assert model == "claude-3"
+
+
+class TestValidationResult:
+    """Tests for ValidationResult class."""
+
+    def test_starts_valid(self):
+        """ValidationResult starts as valid."""
+        result = ValidationResult(valid=True)
+        assert result.valid is True
+        assert bool(result) is True
+
+    def test_add_error_marks_invalid(self):
+        """add_error marks result as invalid."""
+        result = ValidationResult(valid=True)
+
+        result.add_error("Test error")
+
+        assert result.valid is False
+        assert len(result.errors) == 1
+        assert "Test error" in result.errors
+
+    def test_add_warning_keeps_valid(self):
+        """add_warning doesn't change validity."""
+        result = ValidationResult(valid=True)
+
+        result.add_warning("Test warning")
+
+        assert result.valid is True
+        assert len(result.warnings) == 1
+
+    def test_bool_returns_validity(self):
+        """bool() returns validity status."""
+        valid_result = ValidationResult(valid=True)
+        invalid_result = ValidationResult(valid=False)
+
+        assert bool(valid_result) is True
+        assert bool(invalid_result) is False
+
+
+class TestConfigValidator:
+    """Tests for ConfigValidator class."""
+
+    def test_validates_valid_config(self, tmp_path):
+        """validate() passes for valid config."""
+        config = Config()
+        config.default_provider = "ollama"  # No API key needed
+        config.browser_type = "chromium"
+        config.max_steps = 50
+        config.download_dir = str(tmp_path / "downloads")
+
+        validator = ConfigValidator()
+        result = validator.validate(config)
+
+        assert result.valid is True
+
+    def test_validates_invalid_provider(self):
+        """validate() fails for invalid provider."""
+        config = Config()
+        config.default_provider = "invalid_provider"
+
+        validator = ConfigValidator()
+        result = validator.validate(config)
+
+        assert result.valid is False
+        assert any("provider" in e.lower() for e in result.errors)
+
+    def test_validates_invalid_browser(self, tmp_path):
+        """validate() fails for invalid browser type."""
+        config = Config()
+        config.default_provider = "ollama"
+        config.browser_type = "invalid_browser"
+        config.download_dir = str(tmp_path)
+
+        validator = ConfigValidator()
+        result = validator.validate(config)
+
+        assert result.valid is False
+        assert any("browser" in e.lower() for e in result.errors)
+
+    def test_validates_max_steps_range(self, tmp_path):
+        """validate() fails for out-of-range max_steps."""
+        config = Config()
+        config.default_provider = "ollama"
+        config.browser_type = "chromium"
+        config.max_steps = 0  # Too low
+        config.download_dir = str(tmp_path)
+
+        validator = ConfigValidator()
+        result = validator.validate(config)
+
+        assert result.valid is False
+        assert any("max_steps" in e.lower() for e in result.errors)
+
+    def test_warns_missing_api_key_for_cloud_provider(self, tmp_path):
+        """validate() errors when API key missing for cloud provider."""
+        config = Config()
+        config.default_provider = "openai"
+        config.openai.api_key = ""  # Missing
+        config.browser_type = "chromium"
+        config.download_dir = str(tmp_path)
+
+        validator = ConfigValidator()
+        result = validator.validate(config)
+
+        assert result.valid is False
+        assert any("api key" in e.lower() for e in result.errors)
+
+    def test_warns_about_unknown_model(self, tmp_path):
+        """validate() warns for unknown model."""
+        config = Config()
+        config.default_provider = "ollama"
+        config.ollama.default_model = "completely-unknown-model-xyz"
+        config.browser_type = "chromium"
+        config.download_dir = str(tmp_path)
+
+        validator = ConfigValidator()
+        result = validator.validate(config)
+
+        # Should be valid but with warning
+        assert result.valid is True
+        assert any("model" in w.lower() for w in result.warnings)
+
+    def test_warns_about_relative_download_dir(self, tmp_path, monkeypatch):
+        """validate() warns for relative download directory."""
+        # Change to tmp_path so relative path works
+        monkeypatch.chdir(tmp_path)
+
+        config = Config()
+        config.default_provider = "ollama"
+        config.browser_type = "chromium"
+        config.download_dir = "./downloads"  # Relative path
+
+        validator = ConfigValidator()
+        result = validator.validate(config)
+
+        # Should be valid but with warning
+        assert result.valid is True
+        assert any("relative" in w.lower() for w in result.warnings)
+
+
+class TestValidateForRun:
+    """Tests for validate_for_run function using ConfigValidator directly."""
+
+    def test_passes_for_ollama(self, tmp_path):
+        """validate_for_run passes for Ollama (no API key needed)."""
+        config = Config()
+        config.default_provider = "ollama"
+        config.ollama.default_model = "llama3.3"
+        config.max_steps = 30
+        config.download_dir = str(tmp_path)
+
+        validator = ConfigValidator()
+        result = validator.validate_for_run(config)
+
+        assert result.valid is True
+
+    def test_fails_without_api_key_for_openai(self, tmp_path):
+        """validate_for_run fails for OpenAI without API key."""
+        config = Config()
+        config.default_provider = "openai"
+        config.openai.api_key = ""
+        config.openai.default_model = "gpt-4"
+        config.max_steps = 30
+        config.download_dir = str(tmp_path)
+
+        validator = ConfigValidator()
+        result = validator.validate_for_run(config)
+
+        assert result.valid is False
+        assert any("api key" in e.lower() for e in result.errors)
+
+    def test_fails_without_model(self, tmp_path):
+        """validate_for_run fails without model specified."""
+        config = Config()
+        config.default_provider = "ollama"
+        config.ollama.default_model = ""  # No model
+        config.max_steps = 30
+        config.download_dir = str(tmp_path)
+
+        validator = ConfigValidator()
+        result = validator.validate_for_run(config)
+
+        assert result.valid is False
+        assert any("model" in e.lower() for e in result.errors)
+
+    def test_accepts_override_provider(self, tmp_path):
+        """validate_for_run accepts provider override."""
+        config = Config()
+        config.default_provider = "ollama"
+        config.ollama.default_model = "llama3.3"
+        config.anthropic.api_key = "test-key"
+        config.anthropic.default_model = "claude-3"
+        config.max_steps = 30
+        config.download_dir = str(tmp_path)
+
+        validator = ConfigValidator()
+        # Override to use anthropic
+        result = validator.validate_for_run(config, provider="anthropic")
+
+        assert result.valid is True
+
+
+class TestValidateConfig:
+    """Tests for validate_config convenience function."""
+
+    def test_validates_passed_config(self, tmp_path):
+        """validate_config validates passed config object."""
+        config = Config()
+        config.default_provider = "ollama"
+        config.browser_type = "chromium"
+        config.download_dir = str(tmp_path)
+
+        result = validate_config(config)
+
+        assert isinstance(result, ValidationResult)
+        assert result.valid is True
+
+    def test_loads_and_validates_when_no_config(self, tmp_path, monkeypatch):
+        """validate_config loads config when none passed."""
+        config_file = tmp_path / "config.yml"
+        monkeypatch.setattr("blackreach.config.CONFIG_FILE", config_file)
+
+        import yaml
+        data = {
+            "default_provider": "ollama",
+            "agent": {"max_steps": 30, "browser_type": "chromium"}
+        }
+        with open(config_file, 'w') as f:
+            yaml.dump(data, f)
+
+        result = validate_config()
+
+        assert isinstance(result, ValidationResult)

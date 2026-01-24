@@ -5,12 +5,14 @@ Handles:
 - API keys for different providers
 - Default model settings
 - User preferences
+- Configuration validation
 """
 
 import os
+import re
 import yaml
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 from dataclasses import dataclass, field, asdict
 
 from blackreach.exceptions import InvalidConfigError
@@ -263,6 +265,287 @@ class ConfigManager:
     def has_api_key(self, provider: str) -> bool:
         """Check if provider has API key configured."""
         return bool(self.get_api_key(provider))
+
+
+# =============================================================================
+# Configuration Validation
+# =============================================================================
+
+@dataclass
+class ValidationResult:
+    """Result of configuration validation."""
+    valid: bool
+    errors: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+
+    def add_error(self, message: str) -> None:
+        """Add a validation error."""
+        self.errors.append(message)
+        self.valid = False
+
+    def add_warning(self, message: str) -> None:
+        """Add a validation warning."""
+        self.warnings.append(message)
+
+    def __bool__(self) -> bool:
+        """Return True if validation passed."""
+        return self.valid
+
+
+class ConfigValidator:
+    """
+    Validates Blackreach configuration.
+
+    Checks:
+    - Required fields are present
+    - Values are within valid ranges
+    - API keys have correct format
+    - Paths are valid
+    - Provider/model combinations are valid
+    """
+
+    # API key patterns for basic format validation
+    API_KEY_PATTERNS = {
+        "openai": re.compile(r"^sk-[a-zA-Z0-9_-]{20,}$"),
+        "anthropic": re.compile(r"^sk-ant-[a-zA-Z0-9_-]{20,}$"),
+        "google": re.compile(r"^AIza[a-zA-Z0-9_-]{30,}$"),
+        "xai": re.compile(r"^xai-[a-zA-Z0-9_-]{20,}$"),
+    }
+
+    # Valid ranges for numeric settings
+    VALID_RANGES = {
+        "max_steps": (1, 1000),
+        "timeout": (1, 600),
+    }
+
+    def __init__(self):
+        pass
+
+    def validate(self, config: Config) -> ValidationResult:
+        """
+        Perform full configuration validation.
+
+        Args:
+            config: Config object to validate
+
+        Returns:
+            ValidationResult with errors and warnings
+        """
+        result = ValidationResult(valid=True)
+
+        # Validate provider
+        self._validate_provider(config, result)
+
+        # Validate agent settings
+        self._validate_agent_settings(config, result)
+
+        # Validate paths
+        self._validate_paths(config, result)
+
+        # Validate API keys for active provider
+        self._validate_api_keys(config, result)
+
+        # Validate model selection
+        self._validate_model(config, result)
+
+        return result
+
+    def _validate_provider(self, config: Config, result: ValidationResult) -> None:
+        """Validate provider configuration."""
+        if not config.default_provider:
+            result.add_error("default_provider is required")
+            return
+
+        if config.default_provider not in AVAILABLE_MODELS:
+            result.add_error(
+                f"Invalid provider '{config.default_provider}'. "
+                f"Valid options: {', '.join(AVAILABLE_MODELS.keys())}"
+            )
+
+    def _validate_agent_settings(self, config: Config, result: ValidationResult) -> None:
+        """Validate agent-related settings."""
+        # max_steps
+        min_steps, max_steps = self.VALID_RANGES["max_steps"]
+        if not (min_steps <= config.max_steps <= max_steps):
+            result.add_error(
+                f"max_steps must be between {min_steps} and {max_steps}, "
+                f"got {config.max_steps}"
+            )
+
+        # browser_type
+        valid_browsers = ["chromium", "firefox", "webkit"]
+        if config.browser_type not in valid_browsers:
+            result.add_error(
+                f"Invalid browser_type '{config.browser_type}'. "
+                f"Valid options: {', '.join(valid_browsers)}"
+            )
+
+        # headless (must be bool)
+        if not isinstance(config.headless, bool):
+            result.add_warning(
+                f"headless should be boolean, got {type(config.headless).__name__}"
+            )
+
+    def _validate_paths(self, config: Config, result: ValidationResult) -> None:
+        """Validate path configurations."""
+        download_dir = Path(config.download_dir)
+
+        # Check if download_dir is absolute or relative
+        if not download_dir.is_absolute():
+            # Relative paths are allowed but warn
+            result.add_warning(
+                f"download_dir '{config.download_dir}' is relative. "
+                "Consider using an absolute path for clarity."
+            )
+
+        # Try to create download directory if it doesn't exist
+        try:
+            download_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            result.add_error(
+                f"Cannot create download directory '{config.download_dir}': Permission denied"
+            )
+        except Exception as e:
+            result.add_error(
+                f"Cannot create download directory '{config.download_dir}': {e}"
+            )
+
+    def _validate_api_keys(self, config: Config, result: ValidationResult) -> None:
+        """Validate API keys for cloud providers."""
+        provider = config.default_provider
+
+        # Ollama doesn't need an API key
+        if provider == "ollama":
+            return
+
+        provider_config = getattr(config, provider, None)
+        if not provider_config:
+            result.add_error(f"Missing configuration for provider '{provider}'")
+            return
+
+        api_key = provider_config.api_key
+
+        # Check if API key is set
+        if not api_key:
+            result.add_error(
+                f"API key required for provider '{provider}'. "
+                f"Set it with 'blackreach config' or environment variable."
+            )
+            return
+
+        # Check API key format (basic validation)
+        pattern = self.API_KEY_PATTERNS.get(provider)
+        if pattern and not pattern.match(api_key):
+            result.add_warning(
+                f"API key for '{provider}' doesn't match expected format. "
+                "It may still be valid, but please verify."
+            )
+
+    def _validate_model(self, config: Config, result: ValidationResult) -> None:
+        """Validate model selection."""
+        provider = config.default_provider
+        if provider not in AVAILABLE_MODELS:
+            return  # Already reported in provider validation
+
+        provider_config = getattr(config, provider, None)
+        if not provider_config:
+            return
+
+        model = provider_config.default_model
+        if not model:
+            result.add_warning(
+                f"No default model set for '{provider}'. "
+                f"Available models: {', '.join(AVAILABLE_MODELS[provider][:3])}..."
+            )
+            return
+
+        # Check if model is in known models (warning only, could be custom)
+        known_models = AVAILABLE_MODELS.get(provider, [])
+        if model not in known_models:
+            result.add_warning(
+                f"Model '{model}' not in known models for '{provider}'. "
+                f"It may be a custom model or a typo."
+            )
+
+    def validate_for_run(self, config: Config, provider: str = None, model: str = None) -> ValidationResult:
+        """
+        Validate configuration for an actual agent run.
+
+        This is stricter than general validation - ensures everything
+        needed for a run is properly configured.
+
+        Args:
+            config: Config object
+            provider: Override provider to use
+            model: Override model to use
+
+        Returns:
+            ValidationResult
+        """
+        result = ValidationResult(valid=True)
+
+        use_provider = provider or config.default_provider
+        provider_config = getattr(config, use_provider, None)
+        use_model = model or (provider_config.default_model if provider_config else None)
+
+        # Must have a valid provider
+        if use_provider not in AVAILABLE_MODELS:
+            result.add_error(f"Invalid provider: {use_provider}")
+            return result
+
+        # Must have API key for cloud providers
+        if use_provider != "ollama":
+            if not provider_config or not provider_config.api_key:
+                result.add_error(
+                    f"No API key configured for {use_provider}. "
+                    f"Run 'blackreach config' to set it up."
+                )
+
+        # Must have a model
+        if not use_model:
+            result.add_error(
+                f"No model specified for {use_provider}. "
+                f"Run 'blackreach config' to set a default model."
+            )
+
+        # Validate max_steps
+        if config.max_steps < 1:
+            result.add_error("max_steps must be at least 1")
+
+        return result
+
+
+def validate_config(config: Config = None) -> ValidationResult:
+    """
+    Convenience function to validate configuration.
+
+    Args:
+        config: Config to validate, or None to load and validate current config
+
+    Returns:
+        ValidationResult with errors and warnings
+    """
+    if config is None:
+        config = config_manager.load()
+
+    validator = ConfigValidator()
+    return validator.validate(config)
+
+
+def validate_for_run(provider: str = None, model: str = None) -> ValidationResult:
+    """
+    Validate configuration is ready for an agent run.
+
+    Args:
+        provider: Override provider
+        model: Override model
+
+    Returns:
+        ValidationResult
+    """
+    config = config_manager.load()
+    validator = ConfigValidator()
+    return validator.validate_for_run(config, provider, model)
 
 
 # Global config manager instance

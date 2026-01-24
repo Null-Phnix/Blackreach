@@ -24,8 +24,9 @@ import signal
 import atexit
 import time
 
-from blackreach.config import config_manager, AVAILABLE_MODELS, CONFIG_FILE
+from blackreach.config import config_manager, AVAILABLE_MODELS, CONFIG_FILE, validate_config, validate_for_run
 from blackreach.exceptions import SessionNotFoundError
+from blackreach.logging import LogLevel
 
 # Global reference to active agent for cleanup
 _active_agent = None
@@ -229,7 +230,9 @@ def cli(ctx):
 @click.option('--browser', '-b', type=click.Choice(['chromium', 'firefox', 'webkit']), help='Browser to use (helps bypass DDoS protection)')
 @click.option('--steps', '-s', type=int, help='Maximum steps')
 @click.option('--resume', '-r', type=int, help='Resume a paused session by ID')
-def run(goal: str, provider: str, model: str, headless: bool, browser: str, steps: int, resume: int):
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose logging')
+@click.option('--validate', 'do_validate', is_flag=True, help='Validate config before running')
+def run(goal: str, provider: str, model: str, headless: bool, browser: str, steps: int, resume: int, verbose: bool, do_validate: bool):
     """Run the agent with a goal.
 
     Example: blackreach run "go to wikipedia and search for AI"
@@ -247,6 +250,19 @@ def run(goal: str, provider: str, model: str, headless: bool, browser: str, step
     headless = headless if headless is not None else config.headless
     browser_type = browser or config.browser_type
     max_steps = steps or config.max_steps
+
+    # Validate configuration if requested
+    if do_validate:
+        validation = validate_for_run(provider, model)
+        if not validation.valid:
+            console.print("[bold red]Configuration validation failed:[/bold red]")
+            for error in validation.errors:
+                console.print(f"  [red]X[/red] {error}")
+            sys.exit(1)
+        if validation.warnings:
+            console.print("[yellow]Warnings:[/yellow]")
+            for warning in validation.warnings:
+                console.print(f"  [yellow]![/yellow] {warning}")
 
     # Check API key for non-local providers
     if provider != "ollama" and not config_manager.has_api_key(provider):
@@ -360,9 +376,9 @@ def _show_results(result: dict):
         console.print(f"\n[dim]Resume with: blackreach run --resume {result.get('session_id')}[/dim]")
 
 
-@cli.command()
-def sessions():
-    """List resumable sessions."""
+@cli.command(name="resumable")
+def list_resumable():
+    """List sessions that can be resumed."""
     from blackreach.memory import PersistentMemory
 
     try:
@@ -375,6 +391,7 @@ def sessions():
 
     if not resumable:
         console.print("[dim]No resumable sessions found[/dim]")
+        console.print("[dim]Sessions can be paused with Ctrl+C during execution[/dim]")
         return
 
     table = Table(title="Resumable Sessions")
@@ -565,6 +582,132 @@ def version():
     import platform
     console.print(f"[bold cyan]Blackreach[/bold cyan] v{__version__}")
     console.print(f"[dim]Python {platform.python_version()} on {platform.system()} {platform.release()}[/dim]")
+
+
+@cli.command()
+@click.option('--fix', is_flag=True, help='Attempt to fix issues automatically')
+def validate(fix: bool):
+    """Validate configuration and show any issues."""
+    console.print(BANNER)
+    console.print("[bold]Configuration Validation[/bold]\n")
+
+    config = config_manager.load()
+    result = validate_config(config)
+
+    # Show current config summary
+    table = Table(title="Current Configuration")
+    table.add_column("Setting", style="cyan")
+    table.add_column("Value")
+    table.add_column("Status")
+
+    # Provider
+    provider_ok = config.default_provider in AVAILABLE_MODELS
+    table.add_row(
+        "Provider",
+        config.default_provider,
+        "[green]OK[/green]" if provider_ok else "[red]Invalid[/red]"
+    )
+
+    # Model
+    model = getattr(config, config.default_provider).default_model if hasattr(config, config.default_provider) else ""
+    known_models = AVAILABLE_MODELS.get(config.default_provider, [])
+    model_ok = model in known_models or model == ""
+    table.add_row(
+        "Model",
+        model or "[dim]not set[/dim]",
+        "[green]OK[/green]" if model_ok else "[yellow]Custom[/yellow]"
+    )
+
+    # API Key (for cloud providers)
+    if config.default_provider != "ollama":
+        has_key = config_manager.has_api_key(config.default_provider)
+        table.add_row(
+            "API Key",
+            "[green]Set[/green]" if has_key else "[red]Missing[/red]",
+            "[green]OK[/green]" if has_key else "[red]Required[/red]"
+        )
+
+    # Browser
+    valid_browsers = ["chromium", "firefox", "webkit"]
+    browser_ok = config.browser_type in valid_browsers
+    table.add_row(
+        "Browser",
+        config.browser_type,
+        "[green]OK[/green]" if browser_ok else "[red]Invalid[/red]"
+    )
+
+    # Max Steps
+    steps_ok = 1 <= config.max_steps <= 1000
+    table.add_row(
+        "Max Steps",
+        str(config.max_steps),
+        "[green]OK[/green]" if steps_ok else "[red]Out of range[/red]"
+    )
+
+    # Download Dir
+    from pathlib import Path
+    download_path = Path(config.download_dir)
+    try:
+        download_path.mkdir(parents=True, exist_ok=True)
+        dir_ok = True
+    except Exception:
+        dir_ok = False
+    table.add_row(
+        "Download Dir",
+        config.download_dir,
+        "[green]OK[/green]" if dir_ok else "[red]Cannot create[/red]"
+    )
+
+    console.print(table)
+    console.print()
+
+    # Show validation results
+    if result.errors:
+        console.print("[bold red]Errors:[/bold red]")
+        for error in result.errors:
+            console.print(f"  [red]X[/red] {error}")
+        console.print()
+
+    if result.warnings:
+        console.print("[bold yellow]Warnings:[/bold yellow]")
+        for warning in result.warnings:
+            console.print(f"  [yellow]![/yellow] {warning}")
+        console.print()
+
+    if result.valid:
+        if result.warnings:
+            console.print("[green]Configuration is valid (with warnings).[/green]")
+        else:
+            console.print("[bold green]Configuration is valid![/bold green]")
+    else:
+        console.print("[red]Configuration has errors. Run 'blackreach config' to fix.[/red]")
+
+    # Attempt auto-fix if requested
+    if fix and not result.valid:
+        console.print("\n[bold]Attempting to fix issues...[/bold]")
+        fixed_count = 0
+
+        # Fix invalid browser
+        if config.browser_type not in valid_browsers:
+            config.browser_type = "chromium"
+            console.print("  [green]Fixed:[/green] Set browser to chromium")
+            fixed_count += 1
+
+        # Fix invalid max_steps
+        if config.max_steps < 1:
+            config.max_steps = 30
+            console.print("  [green]Fixed:[/green] Set max_steps to 30")
+            fixed_count += 1
+        elif config.max_steps > 1000:
+            config.max_steps = 100
+            console.print("  [green]Fixed:[/green] Set max_steps to 100")
+            fixed_count += 1
+
+        if fixed_count > 0:
+            config_manager.save()
+            console.print(f"\n[green]Fixed {fixed_count} issue(s). Configuration saved.[/green]")
+        else:
+            console.print("\n[dim]No automatic fixes available for remaining issues.[/dim]")
 
 
 @cli.command()

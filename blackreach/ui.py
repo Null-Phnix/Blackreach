@@ -7,12 +7,15 @@ Provides:
 - Status bar
 - Rich formatting
 - Keyboard handling
+- Download progress bars
+- Better error display
 """
 
 import time
-from typing import Optional
+from typing import Optional, Dict, Any, List
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 
 from rich.console import Console
 from rich.live import Live
@@ -23,6 +26,19 @@ from rich.table import Table
 from rich.status import Status
 from rich.rule import Rule
 from rich.style import Style
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    DownloadColumn,
+    TransferSpeedColumn,
+    TimeRemainingColumn,
+    TaskProgressColumn,
+)
+from rich.traceback import Traceback
+from rich.syntax import Syntax
+from rich.markdown import Markdown
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
@@ -39,7 +55,6 @@ from prompt_toolkit.shortcuts import radiolist_dialog
 console = Console()
 
 # Config directory for history
-from pathlib import Path
 HISTORY_FILE = Path.home() / ".blackreach" / "history"
 
 
@@ -698,3 +713,445 @@ def show_slash_menu() -> Optional[str]:
     ]
 
     return show_simple_menu("Commands", options)
+
+
+# ============================================================================
+# Download Progress Display
+# ============================================================================
+
+class DownloadProgressUI:
+    """
+    Enhanced download progress display with rich progress bars.
+
+    Shows:
+    - Real-time download speed
+    - Estimated time remaining
+    - File size progress
+    - Multiple concurrent downloads
+    """
+
+    def __init__(self, console: Console = None):
+        self.console = console or Console()
+        self._progress: Optional[Progress] = None
+        self._downloads: Dict[str, Any] = {}
+
+    def create_progress(self) -> Progress:
+        """Create a configured Progress instance for downloads."""
+        return Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.fields[filename]}", justify="left"),
+            BarColumn(bar_width=30, complete_style="cyan", finished_style="green"),
+            TaskProgressColumn(),
+            DownloadColumn(),
+            TransferSpeedColumn(),
+            TimeRemainingColumn(),
+            console=self.console,
+            expand=False,
+        )
+
+    def start(self) -> None:
+        """Start the progress display."""
+        if self._progress is None:
+            self._progress = self.create_progress()
+            self._progress.start()
+
+    def stop(self) -> None:
+        """Stop the progress display."""
+        if self._progress:
+            self._progress.stop()
+            self._progress = None
+
+    def add_download(self, url: str, filename: str, total: int = None) -> int:
+        """Add a download to track and return task ID."""
+        if self._progress is None:
+            self.start()
+
+        display_name = filename[:35] + "..." if len(filename) > 35 else filename
+        task_id = self._progress.add_task(
+            f"[cyan]{display_name}",
+            total=total,
+            filename=display_name,
+        )
+        self._downloads[url] = {
+            "task_id": task_id,
+            "filename": filename,
+            "total": total,
+        }
+        return task_id
+
+    def update(self, url: str, completed: int, total: int = None) -> None:
+        """Update download progress."""
+        if url not in self._downloads or self._progress is None:
+            return
+
+        info = self._downloads[url]
+        task_id = info["task_id"]
+
+        update_kwargs = {"completed": completed}
+        if total is not None:
+            update_kwargs["total"] = total
+            info["total"] = total
+
+        self._progress.update(task_id, **update_kwargs)
+
+    def complete(self, url: str, success: bool = True, error: str = None) -> None:
+        """Mark a download as complete."""
+        if url not in self._downloads or self._progress is None:
+            return
+
+        info = self._downloads[url]
+        task_id = info["task_id"]
+
+        if success:
+            # Ensure progress shows 100%
+            total = info.get("total", 100)
+            self._progress.update(task_id, completed=total, total=total)
+        else:
+            # Show failure
+            display_name = info["filename"][:30]
+            self._progress.update(
+                task_id,
+                description=f"[red]FAILED: {display_name}",
+            )
+
+    @contextmanager
+    def track_download(self, url: str, filename: str, total: int = None):
+        """
+        Context manager for tracking a single download.
+
+        Usage:
+            with progress_ui.track_download(url, filename) as update:
+                # ... download logic ...
+                update(bytes_downloaded, total_bytes)
+        """
+        task_id = self.add_download(url, filename, total)
+
+        def update_func(completed: int, new_total: int = None):
+            self.update(url, completed, new_total)
+
+        try:
+            yield update_func
+            self.complete(url, success=True)
+        except Exception as e:
+            self.complete(url, success=False, error=str(e))
+            raise
+
+
+class MultiDownloadProgress:
+    """
+    Display progress for multiple downloads in a table format.
+
+    Good for showing a summary of many downloads.
+    """
+
+    def __init__(self, console: Console = None):
+        self.console = console or Console()
+        self._downloads: List[Dict] = []
+        self._live: Optional[Live] = None
+
+    def add(self, filename: str, url: str = "", status: str = "pending") -> int:
+        """Add a download entry and return its index."""
+        entry = {
+            "filename": filename,
+            "url": url,
+            "status": status,
+            "progress": 0,
+            "total": 0,
+            "speed": "",
+            "eta": "",
+        }
+        self._downloads.append(entry)
+        return len(self._downloads) - 1
+
+    def update(
+        self,
+        index: int,
+        status: str = None,
+        progress: int = None,
+        total: int = None,
+        speed: str = None,
+        eta: str = None,
+    ) -> None:
+        """Update a download entry."""
+        if index >= len(self._downloads):
+            return
+
+        entry = self._downloads[index]
+        if status is not None:
+            entry["status"] = status
+        if progress is not None:
+            entry["progress"] = progress
+        if total is not None:
+            entry["total"] = total
+        if speed is not None:
+            entry["speed"] = speed
+        if eta is not None:
+            entry["eta"] = eta
+
+        self._refresh()
+
+    def _create_table(self) -> Table:
+        """Create the progress table."""
+        table = Table(title="Downloads", expand=False)
+        table.add_column("File", style="cyan", max_width=35)
+        table.add_column("Status", justify="center")
+        table.add_column("Progress", justify="right")
+        table.add_column("Speed", justify="right")
+        table.add_column("ETA", justify="right")
+
+        for entry in self._downloads:
+            # Status styling
+            status = entry["status"]
+            if status == "complete":
+                status_display = "[green]Done[/green]"
+            elif status == "downloading":
+                status_display = "[cyan]...[/cyan]"
+            elif status == "failed":
+                status_display = "[red]Failed[/red]"
+            else:
+                status_display = f"[dim]{status}[/dim]"
+
+            # Progress
+            if entry["total"] > 0:
+                pct = int((entry["progress"] / entry["total"]) * 100)
+                progress_display = f"{pct}%"
+            else:
+                progress_display = "-"
+
+            table.add_row(
+                entry["filename"][:35],
+                status_display,
+                progress_display,
+                entry["speed"] or "-",
+                entry["eta"] or "-",
+            )
+
+        return table
+
+    def _refresh(self) -> None:
+        """Refresh the live display."""
+        if self._live:
+            self._live.update(self._create_table())
+
+    def start(self) -> None:
+        """Start the live display."""
+        self._live = Live(self._create_table(), console=self.console, refresh_per_second=4)
+        self._live.start()
+
+    def stop(self) -> None:
+        """Stop the live display."""
+        if self._live:
+            self._live.stop()
+            self._live = None
+
+
+# ============================================================================
+# Error Display
+# ============================================================================
+
+def print_error_detail(
+    error: Exception,
+    title: str = "Error",
+    show_traceback: bool = False,
+    suggestion: str = None,
+) -> None:
+    """
+    Display a detailed error message with optional traceback.
+
+    Args:
+        error: The exception that occurred
+        title: Title for the error panel
+        show_traceback: Whether to show full traceback
+        suggestion: Optional suggestion for fixing the error
+    """
+    # Build error content
+    lines = []
+    lines.append(f"[bold red]{type(error).__name__}[/bold red]")
+    lines.append(f"[red]{str(error)}[/red]")
+
+    if suggestion:
+        lines.append("")
+        lines.append(f"[yellow]Suggestion:[/yellow] {suggestion}")
+
+    content = "\n".join(lines)
+
+    console.print(Panel(
+        content,
+        title=f"[bold red]{title}[/bold red]",
+        border_style="red",
+        padding=(1, 2),
+    ))
+
+    if show_traceback:
+        console.print(Traceback.from_exception(type(error), error, error.__traceback__))
+
+
+def print_validation_result(result: "ValidationResult") -> None:
+    """
+    Display configuration validation results.
+
+    Args:
+        result: ValidationResult from config validation
+    """
+    from blackreach.config import ValidationResult  # Import here to avoid circular
+
+    if result.valid and not result.warnings:
+        console.print("[green]Configuration is valid.[/green]")
+        return
+
+    if result.errors:
+        console.print(Panel(
+            "\n".join([f"[red]X[/red] {e}" for e in result.errors]),
+            title="[bold red]Configuration Errors[/bold red]",
+            border_style="red",
+        ))
+
+    if result.warnings:
+        console.print(Panel(
+            "\n".join([f"[yellow]![/yellow] {w}" for w in result.warnings]),
+            title="[bold yellow]Warnings[/bold yellow]",
+            border_style="yellow",
+        ))
+
+    if result.valid:
+        console.print("[green]Configuration is valid (with warnings).[/green]")
+    else:
+        console.print("[red]Configuration has errors. Please fix them before running.[/red]")
+
+
+# ============================================================================
+# Session Display
+# ============================================================================
+
+def print_session_info(
+    session_id: int,
+    goal: str,
+    step: int,
+    max_steps: int,
+    status: str = "running",
+    downloads: int = 0,
+) -> None:
+    """Display session information panel."""
+    status_colors = {
+        "running": "cyan",
+        "paused": "yellow",
+        "completed": "green",
+        "failed": "red",
+    }
+    color = status_colors.get(status, "white")
+
+    content = f"""[bold]Session:[/bold] #{session_id}
+[bold]Goal:[/bold] {goal[:50]}{"..." if len(goal) > 50 else ""}
+[bold]Progress:[/bold] Step {step}/{max_steps}
+[bold]Status:[/bold] [{color}]{status.upper()}[/{color}]
+[bold]Downloads:[/bold] {downloads}"""
+
+    console.print(Panel(
+        content,
+        title="[bold cyan]Session Info[/bold cyan]",
+        border_style="cyan",
+    ))
+
+
+def print_resume_options(sessions: List[Dict]) -> None:
+    """Display resumable sessions in a nice table."""
+    if not sessions:
+        console.print("[dim]No resumable sessions found.[/dim]")
+        return
+
+    table = Table(title="Resumable Sessions", expand=False)
+    table.add_column("ID", style="cyan", justify="right")
+    table.add_column("Goal", max_width=40)
+    table.add_column("Step", justify="right")
+    table.add_column("Status")
+    table.add_column("Saved", style="dim")
+
+    for session in sessions:
+        goal = session.get("goal", "")
+        if len(goal) > 40:
+            goal = goal[:37] + "..."
+
+        status = session.get("status", "paused")
+        status_display = f"[yellow]{status}[/yellow]" if status == "paused" else status
+
+        saved_at = session.get("saved_at", "")[:16]  # Trim to date+time
+
+        table.add_row(
+            str(session.get("session_id", "?")),
+            goal,
+            str(session.get("current_step", 0)),
+            status_display,
+            saved_at,
+        )
+
+    console.print(table)
+    console.print("\n[dim]Resume with: /resume <ID>[/dim]")
+
+
+# ============================================================================
+# Log Display
+# ============================================================================
+
+def print_log_entries(
+    entries: List[Dict],
+    title: str = "Log Entries",
+    max_entries: int = 20,
+) -> None:
+    """
+    Display log entries in a formatted table.
+
+    Args:
+        entries: List of log entry dicts
+        title: Table title
+        max_entries: Maximum entries to display
+    """
+    if not entries:
+        console.print("[dim]No log entries found.[/dim]")
+        return
+
+    table = Table(title=title, expand=False)
+    table.add_column("Time", style="dim", width=8)
+    table.add_column("Level", width=8)
+    table.add_column("Event", style="cyan")
+    table.add_column("Details", max_width=40)
+
+    level_styles = {
+        "DEBUG": "dim",
+        "INFO": "cyan",
+        "WARNING": "yellow",
+        "ERROR": "red",
+        "CRITICAL": "red bold",
+    }
+
+    for entry in entries[:max_entries]:
+        # Extract time (HH:MM:SS)
+        timestamp = entry.get("timestamp", "")
+        time_str = timestamp[11:19] if len(timestamp) > 19 else timestamp[:8]
+
+        # Level with styling
+        level = entry.get("level", "INFO")
+        style = level_styles.get(level, "")
+        level_display = f"[{style}]{level}[/{style}]"
+
+        # Event
+        event = entry.get("event", "")
+
+        # Details from data
+        data = entry.get("data", {})
+        if data:
+            # Format key details
+            details_parts = []
+            for k in ["action", "error", "filename", "url"]:
+                if k in data:
+                    v = str(data[k])[:25]
+                    details_parts.append(f"{k}={v}")
+            details = ", ".join(details_parts[:2])
+        else:
+            details = ""
+
+        table.add_row(time_str, level_display, event, details)
+
+    console.print(table)
+
+    if len(entries) > max_entries:
+        console.print(f"[dim]... and {len(entries) - max_entries} more entries[/dim]")

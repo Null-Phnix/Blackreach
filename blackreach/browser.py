@@ -6,8 +6,11 @@ Now with stealth and resilience features.
 """
 
 from playwright.sync_api import sync_playwright, Browser, Page, Playwright, BrowserContext, Route, Download
-from typing import Optional, List, Union, Callable
+from typing import Optional, List, Union, Callable, Dict, Any
 from pathlib import Path
+from dataclasses import dataclass
+from enum import Enum
+from urllib.parse import urlparse
 import time
 import random
 import hashlib
@@ -25,6 +28,236 @@ from blackreach.exceptions import (
     UnknownActionError,
 )
 from blackreach.detection import SiteDetector
+
+
+class ProxyType(Enum):
+    """Supported proxy types."""
+    HTTP = "http"
+    HTTPS = "https"
+    SOCKS5 = "socks5"
+    SOCKS4 = "socks4"
+
+
+@dataclass
+class ProxyConfig:
+    """Configuration for proxy connection.
+
+    Supports HTTP, HTTPS, SOCKS4, and SOCKS5 proxies.
+
+    Examples:
+        # HTTP proxy
+        ProxyConfig(host="proxy.example.com", port=8080)
+
+        # SOCKS5 proxy with auth
+        ProxyConfig(
+            host="socks.example.com",
+            port=1080,
+            proxy_type=ProxyType.SOCKS5,
+            username="user",
+            password="pass"
+        )
+
+        # From URL string
+        ProxyConfig.from_url("socks5://user:pass@proxy.example.com:1080")
+    """
+    host: str
+    port: int
+    proxy_type: ProxyType = ProxyType.HTTP
+    username: Optional[str] = None
+    password: Optional[str] = None
+    bypass: Optional[List[str]] = None  # Domains to bypass proxy
+
+    def to_playwright_proxy(self) -> Dict[str, Any]:
+        """Convert to Playwright proxy configuration format."""
+        # Build proxy URL
+        scheme = self.proxy_type.value
+        if scheme == "https":
+            scheme = "http"  # Playwright uses http for HTTPS proxies
+
+        if self.username and self.password:
+            server = f"{scheme}://{self.host}:{self.port}"
+            return {
+                "server": server,
+                "username": self.username,
+                "password": self.password,
+                "bypass": ",".join(self.bypass) if self.bypass else None
+            }
+        else:
+            server = f"{scheme}://{self.host}:{self.port}"
+            result = {"server": server}
+            if self.bypass:
+                result["bypass"] = ",".join(self.bypass)
+            return result
+
+    @classmethod
+    def from_url(cls, url: str) -> "ProxyConfig":
+        """
+        Create ProxyConfig from a proxy URL string.
+
+        Supported formats:
+            - http://host:port
+            - http://user:pass@host:port
+            - socks5://host:port
+            - socks5://user:pass@host:port
+        """
+        parsed = urlparse(url)
+
+        # Determine proxy type
+        scheme = parsed.scheme.lower()
+        proxy_type_map = {
+            "http": ProxyType.HTTP,
+            "https": ProxyType.HTTPS,
+            "socks5": ProxyType.SOCKS5,
+            "socks4": ProxyType.SOCKS4,
+            "socks": ProxyType.SOCKS5,  # Default socks to socks5
+        }
+        proxy_type = proxy_type_map.get(scheme, ProxyType.HTTP)
+
+        # Extract host and port
+        host = parsed.hostname or "localhost"
+        port = parsed.port or (1080 if "socks" in scheme else 8080)
+
+        return cls(
+            host=host,
+            port=port,
+            proxy_type=proxy_type,
+            username=parsed.username,
+            password=parsed.password
+        )
+
+    def __str__(self) -> str:
+        """String representation (without password)."""
+        auth = f"{self.username}:***@" if self.username else ""
+        return f"{self.proxy_type.value}://{auth}{self.host}:{self.port}"
+
+
+class ProxyRotator:
+    """
+    Manages a pool of proxies with rotation and health tracking.
+
+    Features:
+    - Round-robin rotation
+    - Health checking and automatic removal of bad proxies
+    - Sticky sessions (same proxy for a domain)
+    - Weighted selection based on performance
+    """
+
+    def __init__(self, proxies: Optional[List[Union[str, ProxyConfig]]] = None):
+        self._proxies: List[ProxyConfig] = []
+        self._current_index = 0
+        self._health: Dict[str, Dict[str, Any]] = {}  # proxy_str -> health info
+        self._domain_sticky: Dict[str, str] = {}  # domain -> proxy_str
+
+        if proxies:
+            for proxy in proxies:
+                self.add_proxy(proxy)
+
+    def add_proxy(self, proxy: Union[str, ProxyConfig]):
+        """Add a proxy to the pool."""
+        if isinstance(proxy, str):
+            proxy = ProxyConfig.from_url(proxy)
+        self._proxies.append(proxy)
+        self._health[str(proxy)] = {
+            "successes": 0,
+            "failures": 0,
+            "last_used": None,
+            "avg_response_time": 0,
+            "enabled": True
+        }
+
+    def remove_proxy(self, proxy: Union[str, ProxyConfig]):
+        """Remove a proxy from the pool."""
+        proxy_str = str(proxy) if isinstance(proxy, ProxyConfig) else proxy
+        self._proxies = [p for p in self._proxies if str(p) != proxy_str]
+        self._health.pop(proxy_str, None)
+
+    def get_next(self, domain: Optional[str] = None) -> Optional[ProxyConfig]:
+        """
+        Get the next proxy in rotation.
+
+        Args:
+            domain: If provided, uses sticky session for this domain
+        """
+        if not self._proxies:
+            return None
+
+        # Check for sticky session
+        if domain and domain in self._domain_sticky:
+            sticky_str = self._domain_sticky[domain]
+            for proxy in self._proxies:
+                if str(proxy) == sticky_str and self._health[sticky_str]["enabled"]:
+                    return proxy
+
+        # Get enabled proxies
+        enabled = [p for p in self._proxies if self._health[str(p)]["enabled"]]
+        if not enabled:
+            # Re-enable all if none available
+            for proxy_str in self._health:
+                self._health[proxy_str]["enabled"] = True
+            enabled = self._proxies
+
+        if not enabled:
+            return None
+
+        # Round-robin selection
+        self._current_index = self._current_index % len(enabled)
+        proxy = enabled[self._current_index]
+        self._current_index += 1
+
+        # Update sticky session
+        if domain:
+            self._domain_sticky[domain] = str(proxy)
+
+        self._health[str(proxy)]["last_used"] = time.time()
+        return proxy
+
+    def report_success(self, proxy: Union[str, ProxyConfig], response_time: float = 0):
+        """Report a successful request through a proxy."""
+        proxy_str = str(proxy) if isinstance(proxy, ProxyConfig) else proxy
+        if proxy_str in self._health:
+            health = self._health[proxy_str]
+            health["successes"] += 1
+            # Update rolling average response time
+            total = health["successes"] + health["failures"]
+            health["avg_response_time"] = (
+                (health["avg_response_time"] * (total - 1) + response_time) / total
+            )
+
+    def report_failure(self, proxy: Union[str, ProxyConfig], disable_threshold: int = 5):
+        """
+        Report a failed request through a proxy.
+
+        Args:
+            proxy: The proxy that failed
+            disable_threshold: Number of consecutive failures before disabling
+        """
+        proxy_str = str(proxy) if isinstance(proxy, ProxyConfig) else proxy
+        if proxy_str in self._health:
+            health = self._health[proxy_str]
+            health["failures"] += 1
+
+            # Disable if too many consecutive failures
+            recent_failure_rate = health["failures"] / (health["successes"] + health["failures"])
+            if health["failures"] >= disable_threshold and recent_failure_rate > 0.5:
+                health["enabled"] = False
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get statistics for all proxies."""
+        return {
+            "total_proxies": len(self._proxies),
+            "enabled": sum(1 for h in self._health.values() if h["enabled"]),
+            "proxies": {
+                str(p): self._health.get(str(p), {})
+                for p in self._proxies
+            }
+        }
+
+    def clear_sticky_sessions(self):
+        """Clear all domain sticky sessions."""
+        self._domain_sticky.clear()
+
+    def __len__(self) -> int:
+        return len(self._proxies)
 
 
 class Hand:
@@ -45,13 +278,37 @@ class Hand:
         stealth_config: Optional[StealthConfig] = None,
         retry_config: Optional[RetryConfig] = None,
         download_dir: Optional[Path] = None,
-        browser_type: str = "chromium"  # chromium, firefox, or webkit
+        browser_type: str = "chromium",  # chromium, firefox, or webkit
+        proxy: Optional[Union[str, ProxyConfig]] = None,
+        proxy_rotator: Optional[ProxyRotator] = None,
     ):
+        """
+        Initialize the Hand browser controller.
+
+        Args:
+            headless: Run browser in headless mode
+            stealth_config: Configuration for stealth/anti-detection features
+            retry_config: Configuration for retry behavior
+            download_dir: Directory for downloaded files
+            browser_type: Browser engine to use (chromium, firefox, webkit)
+            proxy: Single proxy to use (URL string or ProxyConfig)
+            proxy_rotator: ProxyRotator for proxy pool rotation
+        """
         self.headless = headless
         self.browser_type = browser_type.lower()
         self.stealth = Stealth(stealth_config or StealthConfig())
         self.retry_config = retry_config or RetryConfig()
         self.download_dir = download_dir or Path("./downloads")
+
+        # Proxy configuration
+        self._proxy: Optional[ProxyConfig] = None
+        self._proxy_rotator = proxy_rotator
+
+        if proxy:
+            if isinstance(proxy, str):
+                self._proxy = ProxyConfig.from_url(proxy)
+            else:
+                self._proxy = proxy
 
         self._playwright: Optional[Playwright] = None
         self._browser: Optional[Browser] = None
@@ -66,10 +323,103 @@ class Hand:
 
         # State tracking
         self._mouse_pos = (0, 0)
+        self._current_proxy: Optional[ProxyConfig] = None  # Currently active proxy
 
         # Download tracking
         self._pending_downloads: List[Download] = []
         self._download_callback: Optional[Callable] = None
+
+        # Health tracking
+        self._wake_count = 0
+        self._last_health_check = 0.0
+        self._consecutive_errors = 0
+
+    @property
+    def is_awake(self) -> bool:
+        """Check if browser is initialized and running."""
+        return (
+            self._playwright is not None and
+            self._browser is not None and
+            self._page is not None
+        )
+
+    def is_healthy(self) -> bool:
+        """
+        Check if browser is healthy and responsive.
+
+        Returns True if browser can execute basic operations.
+        """
+        if not self.is_awake:
+            return False
+
+        try:
+            # Try to get basic page info - if this fails, browser is unhealthy
+            _ = self._page.url
+            _ = self._page.title()
+            self._consecutive_errors = 0
+            return True
+        except Exception:
+            self._consecutive_errors += 1
+            return False
+
+    def ensure_awake(self) -> bool:
+        """
+        Ensure browser is awake, starting it if necessary.
+
+        Returns True if browser is now awake, False if wake failed.
+        """
+        if self.is_awake and self.is_healthy():
+            return True
+
+        # If browser exists but is unhealthy, try to restart
+        if self._playwright is not None:
+            try:
+                self.sleep()
+            except Exception:
+                pass  # Ignore cleanup errors
+
+        try:
+            self.wake()
+            return True
+        except Exception:
+            return False
+
+    def restart(self) -> bool:
+        """
+        Restart the browser completely.
+
+        Useful when browser becomes unresponsive or gets stuck.
+        Returns True if restart successful.
+        """
+        current_url = None
+
+        # Try to save current URL for navigation after restart
+        if self.is_awake:
+            try:
+                current_url = self._page.url
+            except Exception:
+                pass
+
+        # Close existing browser
+        try:
+            self.sleep()
+        except Exception:
+            pass  # Ignore cleanup errors
+
+        # Start fresh browser
+        try:
+            self.wake()
+
+            # Navigate back to saved URL if we had one
+            if current_url and current_url != "about:blank":
+                try:
+                    self.goto(current_url, wait_for_content=False)
+                except Exception:
+                    pass  # Navigation may fail, that's ok
+
+            return True
+        except Exception:
+            return False
 
     def wake(self) -> None:
         """Start the browser with stealth configuration."""
@@ -113,9 +463,8 @@ class Hand:
             "--no-pings",
         ]
 
-        # Get proxy if configured
-        proxy = self.stealth.get_next_proxy()
-        proxy_config = {"server": proxy} if proxy else None
+        # Get proxy configuration (priority: rotator > direct proxy > stealth config)
+        proxy_config = self._get_proxy_config()
 
         # Select browser type
         if self.browser_type == "firefox":
@@ -179,6 +528,69 @@ class Hand:
         self._selector = SmartSelector(self._page)
         self._popups = PopupHandler(self._page)
         self._waits = WaitConditions(self._page)
+
+    def _get_proxy_config(self) -> Optional[Dict[str, Any]]:
+        """
+        Get proxy configuration for browser context.
+
+        Priority:
+        1. Proxy rotator (if configured)
+        2. Direct proxy (if configured)
+        3. Stealth config proxy (legacy)
+
+        Returns Playwright proxy dict or None.
+        """
+        # Try proxy rotator first
+        if self._proxy_rotator:
+            proxy = self._proxy_rotator.get_next()
+            if proxy:
+                self._current_proxy = proxy
+                return proxy.to_playwright_proxy()
+
+        # Try direct proxy config
+        if self._proxy:
+            self._current_proxy = self._proxy
+            return self._proxy.to_playwright_proxy()
+
+        # Fall back to stealth config (legacy support)
+        proxy_str = self.stealth.get_next_proxy()
+        if proxy_str:
+            self._current_proxy = ProxyConfig.from_url(proxy_str)
+            return {"server": proxy_str}
+
+        return None
+
+    def set_proxy(self, proxy: Union[str, ProxyConfig, None]):
+        """
+        Set or update the proxy for future sessions.
+
+        Note: This only affects new wake() calls. To change proxy
+        on an active session, call sleep() then wake() again.
+        """
+        if proxy is None:
+            self._proxy = None
+        elif isinstance(proxy, str):
+            self._proxy = ProxyConfig.from_url(proxy)
+        else:
+            self._proxy = proxy
+
+    def get_current_proxy(self) -> Optional[ProxyConfig]:
+        """Get the currently active proxy configuration."""
+        return self._current_proxy
+
+    def report_proxy_result(self, success: bool, response_time: float = 0):
+        """
+        Report proxy request result for health tracking.
+
+        Args:
+            success: Whether the request succeeded
+            response_time: Request response time in seconds
+        """
+        if self._proxy_rotator and self._current_proxy:
+            if success:
+                self._proxy_rotator.report_success(self._current_proxy, response_time)
+            else:
+                self._proxy_rotator.report_failure(self._current_proxy)
 
     def _setup_resource_blocking(self) -> None:
         """Block unnecessary resources for performance."""

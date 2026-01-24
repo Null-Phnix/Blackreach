@@ -763,3 +763,76 @@ class TestOllamaInitSuccess:
 
         assert llm._client == mock_ollama
         assert llm._provider_type == "ollama"
+
+
+class TestLLMGPUSettings:
+    """Tests for GPU configuration in LLM."""
+
+    def test_config_has_gpu_settings(self):
+        """LLMConfig has GPU settings."""
+        config = LLMConfig()
+        assert hasattr(config, 'use_gpu')
+        assert hasattr(config, 'num_gpu_layers')
+        assert config.use_gpu is True
+        assert config.num_gpu_layers == 999
+
+    def test_ollama_includes_gpu_options_when_enabled(self):
+        """Ollama call includes num_gpu when use_gpu is True."""
+        llm = LLM.__new__(LLM)
+        llm.config = LLMConfig(provider="ollama", use_gpu=True, num_gpu_layers=50)
+        llm._provider_type = "ollama"
+        llm._client = MagicMock()
+        llm._client.chat.return_value = {"message": {"content": "test"}}
+
+        llm._call_ollama("system", "user")
+
+        call_args = llm._client.chat.call_args
+        options = call_args.kwargs.get('options', {})
+        assert options.get('num_gpu') == 50
+
+    def test_ollama_excludes_gpu_options_when_disabled(self):
+        """Ollama call excludes num_gpu when use_gpu is False."""
+        llm = LLM.__new__(LLM)
+        llm.config = LLMConfig(provider="ollama", use_gpu=False)
+        llm._provider_type = "ollama"
+        llm._client = MagicMock()
+        llm._client.chat.return_value = {"message": {"content": "test"}}
+
+        llm._call_ollama("system", "user")
+
+        call_args = llm._client.chat.call_args
+        options = call_args.kwargs.get('options', {})
+        assert 'num_gpu' not in options
+
+
+class TestLLMCompleteMethod:
+    """Tests for LLM.complete convenience method."""
+
+    def test_complete_method_exists(self):
+        """LLM has complete method."""
+        llm = LLM.__new__(LLM)
+        assert hasattr(llm, 'complete')
+        assert callable(llm.complete)
+
+    def test_complete_calls_generate(self):
+        """complete() calls generate() with proper args."""
+        llm = LLM.__new__(LLM)
+        llm.config = LLMConfig()
+
+        with patch.object(llm, 'generate', return_value="test response") as mock_gen:
+            result = llm.complete("test prompt")
+
+            assert result == "test response"
+            mock_gen.assert_called_once()
+            args = mock_gen.call_args[0]
+            assert "assistant" in args[0].lower()
+            assert args[1] == "test prompt"
+
+    def test_complete_returns_string(self):
+        """complete() returns a string."""
+        llm = LLM.__new__(LLM)
+        llm.config = LLMConfig()
+
+        with patch.object(llm, 'generate', return_value="response"):
+            result = llm.complete("prompt")
+            assert isinstance(result, str)

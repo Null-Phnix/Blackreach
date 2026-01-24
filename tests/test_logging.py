@@ -1,7 +1,7 @@
 """
 Unit tests for blackreach/logging.py
 
-Tests for structured logging to files.
+Tests for structured logging to files with log levels.
 """
 
 import json
@@ -17,6 +17,15 @@ from blackreach.logging import (
     read_log,
     cleanup_old_logs,
     LOG_DIR,
+    LogLevel,
+    filter_logs_by_level,
+    get_log_summary,
+    search_logs,
+    get_error_logs,
+    ConsoleLogHandler,
+    FileLogHandler,
+    GlobalLogger,
+    get_logger,
 )
 
 
@@ -196,13 +205,13 @@ class TestSessionLogger:
             assert entry["data"]["action"] == "click"
             assert entry["data"]["success"] is True
 
-    def test_error(self, tmp_path, monkeypatch):
-        """error logs error."""
+    def test_log_error(self, tmp_path, monkeypatch):
+        """log_error logs error (backward compatible method)."""
         log_dir = tmp_path / "logs"
         monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
 
         logger = SessionLogger(1, "test goal")
-        logger.error(1, "Element not found", action="click")
+        logger.log_error(1, "Element not found", action="click")
 
         with open(logger.log_file) as f:
             lines = f.readlines()
@@ -388,3 +397,256 @@ class TestSessionLoggerWriteFailure:
             # Should silently fail
             logger.download(1, "file.pdf", "http://example.com", 1024)
             logger.session_end(success=True, steps=1, downloads=1, failures=0)
+
+
+class TestLogLevel:
+    """Tests for LogLevel enum."""
+
+    def test_level_values(self):
+        """Log levels have correct numeric values."""
+        assert LogLevel.DEBUG == 10
+        assert LogLevel.INFO == 20
+        assert LogLevel.WARNING == 30
+        assert LogLevel.ERROR == 40
+        assert LogLevel.CRITICAL == 50
+
+    def test_from_string(self):
+        """from_string parses level names correctly."""
+        assert LogLevel.from_string("debug") == LogLevel.DEBUG
+        assert LogLevel.from_string("INFO") == LogLevel.INFO
+        assert LogLevel.from_string("WARNING") == LogLevel.WARNING
+        assert LogLevel.from_string("warn") == LogLevel.WARNING
+        assert LogLevel.from_string("ERROR") == LogLevel.ERROR
+        assert LogLevel.from_string("CRITICAL") == LogLevel.CRITICAL
+
+    def test_from_string_unknown_defaults_to_info(self):
+        """Unknown level defaults to INFO."""
+        assert LogLevel.from_string("unknown") == LogLevel.INFO
+        assert LogLevel.from_string("") == LogLevel.INFO
+
+    def test_to_string(self):
+        """to_string returns level name."""
+        assert LogLevel.DEBUG.to_string() == "DEBUG"
+        assert LogLevel.ERROR.to_string() == "ERROR"
+
+
+class TestLogEntryLevelValue:
+    """Tests for LogEntry level_value property."""
+
+    def test_level_value_returns_numeric(self):
+        """level_value returns numeric log level."""
+        entry = LogEntry(
+            timestamp="2026-01-23T10:00:00",
+            level="ERROR",
+            event="test"
+        )
+        assert entry.level_value == LogLevel.ERROR
+
+
+class TestSessionLoggerLevelMethods:
+    """Tests for SessionLogger level-specific methods."""
+
+    def test_debug_method(self, tmp_path, monkeypatch):
+        """debug() logs at DEBUG level."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal")
+        logger.debug("debug_event", step=1, key="value")
+
+        with open(logger.log_file) as f:
+            lines = f.readlines()
+            entry = json.loads(lines[-1])
+            assert entry["level"] == "DEBUG"
+            assert entry["event"] == "debug_event"
+
+    def test_info_method(self, tmp_path, monkeypatch):
+        """info() logs at INFO level."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal")
+        logger.info("info_event", step=1)
+
+        with open(logger.log_file) as f:
+            lines = f.readlines()
+            entry = json.loads(lines[-1])
+            assert entry["level"] == "INFO"
+
+    def test_warning_method(self, tmp_path, monkeypatch):
+        """warning() logs at WARNING level."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal")
+        logger.warning("warn_event")
+
+        with open(logger.log_file) as f:
+            lines = f.readlines()
+            entry = json.loads(lines[-1])
+            assert entry["level"] == "WARNING"
+
+    def test_error_method_with_kwargs(self, tmp_path, monkeypatch):
+        """error() can take keyword args for data."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal")
+        logger.error("error_event", error_code=500, message="Server error")
+
+        with open(logger.log_file) as f:
+            lines = f.readlines()
+            entry = json.loads(lines[-1])
+            assert entry["level"] == "ERROR"
+            assert entry["data"]["error_code"] == 500
+
+    def test_critical_method(self, tmp_path, monkeypatch):
+        """critical() logs at CRITICAL level."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal")
+        logger.critical("critical_event")
+
+        with open(logger.log_file) as f:
+            lines = f.readlines()
+            entry = json.loads(lines[-1])
+            assert entry["level"] == "CRITICAL"
+
+
+class TestFilterLogsByLevel:
+    """Tests for filter_logs_by_level function."""
+
+    def test_filters_below_min_level(self):
+        """Filters out entries below minimum level."""
+        entries = [
+            {"level": "DEBUG", "event": "debug"},
+            {"level": "INFO", "event": "info"},
+            {"level": "WARNING", "event": "warn"},
+            {"level": "ERROR", "event": "error"},
+        ]
+
+        result = filter_logs_by_level(entries, LogLevel.WARNING)
+
+        assert len(result) == 2
+        assert result[0]["event"] == "warn"
+        assert result[1]["event"] == "error"
+
+    def test_includes_equal_and_above(self):
+        """Includes entries at or above minimum level."""
+        entries = [
+            {"level": "INFO", "event": "info"},
+            {"level": "ERROR", "event": "error"},
+        ]
+
+        result = filter_logs_by_level(entries, LogLevel.INFO)
+
+        assert len(result) == 2
+
+
+class TestGetLogSummary:
+    """Tests for get_log_summary function."""
+
+    def test_returns_summary_dict(self, tmp_path):
+        """Returns a summary dictionary."""
+        log_file = tmp_path / "test.jsonl"
+        log_file.write_text(
+            '{"event": "session_start", "level": "INFO", "data": {"goal": "test"}}\n'
+            '{"event": "error", "level": "ERROR", "data": {}}\n'
+            '{"event": "session_end", "level": "INFO", "data": {"success": true, "duration_seconds": 10.5}}\n'
+        )
+
+        summary = get_log_summary(log_file)
+
+        assert summary["total_entries"] == 3
+        assert summary["goal"] == "test"
+        assert summary["success"] is True
+        assert summary["has_errors"] is True
+
+    def test_empty_file_returns_empty_dict(self, tmp_path):
+        """Empty or missing file returns empty dict."""
+        log_file = tmp_path / "nonexistent.jsonl"
+
+        summary = get_log_summary(log_file)
+
+        assert summary == {}
+
+
+class TestSearchLogs:
+    """Tests for search_logs function."""
+
+    def test_finds_matching_events(self, tmp_path, monkeypatch):
+        """Finds entries matching query in event names."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir(parents=True)
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        log_file = log_dir / "session_1_20260123_100000.jsonl"
+        log_file.write_text(
+            '{"event": "download_start", "level": "INFO"}\n'
+            '{"event": "download_complete", "level": "INFO"}\n'
+            '{"event": "navigate", "level": "INFO"}\n'
+        )
+
+        results = search_logs("download", [log_file])
+
+        assert len(results) == 2
+
+    def test_finds_matching_data(self, tmp_path, monkeypatch):
+        """Finds entries matching query in data."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir(parents=True)
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        log_file = log_dir / "session_1_20260123_100000.jsonl"
+        log_file.write_text(
+            '{"event": "act", "level": "INFO", "data": {"action": "click", "selector": "button"}}\n'
+            '{"event": "act", "level": "INFO", "data": {"action": "type", "text": "hello"}}\n'
+        )
+
+        results = search_logs("click", [log_file])
+
+        assert len(results) == 1
+
+    def test_respects_min_level(self, tmp_path, monkeypatch):
+        """Respects minimum log level filter."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir(parents=True)
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        log_file = log_dir / "session_1_20260123_100000.jsonl"
+        log_file.write_text(
+            '{"event": "debug_event", "level": "DEBUG"}\n'
+            '{"event": "debug_info", "level": "INFO"}\n'
+        )
+
+        results = search_logs("debug", [log_file], min_level=LogLevel.INFO)
+
+        # Only the INFO entry should match
+        assert len(results) == 1
+        assert results[0]["level"] == "INFO"
+
+
+class TestGetErrorLogs:
+    """Tests for get_error_logs function."""
+
+    def test_returns_only_errors_and_critical(self, tmp_path, monkeypatch):
+        """Returns only ERROR and CRITICAL entries."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir(parents=True)
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        log_file = log_dir / "session_1_20260123_100000.jsonl"
+        log_file.write_text(
+            '{"event": "info", "level": "INFO"}\n'
+            '{"event": "warning", "level": "WARNING"}\n'
+            '{"event": "error", "level": "ERROR"}\n'
+            '{"event": "critical", "level": "CRITICAL"}\n'
+        )
+
+        results = get_error_logs([log_file])
+
+        assert len(results) == 2
+        levels = [r["level"] for r in results]
+        assert "ERROR" in levels
+        assert "CRITICAL" in levels

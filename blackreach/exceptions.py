@@ -55,6 +55,20 @@ class BrowserNotReadyError(BrowserError):
         super().__init__(message, recoverable=True)
 
 
+class BrowserUnhealthyError(BrowserError):
+    """Browser is unresponsive or in an unhealthy state."""
+
+    def __init__(self, message: str = "Browser is unresponsive."):
+        super().__init__(message, recoverable=True)
+
+
+class BrowserRestartFailedError(BrowserError):
+    """Browser failed to restart after becoming unresponsive."""
+
+    def __init__(self, message: str = "Failed to restart browser."):
+        super().__init__(message, recoverable=False)
+
+
 class ElementNotFoundError(BrowserError):
     """Target element could not be found on the page."""
 

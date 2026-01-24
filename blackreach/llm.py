@@ -25,6 +25,8 @@ class LLMConfig:
     max_tokens: int = 1024
     max_retries: int = 3
     retry_delay: float = 1.0
+    use_gpu: bool = True  # Force GPU usage for local models
+    num_gpu_layers: int = 999  # Number of layers to offload to GPU (999 = all)
 
 
 @dataclass
@@ -156,19 +158,36 @@ class LLM:
         return ""
 
     def _call_ollama(self, system_prompt: str, user_message: str) -> str:
-        """Call Ollama API."""
+        """Call Ollama API with GPU acceleration."""
+        options = {
+            "temperature": self.config.temperature,
+            "num_predict": self.config.max_tokens,
+        }
+
+        # Enable GPU acceleration if configured
+        if self.config.use_gpu:
+            options["num_gpu"] = self.config.num_gpu_layers
+
         response = self._client.chat(
             model=self.config.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
             ],
-            options={
-                "temperature": self.config.temperature,
-                "num_predict": self.config.max_tokens,
-            }
+            options=options
         )
         return response["message"]["content"]
+
+    def complete(self, prompt: str) -> str:
+        """Simple completion interface (convenience method).
+
+        Args:
+            prompt: The prompt to complete
+
+        Returns:
+            Generated text response
+        """
+        return self.generate("You are a helpful assistant.", prompt)
 
     def _call_openai(self, system_prompt: str, user_message: str) -> str:
         """Call OpenAI API."""
