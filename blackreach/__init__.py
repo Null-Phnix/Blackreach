@@ -19,8 +19,11 @@ from blackreach.retry_strategy import RetryManager, RetryDecision, get_retry_man
 from blackreach.timeout_manager import TimeoutManager, get_timeout_manager
 from blackreach.rate_limiter import RateLimiter, get_rate_limiter
 from blackreach.session_manager import SessionManager, SessionStatus, get_session_manager
+from blackreach.multi_tab import SyncTabManager, TabStatus
+from blackreach.download_queue import DownloadQueue, DownloadPriority, get_download_queue
+from blackreach.task_scheduler import TaskScheduler, TaskPriority, get_scheduler
 
-__version__ = "2.9.0"
+__version__ = "3.2.0"
 __all__ = [
     "Agent",
     "AgentConfig",
@@ -52,4 +55,12 @@ __all__ = [
     "SessionManager",
     "SessionStatus",
     "get_session_manager",
+    "SyncTabManager",
+    "TabStatus",
+    "DownloadQueue",
+    "DownloadPriority",
+    "get_download_queue",
+    "TaskScheduler",
+    "TaskPriority",
+    "get_scheduler",
 ]
