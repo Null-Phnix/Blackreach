@@ -23,10 +23,21 @@ Example usage:
 """
 
 import hashlib
+import re
 from collections import deque
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Set, Tuple
 from enum import Enum
+
+
+# P0-PERF: Pre-compiled regex patterns for content hashing
+_RE_SCRIPT = re.compile(r'<script[^>]*>.*?</script>', re.DOTALL | re.IGNORECASE)
+_RE_STYLE = re.compile(r'<style[^>]*>.*?</style>', re.DOTALL | re.IGNORECASE)
+_RE_COMMENT = re.compile(r'<!--.*?-->', re.DOTALL)
+_RE_DATE = re.compile(r'\d{4}-\d{2}-\d{2}')
+_RE_TIME = re.compile(r'\d{1,2}:\d{2}')
+_RE_ID_ATTR = re.compile(r'id="[^"]*"')
+_RE_HTML_TAGS = re.compile(r'<[^>]+>')
 
 
 class StuckReason(Enum):
@@ -230,6 +241,10 @@ class StuckDetector:
         """Simple check if stuck (for quick conditionals)."""
         return self.check().is_stuck
 
+    def get_stuck_state(self) -> StuckState:
+        """Alias for check() for API compatibility."""
+        return self.check()
+
     def _check_url_loop(self) -> StuckState:
         """Check if stuck in URL loop."""
         for url, count in self._url_counts.items():
@@ -266,6 +281,9 @@ class StuckDetector:
         recent = self._action_sequence[-self.ACTION_REPEAT_THRESHOLD:]
         if len(set(recent)) == 1:
             action, target = recent[0]
+            # Don't consider "download" as an action loop - downloads are progress
+            if action == "download":
+                return StuckState(False, StuckReason.NOT_STUCK, 0.0, "")
             return StuckState(
                 is_stuck=True,
                 reason=StuckReason.ACTION_LOOP,
@@ -453,22 +471,23 @@ def compute_content_hash(html: str) -> str:
 
     # Simple approach: hash the text content length + key elements
     # This catches "same page" even with minor dynamic changes
-    import re
+    # P0-PERF: Uses pre-compiled module-level regex patterns
 
     # Remove script, style, and common dynamic content
-    cleaned = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    cleaned = re.sub(r'<style[^>]*>.*?</style>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
-    cleaned = re.sub(r'<!--.*?-->', '', cleaned, flags=re.DOTALL)
+    cleaned = _RE_SCRIPT.sub('', html)
+    cleaned = _RE_STYLE.sub('', cleaned)
+    cleaned = _RE_COMMENT.sub('', cleaned)
 
     # Remove timestamps and IDs that change
-    cleaned = re.sub(r'\d{4}-\d{2}-\d{2}', 'DATE', cleaned)
-    cleaned = re.sub(r'\d{1,2}:\d{2}', 'TIME', cleaned)
-    cleaned = re.sub(r'id="[^"]*"', 'id=""', cleaned)
+    cleaned = _RE_DATE.sub('DATE', cleaned)
+    cleaned = _RE_TIME.sub('TIME', cleaned)
+    cleaned = _RE_ID_ATTR.sub('id=""', cleaned)
 
     # Get text content
-    text = re.sub(r'<[^>]+>', ' ', cleaned)
+    text = _RE_HTML_TAGS.sub(' ', cleaned)
     text = ' '.join(text.split())  # Normalize whitespace
 
     # Hash based on content length and key terms
+    # Using blake2b (faster than MD5) with 8-byte digest (16 hex chars)
     content_sig = f"{len(text)}:{text[:500]}:{text[-500:]}"
-    return hashlib.md5(content_sig.encode()).hexdigest()[:16]
+    return hashlib.blake2b(content_sig.encode(), digest_size=8).hexdigest()

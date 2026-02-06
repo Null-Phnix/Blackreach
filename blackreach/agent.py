@@ -28,7 +28,10 @@ from blackreach.stealth import StealthConfig
 from blackreach.resilience import RetryConfig
 from blackreach.memory import SessionMemory, PersistentMemory
 from blackreach.logging import SessionLogger
-from blackreach.exceptions import InvalidActionArgsError, UnknownActionError, SessionNotFoundError
+from blackreach.exceptions import (
+    InvalidActionArgsError, UnknownActionError, SessionNotFoundError,
+    BrowserError, NavigationError, DownloadError, LLMError, NetworkError,
+)
 from blackreach.knowledge import reason_about_goal, extract_subject, get_working_url, get_all_urls_for_source, find_best_sources
 from blackreach.action_tracker import ActionTracker
 from blackreach.stuck_detector import StuckDetector, RecoveryStrategy, compute_content_hash
@@ -248,7 +251,7 @@ class Agent:
         if handler:
             try:
                 handler(*args, **kwargs)
-            except Exception as e:
+            except Exception as e:  # User callback - can raise anything
                 # Rate-limit callback error logging
                 error_count = self._callback_errors.get(event, 0) + 1
                 self._callback_errors[event] = error_count
@@ -293,7 +296,6 @@ class Agent:
             url=url,
             source_site=domain
         )
-        # Record success in source manager
         if domain:
             self.source_manager.record_success(domain)
             self.error_recovery.record_success()
@@ -302,7 +304,6 @@ class Agent:
         """Record a failure to both memory systems and source manager."""
         self.session_memory.add_failure(error)
         self.persistent_memory.add_failure(url, action, error)
-        # Record failure in source manager
         domain = urlparse(url).netloc if url else ""
         if domain:
             self.source_manager.record_failure(domain, error)
@@ -314,7 +315,7 @@ class Agent:
         if self.hand and self.hand.is_awake:
             try:
                 return urlparse(self.hand.get_url()).netloc
-            except Exception:
+            except (BrowserError, OSError):  # Best-effort URL extraction
                 return ""
         return ""
 
@@ -342,11 +343,9 @@ class Agent:
         Returns:
             True if browser is ready, False if failed to start.
         """
-        # Create browser instance if it doesn't exist
         if self.hand is None:
             self.hand = self._create_browser()
 
-        # Ensure browser is awake and healthy
         return self.hand.ensure_awake()
 
     def restart_browser(self, navigate_to: str = None) -> bool:
@@ -362,15 +361,13 @@ class Agent:
         if self.hand is None:
             self.hand = self._create_browser()
 
-        # Use Hand's restart method
         success = self.hand.restart()
 
-        # Navigate to specified URL if provided and restart succeeded
         if success and navigate_to:
             try:
                 self.hand.goto(navigate_to)
-            except Exception:
-                pass  # Navigation may fail, that's ok
+            except (NavigationError, BrowserError, OSError):
+                pass  # Best-effort post-restart navigation
 
         return success
 
@@ -475,7 +472,6 @@ class Agent:
         Returns:
             Dict with results
         """
-        # Load saved state
         state = self.persistent_memory.load_session_state(session_id)
         if not state:
             raise SessionNotFoundError(str(session_id))
@@ -554,11 +550,9 @@ class Agent:
             log(f"Memory: {stats['total_downloads']} downloads, "
                 f"{stats['total_visits']} visits from {stats['total_sessions']} sessions")
 
-        # Start a new session in persistent memory
         self.session_id = self.persistent_memory.start_session(goal)
         log(f"Session #{self.session_id} started\n")
 
-        # Decompose goal using goal engine
         self._current_decomposition = self.goal_engine.decompose(goal)
         if self._current_decomposition.subtasks:
             log(f"Goal decomposed into {len(self._current_decomposition.subtasks)} subtasks:")
@@ -569,10 +563,7 @@ class Agent:
                 log(f"  ... and {len(self._current_decomposition.subtasks) - 5} more")
             log("")
 
-        # Initialize session logger for structured logging
         self._logger = SessionLogger(self.session_id, goal)
-
-        # Ensure download dir exists
         self.config.download_dir.mkdir(parents=True, exist_ok=True)
 
         # Start or ensure browser is ready (auto-starts if not initialized)
@@ -605,7 +596,6 @@ class Agent:
         self.hand.goto(start_url)
         self._record_visit(start_url)
 
-        # Run the main loop
         return self._run_loop(goal, start_step=1, quiet=quiet)
 
     def _get_smart_start_url(self, goal: str, quiet: bool = False) -> tuple:
@@ -815,14 +805,13 @@ class Agent:
                 last_url = self._recent_urls[-1]
                 try:
                     self.hand.goto(last_url, wait_for_content=False)
-                except Exception:
-                    pass  # Navigation may fail, continue anyway
+                except (NavigationError, BrowserError, OSError):
+                    pass  # Best-effort navigation after restart
 
         # Track current URL for stuck detection
         current_url = self.hand.get_url()
         self._track_url(current_url)
 
-        # Log step start
         if hasattr(self, '_logger'):
             self._logger.step_start(step_num)
 
@@ -834,7 +823,6 @@ class Agent:
         url = self.hand.get_url()
         title = self.hand.get_title()
 
-        # Update stuck detector with current state
         content_hash = compute_content_hash(html)
         download_count = len(self.session_memory.downloaded_files)
         self.stuck_detector.observe(
@@ -846,7 +834,6 @@ class Agent:
             step_number=step_num
         )
 
-        # Check if stuck using advanced detector
         stuck_state = self.stuck_detector.check()
         if stuck_state.is_stuck:
             strategy, explanation = self.stuck_detector.suggest_strategy()
@@ -1047,7 +1034,6 @@ class Agent:
         self._page_cache["parsed"] = parsed
         self._page_cache["elements"] = elements
 
-        # Record navigation breadcrumb for context-aware navigation
         content_preview = parsed.get("text_preview", "") if isinstance(parsed, dict) else ""
         links_count = len(parsed.get("links", [])) if isinstance(parsed, dict) else 0
         self.nav_context.record_navigation(
@@ -1062,7 +1048,6 @@ class Agent:
         # Build extra context (stuck hints, learned patterns, download landing hints, etc.)
         extra_context = ""
 
-        # Add download landing page hint if detected
         if download_landing_hint:
             extra_context += download_landing_hint
 
@@ -1096,7 +1081,8 @@ class Agent:
                             # Reset stuck counter on successful click
                             self._stuck_counter = 0
                             return {"done": False, "fallback": True, "clicked": sel}
-                    except Exception:
+                    except (BrowserError, OSError):
+                        # Playwright locator may fail - try next selector
                         continue
 
             # Force reset after being stuck too many times
@@ -1194,7 +1180,7 @@ You navigate. You click. You download. That's it."""
                 system_prompt,
                 prompt
             )
-        except Exception as e:
+        except (LLMError, NetworkError, OSError) as e:
             log(f"LLM Error: {e}")
             self._record_failure(url, "llm", str(e))
             return {"done": False, "error": f"LLM call failed: {e}"}
@@ -1353,16 +1339,13 @@ You navigate. You click. You download. That's it."""
             # Reset refusal counter on successful non-refusal response
             self._refusal_count = 0
 
-        # Log thought and action
         log(f"{thought} -> {action}")
         self._emit("on_think", thought)
 
-        # Log to structured logger
         if hasattr(self, '_logger'):
             self._logger.observe(step_num, f"URL: {url}, Title: {title}", url)
             self._logger.think(step_num, thought, stuck=bool(stuck_hint))
 
-        # Record visit
         self._record_visit(url, title=title)
 
         # Handle done action - but validate it first
@@ -1443,10 +1426,8 @@ You navigate. You click. You download. That's it."""
             args["_thought"] = thought
             result = self._execute_action(action, args)
 
-            # Track last action for stuck detector
             self._last_action = action
 
-            # Record successful action in tracker
             self.action_tracker.record(
                 action_type=action,
                 target=target,
@@ -1455,14 +1436,12 @@ You navigate. You click. You download. That's it."""
                 context=self.hand.get_title() if self.hand else ""
             )
 
-            # Record action in session memory
             self.session_memory.add_action({
                 "action": action,
                 "args": {k: v for k, v in args.items() if not k.startswith("_")},
                 "thought": thought
             })
 
-            # Record successful pattern
             selector = args.get("selector", "")
             if selector:
                 self.persistent_memory.record_pattern(
@@ -1480,7 +1459,7 @@ You navigate. You click. You download. That's it."""
 
             return result
 
-        except Exception as e:
+        except Exception as e:  # Top-level agent loop - must catch all
             error_msg = str(e)
             self._record_failure(url, action, error_msg)
             self._consecutive_failures += 1
@@ -1493,10 +1472,13 @@ You navigate. You click. You download. That's it."""
                 "args": args,
             })
 
+            # Apply recovery delay at agent level (not inside ThreadPoolExecutor)
+            if recovery_result.wait_seconds > 0:
+                time.sleep(recovery_result.wait_seconds)
+
             error_info = self.error_recovery.categorize(e)
             log(f" ({error_info.category.value}: {error_msg[:40]})")
 
-            # Record failed action in tracker
             target = args.get("selector", args.get("url", args.get("text", "")))
             self.action_tracker.record(
                 action_type=action,
@@ -1515,7 +1497,6 @@ You navigate. You click. You download. That's it."""
                 self._last_failed_action = current_action_key
                 self._repeated_failure_count = 1
 
-            # Record failed pattern
             selector = args.get("selector", "")
             if selector:
                 self.persistent_memory.record_pattern(
@@ -1621,8 +1602,8 @@ You navigate. You click. You download. That's it."""
                 try:
                     self.hand.page.get_by_text(text, exact=False).first.click()
                     return {"action": "click", "text": text}
-                except Exception:
-                    pass  # Fall through to selector-based click
+                except (BrowserError, OSError):
+                    pass  # Playwright text click may fail - fall through to selector
 
             # If selector is too generic, try to find a visible link instead
             generic_selectors = ['a', 'button', 'div', 'span', 'input', 'li', 'p']
@@ -1728,7 +1709,8 @@ You navigate. You click. You download. That's it."""
                                 print(f"  -> (expansion button clicked, waiting for content)")
 
                             return {"action": "click", "selector": sel}
-                    except Exception:
+                    except (BrowserError, OSError):
+                        # Playwright selector click may fail - try next
                         continue
 
             # Last resort: use the provided selector
@@ -1815,7 +1797,6 @@ You navigate. You click. You download. That's it."""
                 self.session_memory.add_failure(f"Download URL failed before - use a different link")
                 return {"action": "download", "skipped": True, "reason": "previously failed"}
 
-            # Perform the download
             try:
                 print(f"  -> Starting download...")
                 download_start = time.time()
@@ -1854,13 +1835,11 @@ You navigate. You click. You download. That's it."""
                             "verification": verification.message
                         }
 
-                # Record the download
                 self._record_download(
                     filename=result["filename"],
                     url=result.get("url", url)
                 )
 
-                # Update persistent memory with hash and size
                 self.persistent_memory.add_download(
                     filename=result["filename"],
                     url=result.get("url", url),
@@ -1890,7 +1869,7 @@ You navigate. You click. You download. That's it."""
                     "path": result["path"],
                     "size": result["size"]
                 }
-            except Exception as e:
+            except (DownloadError, BrowserError, NetworkError, OSError) as e:
                 error_str = str(e)
                 current_url = self.hand.get_url()
                 self._record_failure(current_url, "download", error_str)

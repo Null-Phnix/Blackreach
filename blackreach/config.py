@@ -17,6 +17,17 @@ from dataclasses import dataclass, field, asdict
 
 from blackreach.exceptions import InvalidConfigError
 
+# Try to import keyring for secure credential storage
+# Falls back to plaintext storage if keyring is not available
+try:
+    import keyring
+    KEYRING_AVAILABLE = True
+except ImportError:
+    KEYRING_AVAILABLE = False
+
+# Keyring service name for Blackreach
+KEYRING_SERVICE = "blackreach"
+
 
 CONFIG_DIR = Path.home() / ".blackreach"
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
@@ -106,11 +117,63 @@ AVAILABLE_MODELS = {
 }
 
 
-class ConfigManager:
-    """Manages Blackreach configuration."""
+def _keyring_get(provider: str) -> Optional[str]:
+    """Get API key from system keyring.
 
-    def __init__(self):
+    Returns None if keyring is not available or key not found.
+    """
+    if not KEYRING_AVAILABLE:
+        return None
+    try:
+        return keyring.get_password(KEYRING_SERVICE, f"api_key_{provider}")
+    except Exception:  # Keyring backends raise varied exceptions
+        return None
+
+
+def _keyring_set(provider: str, key: str) -> bool:
+    """Store API key in system keyring.
+
+    Returns True on success, False if keyring not available.
+    """
+    if not KEYRING_AVAILABLE:
+        return False
+    try:
+        keyring.set_password(KEYRING_SERVICE, f"api_key_{provider}", key)
+        return True
+    except Exception:  # Keyring backends raise varied exceptions
+        return False
+
+
+def _keyring_delete(provider: str) -> bool:
+    """Delete API key from system keyring.
+
+    Returns True on success, False if keyring not available or key not found.
+    """
+    if not KEYRING_AVAILABLE:
+        return False
+    try:
+        keyring.delete_password(KEYRING_SERVICE, f"api_key_{provider}")
+        return True
+    except Exception:  # Keyring backends raise varied exceptions
+        return False
+
+
+class ConfigManager:
+    """Manages Blackreach configuration.
+
+    API keys are stored securely using the system keyring when available.
+    Falls back to plaintext YAML storage if keyring is not installed.
+    """
+
+    def __init__(self, use_keyring: bool = True):
+        """Initialize ConfigManager.
+
+        Args:
+            use_keyring: Whether to use system keyring for API keys (default: True).
+                         Falls back to YAML if keyring is not available.
+        """
         self._config: Optional[Config] = None
+        self._use_keyring = use_keyring and KEYRING_AVAILABLE
         self._ensure_config_dir()
 
     def _ensure_config_dir(self):
@@ -118,7 +181,13 @@ class ConfigManager:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     def load(self) -> Config:
-        """Load configuration from file or create default."""
+        """Load configuration from file or create default.
+
+        API keys are loaded in priority order:
+        1. System keyring (most secure, if available)
+        2. Environment variables
+        3. YAML config file (fallback, less secure)
+        """
         if self._config:
             return self._config
 
@@ -127,20 +196,32 @@ class ConfigManager:
                 with open(CONFIG_FILE) as f:
                     data = yaml.safe_load(f) or {}
                 self._config = self._dict_to_config(data)
-            except Exception as e:
+            except (OSError, yaml.YAMLError) as e:
                 print(f"Warning: Could not load config: {e}")
                 self._config = Config()
         else:
             self._config = Config()
             self.save()  # Create default config file
 
-        # Also check environment variables for API keys
+        # Load API keys (priority: keyring > env vars > yaml)
+        self._load_keyring_keys()
         self._load_env_keys()
 
         return self._config
 
+    def _load_keyring_keys(self):
+        """Load API keys from system keyring (P0-SEC: secure credential storage)."""
+        if not self._config or not self._use_keyring:
+            return
+
+        for provider in ["openai", "anthropic", "google", "xai"]:
+            key = _keyring_get(provider)
+            if key:
+                provider_config = getattr(self._config, provider)
+                provider_config.api_key = key
+
     def _load_env_keys(self):
-        """Load API keys from environment variables."""
+        """Load API keys from environment variables (fallback if not in keyring)."""
         if not self._config:
             return
 
@@ -153,12 +234,18 @@ class ConfigManager:
 
         for env_var, (provider, attr) in env_mappings.items():
             value = os.environ.get(env_var)
+            # Only use env var if api_key is not already set (keyring has priority)
             if value:
                 provider_config = getattr(self._config, provider)
-                setattr(provider_config, attr, value)
+                if not provider_config.api_key:
+                    setattr(provider_config, attr, value)
 
     def save(self):
-        """Save configuration to file."""
+        """Save configuration to file.
+
+        Security: Sets file permissions to 0600 (owner read/write only)
+        to protect any API keys that may be stored in plaintext.
+        """
         if not self._config:
             self._config = Config()
 
@@ -167,16 +254,42 @@ class ConfigManager:
         with open(CONFIG_FILE, 'w') as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
+        # P0-SEC: Set restrictive file permissions (0600 = owner read/write only)
+        # This protects API keys from being read by other users on the system
+        try:
+            os.chmod(CONFIG_FILE, 0o600)
+        except OSError:
+            # On some systems (e.g., Windows), chmod may not work as expected
+            # Continue anyway - the file is still created
+            pass
+
     def _config_to_dict(self, config: Config) -> Dict[str, Any]:
-        """Convert Config to dictionary for YAML."""
+        """Convert Config to dictionary for YAML.
+
+        Security: API keys stored in keyring are NOT written to the config file.
+        Only keys explicitly set via config file storage are persisted here.
+        """
+        # Helper to convert provider config, optionally masking API key
+        def provider_to_dict(provider_config: ProviderConfig, provider_name: str) -> Dict[str, Any]:
+            result = asdict(provider_config)
+            # If key is in keyring, don't save to file
+            if KEYRING_AVAILABLE:
+                try:
+                    keyring_key = keyring.get_password(KEYRING_SERVICE, f"{provider_name}_api_key")
+                    if keyring_key:
+                        result["api_key"] = ""  # Don't store in plaintext
+                except Exception:  # Keyring backends raise varied exceptions
+                    pass
+            return result
+
         return {
             "default_provider": config.default_provider,
             "providers": {
-                "ollama": asdict(config.ollama),
-                "openai": asdict(config.openai),
-                "anthropic": asdict(config.anthropic),
-                "google": asdict(config.google),
-                "xai": asdict(config.xai),
+                "ollama": provider_to_dict(config.ollama, "ollama"),
+                "openai": provider_to_dict(config.openai, "openai"),
+                "anthropic": provider_to_dict(config.anthropic, "anthropic"),
+                "google": provider_to_dict(config.google, "google"),
+                "xai": provider_to_dict(config.xai, "xai"),
             },
             "agent": {
                 "headless": config.headless,
@@ -218,14 +331,44 @@ class ConfigManager:
 
         return config
 
-    def set_api_key(self, provider: str, key: str):
-        """Set API key for a provider."""
+    def set_api_key(self, provider: str, key: str, use_keyring: bool = True):
+        """Set API key for a provider.
+
+        Args:
+            provider: Provider name (anthropic, openai, google, ollama, xai)
+            key: The API key to store
+            use_keyring: If True and keyring is available, stores securely in system keyring.
+                        Falls back to config file if keyring is unavailable.
+        """
+        if provider not in AVAILABLE_MODELS:
+            raise InvalidConfigError("provider", provider, "one of: anthropic, openai, google, ollama, xai")
+
+        # Try to store in keyring first for security
+        if use_keyring and KEYRING_AVAILABLE:
+            try:
+                keyring.set_password(KEYRING_SERVICE, f"{provider}_api_key", key)
+                # Clear from config file for security
+                config = self.load()
+                if hasattr(config, provider):
+                    getattr(config, provider).api_key = ""  # Clear plaintext
+                    self.save()
+                return
+            except Exception:  # Keyring backends raise varied exceptions
+                pass  # Fall back to config file
+
+        # Fallback to config file storage (less secure)
+        # P0-SEC: Warn user about plaintext storage
+        import warnings
+        warnings.warn(
+            f"Storing API key for '{provider}' in plaintext config file. "
+            "For better security, install 'keyring' package: pip install keyring",
+            UserWarning,
+            stacklevel=2
+        )
         config = self.load()
         if hasattr(config, provider):
             getattr(config, provider).api_key = key
             self.save()
-        else:
-            raise InvalidConfigError("provider", provider, "one of: anthropic, openai, google, ollama, xai")
 
     def set_default_provider(self, provider: str):
         """Set the default provider."""
@@ -256,8 +399,30 @@ class ConfigManager:
         return getattr(config, provider).default_model
 
     def get_api_key(self, provider: str) -> str:
-        """Get API key for provider."""
+        """Get API key for provider.
+
+        Checks in order:
+        1. Environment variables (highest priority)
+        2. System keyring (secure storage)
+        3. Config file (plaintext fallback)
+        """
+        # Priority 1: Environment variables (already loaded in _load_env_keys)
         config = self.load()
+        if hasattr(config, provider):
+            env_key = getattr(config, provider).api_key
+            if env_key:
+                return env_key
+
+        # Priority 2: Try keyring for secure storage
+        if KEYRING_AVAILABLE:
+            try:
+                key = keyring.get_password(KEYRING_SERVICE, f"{provider}_api_key")
+                if key:
+                    return key
+            except Exception:  # Keyring backends raise varied exceptions
+                pass  # Keyring unavailable or error
+
+        # Priority 3: Config file (fallback)
         if hasattr(config, provider):
             return getattr(config, provider).api_key
         return ""
@@ -265,6 +430,31 @@ class ConfigManager:
     def has_api_key(self, provider: str) -> bool:
         """Check if provider has API key configured."""
         return bool(self.get_api_key(provider))
+
+    def delete_api_key(self, provider: str):
+        """Delete API key for a provider from all storage locations.
+
+        Removes from both keyring and config file for security.
+        """
+        if provider not in AVAILABLE_MODELS:
+            raise InvalidConfigError("provider", provider, "one of: anthropic, openai, google, ollama, xai")
+
+        # Remove from keyring
+        if KEYRING_AVAILABLE:
+            try:
+                keyring.delete_password(KEYRING_SERVICE, f"{provider}_api_key")
+            except Exception:  # Keyring backends raise varied exceptions
+                pass  # Key might not exist
+
+        # Remove from config file
+        config = self.load()
+        if hasattr(config, provider):
+            getattr(config, provider).api_key = ""
+            self.save()
+
+    def is_keyring_available(self) -> bool:
+        """Check if system keyring is available for secure storage."""
+        return KEYRING_AVAILABLE
 
 
 # =============================================================================
@@ -405,7 +595,7 @@ class ConfigValidator:
             result.add_error(
                 f"Cannot create download directory '{config.download_dir}': Permission denied"
             )
-        except Exception as e:
+        except OSError as e:
             result.add_error(
                 f"Cannot create download directory '{config.download_dir}': {e}"
             )

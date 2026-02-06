@@ -13,11 +13,16 @@ Provides:
 import time
 import random
 import re
+import threading
 from typing import Optional, List, Callable, Any, Union
 from dataclasses import dataclass
 from functools import wraps
 from difflib import SequenceMatcher
 from playwright.sync_api import Page, Locator, TimeoutError as PlaywrightTimeout
+
+
+# P0-PERF: Pre-compiled regex patterns
+_RE_QUOTED_TEXT = re.compile(r'"([^"]+)"')
 
 
 @dataclass
@@ -105,16 +110,18 @@ class CircuitBreaker:
         self._failure_count = 0
         self._last_failure_time = 0.0
         self._half_open_calls = 0
+        self._lock = threading.Lock()
 
     @property
     def state(self) -> str:
-        """Current circuit breaker state."""
-        if self._state == self.OPEN:
-            # Check if recovery timeout has passed
-            if time.time() - self._last_failure_time >= self.config.recovery_timeout:
-                self._state = self.HALF_OPEN
-                self._half_open_calls = 0
-        return self._state
+        """Current circuit breaker state (thread-safe)."""
+        with self._lock:
+            if self._state == self.OPEN:
+                # Check if recovery timeout has passed
+                if time.time() - self._last_failure_time >= self.config.recovery_timeout:
+                    self._state = self.HALF_OPEN
+                    self._half_open_calls = 0
+            return self._state
 
     @property
     def is_open(self) -> bool:
@@ -122,50 +129,71 @@ class CircuitBreaker:
         return self.state == self.OPEN
 
     def record_success(self) -> None:
-        """Record a successful operation."""
-        if self._state == self.HALF_OPEN:
-            # Successful call in half-open state - close the circuit
-            self._state = self.CLOSED
-            self._failure_count = 0
+        """Record a successful operation (thread-safe)."""
+        with self._lock:
+            if self._state == self.HALF_OPEN:
+                # Successful call in half-open state - close the circuit
+                self._state = self.CLOSED
+                self._failure_count = 0
 
     def record_failure(self) -> None:
-        """Record a failed operation."""
-        self._failure_count += 1
-        self._last_failure_time = time.time()
+        """Record a failed operation (thread-safe)."""
+        with self._lock:
+            self._failure_count += 1
+            self._last_failure_time = time.time()
 
-        if self._state == self.HALF_OPEN:
-            # Failure in half-open - re-open the circuit
-            self._state = self.OPEN
-        elif self._failure_count >= self.config.failure_threshold:
-            # Threshold reached - open the circuit
-            self._state = self.OPEN
+            if self._state == self.HALF_OPEN:
+                # Failure in half-open - re-open the circuit
+                self._state = self.OPEN
+            elif self._failure_count >= self.config.failure_threshold:
+                # Threshold reached - open the circuit
+                self._state = self.OPEN
 
     def allow_request(self) -> bool:
-        """Check if a request should be allowed."""
-        state = self.state
+        """Check if a request should be allowed (thread-safe)."""
+        with self._lock:
+            # Check state transition inline to avoid nested lock
+            if self._state == self.OPEN:
+                if time.time() - self._last_failure_time >= self.config.recovery_timeout:
+                    self._state = self.HALF_OPEN
+                    self._half_open_calls = 0
 
-        if state == self.CLOSED:
-            return True
-        elif state == self.HALF_OPEN:
-            # Allow limited requests in half-open state
-            if self._half_open_calls < self.config.half_open_max_calls:
-                self._half_open_calls += 1
+            if self._state == self.CLOSED:
                 return True
-            return False
-        else:  # OPEN
-            return False
+            elif self._state == self.HALF_OPEN:
+                # Allow limited requests in half-open state
+                if self._half_open_calls < self.config.half_open_max_calls:
+                    self._half_open_calls += 1
+                    return True
+                return False
+            else:  # OPEN
+                return False
 
     def reset(self) -> None:
-        """Manually reset the circuit breaker."""
-        self._state = self.CLOSED
-        self._failure_count = 0
-        self._half_open_calls = 0
+        """Manually reset the circuit breaker (thread-safe)."""
+        with self._lock:
+            self._state = self.CLOSED
+            self._failure_count = 0
+            self._half_open_calls = 0
 
     def __enter__(self):
-        """Context manager entry - check if request is allowed."""
-        if not self.allow_request():
-            raise CircuitBreakerOpen(self.name, self.config.recovery_timeout - (time.time() - self._last_failure_time))
-        return self
+        """Context manager entry - check if request is allowed (thread-safe)."""
+        with self._lock:
+            # Check state transition inline
+            if self._state == self.OPEN:
+                if time.time() - self._last_failure_time >= self.config.recovery_timeout:
+                    self._state = self.HALF_OPEN
+                    self._half_open_calls = 0
+
+            if self._state == self.CLOSED:
+                return self
+            elif self._state == self.HALF_OPEN:
+                if self._half_open_calls < self.config.half_open_max_calls:
+                    self._half_open_calls += 1
+                    return self
+                raise CircuitBreakerOpen(self.name, self.config.recovery_timeout - (time.time() - self._last_failure_time))
+            else:  # OPEN
+                raise CircuitBreakerOpen(self.name, self.config.recovery_timeout - (time.time() - self._last_failure_time))
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - record success or failure."""
@@ -563,8 +591,8 @@ class SmartSelector:
                 "textarea"
             ])
 
-        # Extract any quoted text as has-text selector
-        quoted = re.findall(r'"([^"]+)"', description)
+        # Extract any quoted text as has-text selector (uses pre-compiled pattern)
+        quoted = _RE_QUOTED_TEXT.findall(description)
         for text in quoted:
             selectors.append(f"*:has-text('{text}')")
 

@@ -11,18 +11,22 @@ Manages browser cookies across sessions:
 """
 
 import json
+import logging
 import os
 import time
 import base64
 import hashlib
 import secrets
 from pathlib import Path
+
 from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any, Union, Tuple
 from datetime import datetime, timedelta
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -166,20 +170,36 @@ class CookieProfile:
 class CookieEncryption:
     """Handles cookie encryption/decryption."""
 
-    def __init__(self, password: Optional[str] = None):
+    def __init__(self, password: Optional[str] = None, salt: Optional[bytes] = None):
         """Initialize encryption with optional password.
 
         If no password is provided, generates a machine-specific key.
+
+        Args:
+            password: User password for encryption (if None, uses machine ID)
+            salt: Salt bytes for password-based encryption (if None, generates new salt)
         """
+        self._salt: Optional[bytes] = None
+        self._password: Optional[str] = password
         if password:
-            self._fernet = self._create_fernet_from_password(password)
+            self._fernet, self._salt = self._create_fernet_from_password(password, salt)
         else:
             self._fernet = self._create_fernet_from_machine_id()
 
-    def _create_fernet_from_password(self, password: str) -> Fernet:
-        """Create Fernet cipher from password."""
-        # Use a fixed salt for simplicity (in production, store salt with data)
-        salt = b"blackreach_cookie_salt_v1"
+    def _create_fernet_from_password(self, password: str, salt: Optional[bytes] = None) -> Tuple[Fernet, bytes]:
+        """Create Fernet cipher from password with random salt.
+
+        Args:
+            password: User password for encryption
+            salt: Optional salt bytes (if None, generates new random salt)
+
+        Returns:
+            Tuple of (Fernet cipher, salt bytes used)
+        """
+        # Generate random salt if not provided (16 bytes = 128 bits)
+        if salt is None:
+            salt = os.urandom(16)
+
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
@@ -187,10 +207,14 @@ class CookieEncryption:
             iterations=100000,
         )
         key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
-        return Fernet(key)
+        return Fernet(key), salt
 
     def _create_fernet_from_machine_id(self) -> Fernet:
-        """Create Fernet cipher from machine-specific identifier."""
+        """Create Fernet cipher from machine-specific identifier.
+
+        P0-SEC: Uses a random salt stored in a separate file for better security.
+        The salt file is created once per machine and reused for consistency.
+        """
         # Use combination of machine identifiers
         machine_id_parts = []
 
@@ -200,8 +224,8 @@ class CookieEncryption:
             if os.path.exists("/etc/machine-id"):
                 with open("/etc/machine-id", "r") as f:
                     machine_id_parts.append(f.read().strip())
-        except Exception:
-            pass
+        except OSError as e:
+            logger.debug("Failed to read /etc/machine-id: %s", e)
 
         try:
             # Windows machine GUID
@@ -212,8 +236,8 @@ class CookieEncryption:
             )
             machine_guid, _ = winreg.QueryValueEx(key, "MachineGuid")
             machine_id_parts.append(machine_guid)
-        except Exception:
-            pass
+        except (ImportError, OSError) as e:
+            logger.debug("Failed to read Windows MachineGuid: %s", e)
 
         # Fallback to hostname + user
         if not machine_id_parts:
@@ -224,8 +248,28 @@ class CookieEncryption:
 
         machine_id = ":".join(machine_id_parts)
 
-        # Derive key from machine ID
-        salt = b"blackreach_machine_salt_v1"
+        # P0-SEC: Use per-installation random salt instead of fixed salt
+        # Salt is stored in a file so it persists across restarts
+        salt_file = Path.home() / ".blackreach" / ".cookie_salt"
+        try:
+            salt_file.parent.mkdir(parents=True, exist_ok=True)
+            if salt_file.exists():
+                salt = salt_file.read_bytes()
+                if len(salt) != 16:
+                    # Invalid salt file, regenerate
+                    salt = os.urandom(16)
+                    salt_file.write_bytes(salt)
+                    os.chmod(salt_file, 0o600)
+            else:
+                # Generate new random salt
+                salt = os.urandom(16)
+                salt_file.write_bytes(salt)
+                os.chmod(salt_file, 0o600)
+        except OSError as e:
+            # Fallback to fixed salt if file operations fail
+            logger.debug("Failed to read/write cookie salt file, using fallback salt: %s", e)
+            salt = b"blackreach_machine_salt_v1"
+
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
@@ -235,13 +279,59 @@ class CookieEncryption:
         key = base64.urlsafe_b64encode(kdf.derive(machine_id.encode()))
         return Fernet(key)
 
+    @property
+    def salt(self) -> Optional[bytes]:
+        """Get the salt used for password-based encryption."""
+        return self._salt
+
     def encrypt(self, data: bytes) -> bytes:
-        """Encrypt data."""
-        return self._fernet.encrypt(data)
+        """Encrypt data.
+
+        For password-based encryption, prepends the salt to encrypted data.
+        """
+        encrypted = self._fernet.encrypt(data)
+        if self._salt:
+            # Prepend salt (16 bytes) to encrypted data for later decryption
+            return self._salt + encrypted
+        return encrypted
 
     def decrypt(self, data: bytes) -> bytes:
-        """Decrypt data."""
+        """Decrypt data.
+
+        For password-based encryption, extracts salt from data first
+        and recreates the cipher with the correct salt.
+        """
+        if self._salt is not None:
+            # Password-based encryption: salt is prepended to data
+            if len(data) <= 16:
+                raise ValueError("Data too short - missing salt")
+            stored_salt = data[:16]
+            encrypted = data[16:]
+            # If the stored salt differs from our salt, recreate the cipher
+            if stored_salt != self._salt:
+                self._fernet, self._salt = self._create_fernet_from_password(
+                    self._password, stored_salt
+                )
+            return self._fernet.decrypt(encrypted)
         return self._fernet.decrypt(data)
+
+    @classmethod
+    def decrypt_with_password(cls, data: bytes, password: str) -> bytes:
+        """Decrypt data using password, extracting salt from data.
+
+        Args:
+            data: Encrypted data with prepended salt
+            password: Password used for encryption
+
+        Returns:
+            Decrypted bytes
+        """
+        if len(data) < 16:
+            raise ValueError("Data too short - missing salt")
+        salt = data[:16]
+        encrypted = data[16:]
+        instance = cls(password=password, salt=salt)
+        return instance._fernet.decrypt(encrypted)
 
 
 class CookieManager:
@@ -371,7 +461,8 @@ class CookieManager:
             return profile
 
         except Exception as e:
-            print(f"Error loading cookie profile '{name}': {e}")
+            # Broad catch: profile loading can fail from I/O, decryption, or corrupt JSON
+            logger.debug("Failed to load cookie profile '%s': %s", name, e)
             return None
 
     def delete_profile(self, name: str):

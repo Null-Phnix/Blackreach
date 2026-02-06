@@ -7,12 +7,14 @@ Detects:
 - Paywalls
 - Rate limiting
 - Access denied pages
+- Site type (static vs SPA) for adaptive timeouts
 """
 
 import re
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 from urllib.parse import urlparse
+from enum import Enum
 
 from blackreach.exceptions import (
     CaptchaError,
@@ -21,6 +23,329 @@ from blackreach.exceptions import (
     AccessDeniedError,
     RateLimitError,
 )
+
+
+class SiteType(Enum):
+    """Site type classification for adaptive timeout behavior."""
+    STATIC = "static"           # Traditional server-rendered pages (Wikipedia, GitHub)
+    SPA = "spa"                 # Single Page Applications (React, Vue, Angular)
+    HYBRID = "hybrid"           # Server-rendered with client hydration (Next.js)
+    SEARCH_ENGINE = "search"    # Search engines (Google, DuckDuckGo)
+    UNKNOWN = "unknown"
+
+
+@dataclass
+class SiteCharacteristics:
+    """Characteristics of a site for timeout tuning."""
+    site_type: SiteType
+    # Timeout recommendations in milliseconds
+    network_idle_timeout: int = 10000  # Default 10s
+    content_wait_timeout: int = 5000   # Default 5s
+    # Whether to skip certain wait phases
+    skip_framework_detection: bool = False
+    skip_dynamic_content_wait: bool = False
+    # Early exit thresholds
+    min_links_for_ready: int = 3
+    min_text_length_for_ready: int = 200
+    # Description for logging
+    description: str = ""
+
+
+# Known static sites that load quickly - map domain patterns to characteristics
+STATIC_SITE_PATTERNS = {
+    # Wikipedia and Wikimedia
+    "wikipedia.org": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=5000,
+        content_wait_timeout=3000,
+        skip_framework_detection=True,
+        skip_dynamic_content_wait=True,
+        min_links_for_ready=10,
+        min_text_length_for_ready=500,
+        description="Wikipedia - static server-rendered"
+    ),
+    "wikimedia.org": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=5000,
+        content_wait_timeout=3000,
+        skip_framework_detection=True,
+        skip_dynamic_content_wait=True,
+        description="Wikimedia - static server-rendered"
+    ),
+    # GitHub
+    "github.com": SiteCharacteristics(
+        site_type=SiteType.HYBRID,
+        network_idle_timeout=8000,
+        content_wait_timeout=5000,
+        skip_framework_detection=True,
+        min_links_for_ready=5,
+        min_text_length_for_ready=200,
+        description="GitHub - hybrid with pjax navigation"
+    ),
+    "raw.githubusercontent.com": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=3000,
+        content_wait_timeout=2000,
+        skip_framework_detection=True,
+        skip_dynamic_content_wait=True,
+        description="GitHub raw content - static"
+    ),
+    # Search engines
+    "google.com": SiteCharacteristics(
+        site_type=SiteType.SEARCH_ENGINE,
+        network_idle_timeout=8000,
+        content_wait_timeout=5000,
+        skip_framework_detection=True,
+        min_links_for_ready=5,
+        description="Google - search engine"
+    ),
+    "duckduckgo.com": SiteCharacteristics(
+        site_type=SiteType.SEARCH_ENGINE,
+        network_idle_timeout=8000,
+        content_wait_timeout=5000,
+        skip_framework_detection=True,
+        min_links_for_ready=5,
+        description="DuckDuckGo - search engine"
+    ),
+    "bing.com": SiteCharacteristics(
+        site_type=SiteType.SEARCH_ENGINE,
+        network_idle_timeout=8000,
+        content_wait_timeout=5000,
+        skip_framework_detection=True,
+        min_links_for_ready=5,
+        description="Bing - search engine"
+    ),
+    # Documentation sites
+    "docs.python.org": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=5000,
+        content_wait_timeout=3000,
+        skip_framework_detection=True,
+        skip_dynamic_content_wait=True,
+        description="Python docs - static"
+    ),
+    "developer.mozilla.org": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=5000,
+        content_wait_timeout=3000,
+        skip_framework_detection=True,
+        description="MDN - static documentation"
+    ),
+    # News/content sites
+    "arxiv.org": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=5000,
+        content_wait_timeout=3000,
+        skip_framework_detection=True,
+        skip_dynamic_content_wait=True,
+        description="arXiv - static academic papers"
+    ),
+    "stackoverflow.com": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=6000,
+        content_wait_timeout=4000,
+        skip_framework_detection=True,
+        min_links_for_ready=5,
+        description="Stack Overflow - mostly static"
+    ),
+    # Reddit (old reddit is static, new reddit is SPA - we detect by subdomain)
+    "old.reddit.com": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=6000,
+        content_wait_timeout=4000,
+        skip_framework_detection=True,
+        min_links_for_ready=5,
+        description="Old Reddit - static"
+    ),
+    # Book/document download sites
+    "libgen": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=5000,
+        content_wait_timeout=3000,
+        skip_framework_detection=True,
+        skip_dynamic_content_wait=True,
+        description="LibGen - static book database"
+    ),
+    "annas-archive": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=6000,
+        content_wait_timeout=4000,
+        skip_framework_detection=True,
+        min_links_for_ready=3,
+        description="Anna's Archive - static book search"
+    ),
+    # News sites
+    "bbc.com": SiteCharacteristics(
+        site_type=SiteType.HYBRID,
+        network_idle_timeout=8000,
+        content_wait_timeout=5000,
+        skip_framework_detection=True,
+        min_links_for_ready=5,
+        description="BBC News - hybrid"
+    ),
+    "reuters.com": SiteCharacteristics(
+        site_type=SiteType.HYBRID,
+        network_idle_timeout=8000,
+        content_wait_timeout=5000,
+        skip_framework_detection=True,
+        min_links_for_ready=5,
+        description="Reuters - hybrid"
+    ),
+    # Tech documentation
+    "docs.microsoft.com": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=6000,
+        content_wait_timeout=4000,
+        skip_framework_detection=True,
+        description="Microsoft Docs - static"
+    ),
+    "learn.microsoft.com": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=6000,
+        content_wait_timeout=4000,
+        skip_framework_detection=True,
+        description="Microsoft Learn - static"
+    ),
+    "readthedocs.io": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=5000,
+        content_wait_timeout=3000,
+        skip_framework_detection=True,
+        skip_dynamic_content_wait=True,
+        description="ReadTheDocs - static documentation"
+    ),
+    "readthedocs.org": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=5000,
+        content_wait_timeout=3000,
+        skip_framework_detection=True,
+        skip_dynamic_content_wait=True,
+        description="ReadTheDocs - static documentation"
+    ),
+    # Image sites
+    "unsplash.com": SiteCharacteristics(
+        site_type=SiteType.HYBRID,
+        network_idle_timeout=8000,
+        content_wait_timeout=6000,
+        skip_framework_detection=True,
+        min_links_for_ready=5,
+        description="Unsplash - hybrid image site"
+    ),
+    "pexels.com": SiteCharacteristics(
+        site_type=SiteType.HYBRID,
+        network_idle_timeout=8000,
+        content_wait_timeout=6000,
+        skip_framework_detection=True,
+        min_links_for_ready=5,
+        description="Pexels - hybrid image site"
+    ),
+    "wallhaven.cc": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=6000,
+        content_wait_timeout=4000,
+        skip_framework_detection=True,
+        min_links_for_ready=3,
+        description="Wallhaven - static wallpaper site"
+    ),
+    # Code repositories
+    "gitlab.com": SiteCharacteristics(
+        site_type=SiteType.HYBRID,
+        network_idle_timeout=8000,
+        content_wait_timeout=5000,
+        skip_framework_detection=True,
+        min_links_for_ready=5,
+        description="GitLab - hybrid"
+    ),
+    "bitbucket.org": SiteCharacteristics(
+        site_type=SiteType.HYBRID,
+        network_idle_timeout=8000,
+        content_wait_timeout=5000,
+        skip_framework_detection=True,
+        min_links_for_ready=5,
+        description="Bitbucket - hybrid"
+    ),
+    # AI/ML sites
+    "huggingface.co": SiteCharacteristics(
+        site_type=SiteType.HYBRID,
+        network_idle_timeout=8000,
+        content_wait_timeout=5000,
+        skip_framework_detection=True,
+        min_links_for_ready=5,
+        description="Hugging Face - hybrid"
+    ),
+    "kaggle.com": SiteCharacteristics(
+        site_type=SiteType.HYBRID,
+        network_idle_timeout=8000,
+        content_wait_timeout=5000,
+        skip_framework_detection=True,
+        min_links_for_ready=5,
+        description="Kaggle - hybrid"
+    ),
+    # Academic
+    "sciencedirect.com": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=6000,
+        content_wait_timeout=4000,
+        skip_framework_detection=True,
+        min_links_for_ready=3,
+        description="ScienceDirect - mostly static"
+    ),
+    "pubmed.ncbi.nlm.nih.gov": SiteCharacteristics(
+        site_type=SiteType.STATIC,
+        network_idle_timeout=5000,
+        content_wait_timeout=3000,
+        skip_framework_detection=True,
+        skip_dynamic_content_wait=True,
+        description="PubMed - static"
+    ),
+    "scholar.google.com": SiteCharacteristics(
+        site_type=SiteType.SEARCH_ENGINE,
+        network_idle_timeout=8000,
+        content_wait_timeout=5000,
+        skip_framework_detection=True,
+        min_links_for_ready=5,
+        description="Google Scholar - search engine"
+    ),
+}
+
+
+def get_site_characteristics(url: str) -> SiteCharacteristics:
+    """
+    Get site characteristics for adaptive timeout tuning.
+
+    Args:
+        url: The URL to analyze
+
+    Returns:
+        SiteCharacteristics with recommended timeout values
+    """
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+
+        # Check against known patterns
+        for pattern, characteristics in STATIC_SITE_PATTERNS.items():
+            if pattern in domain:
+                return characteristics
+
+        # Default characteristics for unknown sites
+        return SiteCharacteristics(
+            site_type=SiteType.UNKNOWN,
+            network_idle_timeout=10000,
+            content_wait_timeout=8000,
+            description="Unknown site - using default timeouts"
+        )
+    except Exception:
+        return SiteCharacteristics(
+            site_type=SiteType.UNKNOWN,
+            description="Could not parse URL"
+        )
+
+# P0-PERF: Pre-compiled regex patterns for detection
+_RE_TITLE = re.compile(r'<title>(.*?)</title>', re.IGNORECASE)
+_RE_RETRY_AFTER = re.compile(r'try\s*again\s*in\s*(\d+)\s*(second|minute|hour)?', re.IGNORECASE)
+_RE_HTML_TAGS = re.compile(r'<[^>]+>')
+_RE_COUNTDOWN = re.compile(r'seconds?|wait\s*\d+')
 
 
 @dataclass
@@ -242,9 +567,9 @@ class SiteDetector:
                 indicators.append(f"Form: {indicator}")
                 confidence += 0.2
 
-        # Check title
+        # Check title (uses pre-compiled pattern)
         if '<title>' in html_lower:
-            title_match = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE)
+            title_match = _RE_TITLE.search(html)
             if title_match:
                 title = title_match.group(1).lower()
                 if any(word in title for word in ['login', 'sign in', 'log in', 'authenticate']):
@@ -313,9 +638,9 @@ class SiteDetector:
         confidence = min(confidence, 1.0)
         detected = confidence >= 0.5
 
-        # Try to extract retry-after hint
+        # Try to extract retry-after hint (uses pre-compiled pattern)
         retry_after = None
-        retry_match = re.search(r'try\s*again\s*in\s*(\d+)\s*(second|minute|hour)?', html, re.IGNORECASE)
+        retry_match = _RE_RETRY_AFTER.search(html)
         if retry_match:
             value = int(retry_match.group(1))
             unit = (retry_match.group(2) or 'second').lower()
@@ -387,8 +712,8 @@ class SiteDetector:
             confidence += 0.4
 
         # Check for minimal page content (interstitial pages are usually minimal)
-        # Count actual content elements (use module-level re import)
-        text_content = re.sub(r'<[^>]+>', '', html)
+        # Count actual content elements (uses pre-compiled pattern)
+        text_content = _RE_HTML_TAGS.sub('', html)
         word_count = len(text_content.split())
         if word_count < 50:
             indicators.append(f"Minimal content ({word_count} words)")
@@ -498,7 +823,7 @@ class SiteDetector:
 
         # Check for countdown timers (common on file hosting sites)
         if 'countdown' in html_lower or 'timer' in html_lower or 'wait' in html_lower:
-            if re.search(r'seconds?|wait\s*\d+', html_lower):
+            if _RE_COUNTDOWN.search(html_lower):
                 indicators.append("Countdown timer detected")
                 confidence += 0.3
 

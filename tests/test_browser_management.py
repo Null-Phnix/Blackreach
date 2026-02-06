@@ -14,11 +14,12 @@ Tests the new browser lifecycle management methods:
 import pytest
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch, PropertyMock
+from playwright.sync_api import Error as PlaywrightError
 from blackreach.browser import Hand
 from blackreach.agent import Agent, AgentConfig
 from blackreach.stealth import StealthConfig
 from blackreach.resilience import RetryConfig
-from blackreach.exceptions import BrowserNotReadyError
+from blackreach.exceptions import BrowserNotReadyError, BrowserError, NavigationError
 
 
 # =============================================================================
@@ -91,14 +92,13 @@ class TestHandIsHealthy:
         """is_healthy returns False when page operations throw."""
         hand = Hand()
         mock_page = Mock()
-        mock_page.url = property(lambda self: (_ for _ in ()).throw(Exception("Page closed")))
 
         hand._playwright = Mock()
         hand._browser = Mock()
         hand._page = mock_page
 
-        # Use a property that throws
-        type(mock_page).url = PropertyMock(side_effect=Exception("Page closed"))
+        # Use a property that throws PlaywrightError
+        type(mock_page).url = PropertyMock(side_effect=PlaywrightError("Page closed"))
 
         assert hand.is_healthy() is False
 
@@ -125,7 +125,7 @@ class TestHandIsHealthy:
         hand._consecutive_errors = 0
 
         mock_page = Mock()
-        type(mock_page).url = PropertyMock(side_effect=Exception("Error"))
+        type(mock_page).url = PropertyMock(side_effect=PlaywrightError("Error"))
 
         hand._playwright = Mock()
         hand._browser = Mock()
@@ -168,7 +168,7 @@ class TestHandEnsureAwake:
         hand._playwright = Mock()
         hand._browser = Mock()
         mock_page = Mock()
-        type(mock_page).url = PropertyMock(side_effect=Exception("Unhealthy"))
+        type(mock_page).url = PropertyMock(side_effect=PlaywrightError("Unhealthy"))
         hand._page = mock_page
 
         with patch.object(hand, 'sleep') as mock_sleep, \
@@ -432,7 +432,7 @@ class TestAgentRestartBrowser:
 
         mock_hand = Mock()
         mock_hand.restart.return_value = True
-        mock_hand.goto.side_effect = Exception("Nav error")
+        mock_hand.goto.side_effect = NavigationError("Nav error")
         agent.hand = mock_hand
 
         # Should not raise
@@ -490,7 +490,7 @@ class TestAgentGetDomainWithBrowserCheck:
 
         mock_hand = Mock()
         mock_hand.is_awake = True
-        mock_hand.get_url.side_effect = Exception("Page closed")
+        mock_hand.get_url.side_effect = BrowserError("Page closed")
         agent.hand = mock_hand
 
         result = agent._get_domain()
@@ -616,7 +616,7 @@ class TestBrowserManagementEdgeCases:
         hand = Hand()
 
         mock_page = Mock()
-        type(mock_page).url = PropertyMock(side_effect=Exception("Error"))
+        type(mock_page).url = PropertyMock(side_effect=PlaywrightError("Error"))
 
         hand._playwright = Mock()
         hand._browser = Mock()

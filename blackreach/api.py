@@ -205,7 +205,14 @@ class BlackreachAPI:
 
         Returns:
             Dict with page title, text, links
+
+        Raises:
+            ValueError: If URL targets internal/private networks (SSRF protection)
         """
+        # P0-SEC: SSRF protection - validate URL before fetching
+        from blackreach.browser import _is_ssrf_safe
+        _is_ssrf_safe(url)  # Raises ValueError if unsafe
+
         agent = self._get_agent()
 
         # Initialize browser if needed

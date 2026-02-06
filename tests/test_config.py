@@ -134,8 +134,11 @@ class TestConfigManager:
 class TestConfigManagerMethods:
     """Tests for ConfigManager methods with file operations."""
 
-    def test_config_to_dict_structure(self):
+    def test_config_to_dict_structure(self, monkeypatch):
         """_config_to_dict returns proper structure."""
+        # Mock keyring as unavailable so API keys are saved to config
+        monkeypatch.setattr("blackreach.config.KEYRING_AVAILABLE", False)
+
         manager = ConfigManager.__new__(ConfigManager)
         config = Config()
         config.default_provider = "openai"
@@ -261,6 +264,7 @@ class TestConfigManagerFileOps:
 
         manager = ConfigManager.__new__(ConfigManager)
         manager._config = None
+        manager._use_keyring = False  # Required attribute set by __init__
 
         config = manager.load()
 
@@ -286,6 +290,7 @@ class TestConfigManagerFileOps:
 
         manager = ConfigManager.__new__(ConfigManager)
         manager._config = None
+        manager._use_keyring = False  # Required attribute set by __init__
 
         config = manager.load()
 
@@ -355,12 +360,33 @@ class TestConfigManagerFileOps:
 
         manager = ConfigManager.__new__(ConfigManager)
         manager._config = None
+        manager._use_keyring = False  # Required attribute set by __init__
 
         config = manager.load()
 
         # Should return default config
         assert config is not None
         assert isinstance(config, Config)
+
+    def test_save_sets_restrictive_permissions(self, tmp_path, monkeypatch):
+        """save() sets 0600 permissions on config file for security."""
+        import os
+        import stat
+
+        config_file = tmp_path / "config.yml"
+        monkeypatch.setattr("blackreach.config.CONFIG_FILE", config_file)
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = Config()
+
+        manager.save()
+
+        assert config_file.exists()
+
+        # Check permissions (on Unix-like systems)
+        file_mode = stat.S_IMODE(os.stat(config_file).st_mode)
+        # Should be 0600 (owner read/write only)
+        assert file_mode == 0o600, f"Expected 0600, got {oct(file_mode)}"
 
 
 class TestConfigManagerSetters:
@@ -372,9 +398,11 @@ class TestConfigManagerSetters:
 
         config_file = tmp_path / "config.yml"
         monkeypatch.setattr("blackreach.config.CONFIG_FILE", config_file)
+        monkeypatch.setattr("blackreach.config.KEYRING_AVAILABLE", False)
 
         manager = ConfigManager.__new__(ConfigManager)
         manager._config = None
+        manager._use_keyring = False
 
         manager.set_api_key("openai", "test-api-key")
 
@@ -390,6 +418,7 @@ class TestConfigManagerSetters:
 
         manager = ConfigManager.__new__(ConfigManager)
         manager._config = None
+        manager._use_keyring = False
 
         with pytest.raises(InvalidConfigError):
             manager.set_api_key("invalid_provider", "key")
@@ -403,6 +432,7 @@ class TestConfigManagerSetters:
 
         manager = ConfigManager.__new__(ConfigManager)
         manager._config = None
+        manager._use_keyring = False
 
         manager.set_default_provider("openai")
 
@@ -418,6 +448,7 @@ class TestConfigManagerSetters:
 
         manager = ConfigManager.__new__(ConfigManager)
         manager._config = None
+        manager._use_keyring = False
 
         with pytest.raises(InvalidConfigError):
             manager.set_default_provider("invalid_provider")
@@ -431,6 +462,7 @@ class TestConfigManagerSetters:
 
         manager = ConfigManager.__new__(ConfigManager)
         manager._config = None
+        manager._use_keyring = False
 
         manager.set_default_model("openai", "gpt-4o")
 
@@ -446,6 +478,7 @@ class TestConfigManagerSetters:
 
         manager = ConfigManager.__new__(ConfigManager)
         manager._config = None
+        manager._use_keyring = False
 
         with pytest.raises(InvalidConfigError):
             manager.set_default_model("invalid_provider", "model")

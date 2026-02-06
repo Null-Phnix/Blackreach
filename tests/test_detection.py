@@ -740,3 +740,171 @@ class TestRaiseForObstacle:
             except RateLimitError as e:
                 # Should have handled the ValueError and set retry_after to None
                 assert e.retry_after is None
+
+
+# =============================================================================
+# Site Characteristics Tests
+# =============================================================================
+
+class TestSiteCharacteristics:
+    """Tests for site characteristics and adaptive timeout functionality."""
+
+    def test_get_site_characteristics_wikipedia(self):
+        """Wikipedia returns static site characteristics."""
+        from blackreach.detection import get_site_characteristics, SiteType
+
+        chars = get_site_characteristics("https://en.wikipedia.org/wiki/Python")
+
+        assert chars.site_type == SiteType.STATIC
+        assert chars.network_idle_timeout <= 5000  # Should be short
+        assert chars.skip_framework_detection is True
+        assert chars.skip_dynamic_content_wait is True
+        assert "Wikipedia" in chars.description
+
+    def test_get_site_characteristics_github(self):
+        """GitHub returns hybrid site characteristics."""
+        from blackreach.detection import get_site_characteristics, SiteType
+
+        chars = get_site_characteristics("https://github.com/anthropics/claude-code")
+
+        assert chars.site_type == SiteType.HYBRID
+        assert chars.network_idle_timeout <= 10000
+        assert chars.skip_framework_detection is True
+        assert "GitHub" in chars.description
+
+    def test_get_site_characteristics_google(self):
+        """Google returns search engine characteristics."""
+        from blackreach.detection import get_site_characteristics, SiteType
+
+        chars = get_site_characteristics("https://www.google.com/search?q=test")
+
+        assert chars.site_type == SiteType.SEARCH_ENGINE
+        assert chars.skip_framework_detection is True
+        assert "Google" in chars.description
+
+    def test_get_site_characteristics_unknown_site(self):
+        """Unknown sites return default characteristics."""
+        from blackreach.detection import get_site_characteristics, SiteType
+
+        chars = get_site_characteristics("https://some-random-spa-site.com/app")
+
+        assert chars.site_type == SiteType.UNKNOWN
+        assert chars.network_idle_timeout == 10000  # Default
+        assert chars.skip_framework_detection is False
+
+    def test_get_site_characteristics_invalid_url(self):
+        """Invalid URLs return default characteristics."""
+        from blackreach.detection import get_site_characteristics, SiteType
+
+        chars = get_site_characteristics("not-a-valid-url")
+
+        assert chars.site_type == SiteType.UNKNOWN
+
+    def test_get_site_characteristics_duckduckgo(self):
+        """DuckDuckGo returns search engine characteristics."""
+        from blackreach.detection import get_site_characteristics, SiteType
+
+        chars = get_site_characteristics("https://duckduckgo.com/?q=python")
+
+        assert chars.site_type == SiteType.SEARCH_ENGINE
+        assert "DuckDuckGo" in chars.description
+
+    def test_get_site_characteristics_stackoverflow(self):
+        """Stack Overflow returns static site characteristics."""
+        from blackreach.detection import get_site_characteristics, SiteType
+
+        chars = get_site_characteristics("https://stackoverflow.com/questions/12345")
+
+        assert chars.site_type == SiteType.STATIC
+        assert chars.network_idle_timeout <= 8000
+        assert "Stack Overflow" in chars.description
+
+    def test_get_site_characteristics_arxiv(self):
+        """arXiv returns static site characteristics."""
+        from blackreach.detection import get_site_characteristics, SiteType
+
+        chars = get_site_characteristics("https://arxiv.org/abs/2301.12345")
+
+        assert chars.site_type == SiteType.STATIC
+        assert chars.skip_dynamic_content_wait is True
+        assert "arXiv" in chars.description
+
+    def test_site_type_enum_values(self):
+        """SiteType enum has expected values."""
+        from blackreach.detection import SiteType
+
+        assert SiteType.STATIC.value == "static"
+        assert SiteType.SPA.value == "spa"
+        assert SiteType.HYBRID.value == "hybrid"
+        assert SiteType.SEARCH_ENGINE.value == "search"
+        assert SiteType.UNKNOWN.value == "unknown"
+
+    def test_site_characteristics_has_all_fields(self):
+        """SiteCharacteristics has all expected fields."""
+        from blackreach.detection import get_site_characteristics
+
+        chars = get_site_characteristics("https://en.wikipedia.org/wiki/Test")
+
+        # All fields should be set
+        assert hasattr(chars, 'site_type')
+        assert hasattr(chars, 'network_idle_timeout')
+        assert hasattr(chars, 'content_wait_timeout')
+        assert hasattr(chars, 'skip_framework_detection')
+        assert hasattr(chars, 'skip_dynamic_content_wait')
+        assert hasattr(chars, 'min_links_for_ready')
+        assert hasattr(chars, 'min_text_length_for_ready')
+        assert hasattr(chars, 'description')
+
+    def test_get_site_characteristics_case_insensitive(self):
+        """URL domain matching is case-insensitive."""
+        from blackreach.detection import get_site_characteristics, SiteType
+
+        chars_lower = get_site_characteristics("https://en.wikipedia.org/wiki/Test")
+        chars_upper = get_site_characteristics("https://EN.WIKIPEDIA.ORG/wiki/Test")
+
+        # Both should match Wikipedia
+        assert chars_lower.site_type == SiteType.STATIC
+        assert chars_upper.site_type == SiteType.STATIC
+
+    def test_get_site_characteristics_libgen(self):
+        """LibGen sites return static characteristics."""
+        from blackreach.detection import get_site_characteristics, SiteType
+
+        chars = get_site_characteristics("https://libgen.rs/book/123456")
+
+        assert chars.site_type == SiteType.STATIC
+        assert chars.skip_dynamic_content_wait is True
+
+    def test_get_site_characteristics_readthedocs(self):
+        """ReadTheDocs sites return static characteristics."""
+        from blackreach.detection import get_site_characteristics, SiteType
+
+        chars = get_site_characteristics("https://docs.myproject.readthedocs.io/en/latest/")
+
+        assert chars.site_type == SiteType.STATIC
+        assert chars.skip_dynamic_content_wait is True
+
+    def test_get_site_characteristics_huggingface(self):
+        """Hugging Face returns hybrid characteristics."""
+        from blackreach.detection import get_site_characteristics, SiteType
+
+        chars = get_site_characteristics("https://huggingface.co/models")
+
+        assert chars.site_type == SiteType.HYBRID
+
+    def test_get_site_characteristics_google_scholar(self):
+        """Google Scholar returns search engine characteristics."""
+        from blackreach.detection import get_site_characteristics, SiteType
+
+        chars = get_site_characteristics("https://scholar.google.com/scholar?q=test")
+
+        assert chars.site_type == SiteType.SEARCH_ENGINE
+
+    def test_get_site_characteristics_pubmed(self):
+        """PubMed returns static characteristics."""
+        from blackreach.detection import get_site_characteristics, SiteType
+
+        chars = get_site_characteristics("https://pubmed.ncbi.nlm.nih.gov/12345678/")
+
+        assert chars.site_type == SiteType.STATIC
+        assert chars.skip_dynamic_content_wait is True

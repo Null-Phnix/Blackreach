@@ -23,6 +23,7 @@ Example usage:
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
 import json
@@ -60,12 +61,10 @@ class ActionStats:
 
     def record_success(self):
         self.success_count += 1
-        from datetime import datetime
         self.last_success = datetime.now().isoformat()
 
     def record_failure(self, error: str = ""):
         self.failure_count += 1
-        from datetime import datetime
         self.last_failure = datetime.now().isoformat()
         if error:
             self.common_errors[error] = self.common_errors.get(error, 0) + 1
@@ -90,6 +89,7 @@ class ActionTracker:
     RE_CLASS_ID = re.compile(r'[#.][\w-]+')
     RE_NTH_CHILD = re.compile(r':nth-child\(\d+\)')
     RE_QUOTED = re.compile(r'"[^"]*"|\'[^\']*\'')
+    RE_ELEMENT_TYPE = re.compile(r'^(\w+)')
 
     def __init__(self, persistent_memory=None):
         """
@@ -148,8 +148,8 @@ class ActionTracker:
         if not selector:
             return "unknown"
 
-        # Get first word (element type)
-        match = re.match(r'^(\w+)', selector)
+        # Get first word (element type) - uses class-level pre-compiled pattern
+        match = self.RE_ELEMENT_TYPE.match(selector)
         if match:
             return match.group(1).lower()
 

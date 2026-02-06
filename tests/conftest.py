@@ -787,3 +787,85 @@ def test_image_file(temp_dir):
         0xAE, 0x42, 0x60, 0x82,  # CRC
     ])
     return create_test_file(temp_dir, 'test.png', png_content)
+
+
+# =============================================================================
+# FIXTURES: Global State Reset (Test Isolation)
+# =============================================================================
+
+@pytest.fixture(autouse=True)
+def reset_global_state():
+    """
+    Automatically reset all singleton global state before each test.
+
+    This fixture runs automatically for every test to ensure test isolation.
+    It resets all known global singletons to prevent state leakage between tests.
+    """
+    # Reset before test
+    _reset_all_singletons()
+
+    yield
+
+    # Reset after test for cleanup
+    _reset_all_singletons()
+
+
+def _reset_all_singletons():
+    """Helper function to reset all singleton instances."""
+    # Reset error recovery
+    try:
+        from blackreach.error_recovery import reset_global_recovery
+        reset_global_recovery()
+    except ImportError:
+        pass
+
+    # Reset rate limiter
+    try:
+        from blackreach.rate_limiter import reset_rate_limiter
+        reset_rate_limiter()
+    except ImportError:
+        pass
+
+    # Reset timeout manager
+    try:
+        from blackreach.timeout_manager import reset_timeout_manager
+        reset_timeout_manager()
+    except ImportError:
+        pass
+
+    # Reset parallel manager
+    try:
+        from blackreach.parallel_ops import reset_parallel_manager
+        reset_parallel_manager()
+    except ImportError:
+        pass
+
+
+@pytest.fixture
+def fresh_error_recovery():
+    """Provide a fresh ErrorRecovery instance with reset global state."""
+    from blackreach.error_recovery import ErrorRecovery, reset_global_recovery
+    reset_global_recovery()
+    recovery = ErrorRecovery()
+    yield recovery
+    reset_global_recovery()
+
+
+@pytest.fixture
+def fresh_rate_limiter():
+    """Provide a fresh RateLimiter instance with reset global state."""
+    from blackreach.rate_limiter import RateLimiter, reset_rate_limiter
+    reset_rate_limiter()
+    limiter = RateLimiter()
+    yield limiter
+    reset_rate_limiter()
+
+
+@pytest.fixture
+def fresh_timeout_manager():
+    """Provide a fresh TimeoutManager instance with reset global state."""
+    from blackreach.timeout_manager import TimeoutManager, reset_timeout_manager
+    reset_timeout_manager()
+    manager = TimeoutManager()
+    yield manager
+    reset_timeout_manager()

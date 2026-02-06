@@ -21,21 +21,24 @@ class StealthConfig:
     min_delay: float = 0.5
     max_delay: float = 2.0
     typing_speed: Tuple[float, float] = (0.05, 0.15)  # seconds per char
-    
+
     # Mouse behavior
     human_mouse: bool = True
     mouse_jitter: int = 3  # pixels of random movement
-    
+
     # Browser fingerprint
     randomize_viewport: bool = True
     randomize_user_agent: bool = True
-    
+
     # Resources
     block_images: bool = False
     block_fonts: bool = False
     block_media: bool = True
     block_tracking: bool = True
-    
+
+    # Security
+    ignore_https_errors: bool = False  # Set True only for testing with self-signed certs
+
     # Proxy
     proxy: Optional[str] = None
     proxy_rotation: List[str] = field(default_factory=list)

@@ -13,6 +13,9 @@ from dataclasses import dataclass
 
 from blackreach.exceptions import ProviderError, ProviderNotInstalledError, ParseError
 
+# P0-PERF: Pre-compiled regex for JSON extraction (used on every LLM response)
+_RE_JSON_OBJECT = re.compile(r'\{[\s\S]*\}')
+
 
 @dataclass
 class LLMConfig:
@@ -244,8 +247,8 @@ class LLM:
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
 
-        # Find JSON in response
-        json_match = re.search(r'\{[\s\S]*\}', cleaned)
+        # Find JSON in response (using precompiled regex)
+        json_match = _RE_JSON_OBJECT.search(cleaned)
 
         if not json_match:
             return LLMResponse(

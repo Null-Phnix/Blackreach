@@ -1087,3 +1087,197 @@ class TestWaitConditionsMethods:
         result = waits.wait_for_navigation(timeout=100)
 
         assert result is False
+
+
+# =============================================================================
+# CircuitBreaker Thread Safety Tests
+# =============================================================================
+
+class TestCircuitBreakerThreadSafety:
+    """Tests for CircuitBreaker thread safety."""
+
+    def test_has_lock_attribute(self):
+        """CircuitBreaker should have a _lock attribute."""
+        import threading
+        breaker = CircuitBreaker()
+        assert hasattr(breaker, '_lock')
+        assert isinstance(breaker._lock, type(threading.Lock()))
+
+    def test_concurrent_record_failures(self):
+        """Concurrent record_failure calls should be atomic."""
+        import threading
+        import concurrent.futures
+
+        config = CircuitBreakerConfig(failure_threshold=100)
+        breaker = CircuitBreaker(config)
+
+        num_threads = 10
+        failures_per_thread = 10
+
+        def record_failures():
+            for _ in range(failures_per_thread):
+                breaker.record_failure()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(record_failures) for _ in range(num_threads)]
+            concurrent.futures.wait(futures)
+
+        # Should have exactly num_threads * failures_per_thread failures
+        assert breaker._failure_count == num_threads * failures_per_thread
+
+    def test_concurrent_record_success_resets_count(self):
+        """Concurrent success after half-open should properly close circuit."""
+        import threading
+        import concurrent.futures
+
+        config = CircuitBreakerConfig(failure_threshold=1, recovery_timeout=0.001)
+        breaker = CircuitBreaker(config)
+
+        # Open the circuit
+        breaker.record_failure()
+        assert breaker.state == CircuitBreaker.OPEN
+
+        # Wait for half-open
+        time.sleep(0.01)
+        assert breaker.state == CircuitBreaker.HALF_OPEN
+
+        # Record success from multiple threads
+        def record_success():
+            breaker.record_success()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(record_success) for _ in range(5)]
+            concurrent.futures.wait(futures)
+
+        # Circuit should be closed
+        assert breaker.state == CircuitBreaker.CLOSED
+        assert breaker._failure_count == 0
+
+    def test_concurrent_allow_request_limits_half_open(self):
+        """Concurrent allow_request in half-open should respect limits."""
+        import threading
+        import concurrent.futures
+
+        config = CircuitBreakerConfig(
+            failure_threshold=1,
+            recovery_timeout=0.001,
+            half_open_max_calls=3
+        )
+        breaker = CircuitBreaker(config)
+
+        # Open then half-open
+        breaker.record_failure()
+        time.sleep(0.01)
+        assert breaker.state == CircuitBreaker.HALF_OPEN
+
+        results = []
+        lock = threading.Lock()
+
+        def try_request():
+            allowed = breaker.allow_request()
+            with lock:
+                results.append(allowed)
+
+        # Try more requests than allowed
+        num_threads = 10
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(try_request) for _ in range(num_threads)]
+            concurrent.futures.wait(futures)
+
+        # Exactly half_open_max_calls should be allowed
+        allowed_count = sum(1 for r in results if r)
+        assert allowed_count == config.half_open_max_calls
+
+    def test_concurrent_state_transitions(self):
+        """Concurrent state access should be consistent."""
+        import threading
+        import concurrent.futures
+
+        config = CircuitBreakerConfig(failure_threshold=5, recovery_timeout=0.01)
+        breaker = CircuitBreaker(config)
+
+        states_seen = []
+        lock = threading.Lock()
+        stop_event = threading.Event()
+
+        def read_state():
+            while not stop_event.is_set():
+                state = breaker.state
+                with lock:
+                    states_seen.append(state)
+                time.sleep(0.001)
+
+        def modify_state():
+            for _ in range(5):
+                breaker.record_failure()
+                time.sleep(0.005)
+            time.sleep(0.02)  # Wait for half-open
+            breaker.record_success()
+
+        # Start readers
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+            reader_futures = [executor.submit(read_state) for _ in range(5)]
+            modifier_future = executor.submit(modify_state)
+
+            # Wait for modifier to complete
+            modifier_future.result()
+            stop_event.set()
+
+            # Wait for readers
+            concurrent.futures.wait(reader_futures)
+
+        # Verify all states seen are valid
+        valid_states = {CircuitBreaker.CLOSED, CircuitBreaker.OPEN, CircuitBreaker.HALF_OPEN}
+        assert all(s in valid_states for s in states_seen)
+
+    def test_concurrent_context_manager_usage(self):
+        """Concurrent context manager usage should be thread-safe."""
+        import threading
+        import concurrent.futures
+
+        config = CircuitBreakerConfig(failure_threshold=100)
+        breaker = CircuitBreaker(config)
+
+        success_count = [0]
+        count_lock = threading.Lock()
+
+        def use_breaker():
+            try:
+                with breaker:
+                    with count_lock:
+                        success_count[0] += 1
+                    time.sleep(0.001)
+            except CircuitBreakerOpen:
+                pass
+
+        num_threads = 20
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(use_breaker) for _ in range(num_threads)]
+            concurrent.futures.wait(futures)
+
+        # All should succeed (threshold is 100)
+        assert success_count[0] == num_threads
+
+    def test_concurrent_reset_and_operations(self):
+        """Reset during concurrent operations should be safe."""
+        import threading
+        import concurrent.futures
+
+        config = CircuitBreakerConfig(failure_threshold=50)
+        breaker = CircuitBreaker(config)
+
+        def record_and_reset():
+            for i in range(20):
+                if i % 5 == 0:
+                    breaker.reset()
+                else:
+                    breaker.record_failure()
+
+        num_threads = 5
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(record_and_reset) for _ in range(num_threads)]
+            concurrent.futures.wait(futures)
+
+        # Should not raise any exceptions - state is consistent
+        state = breaker.state
+        assert state in {CircuitBreaker.CLOSED, CircuitBreaker.OPEN}

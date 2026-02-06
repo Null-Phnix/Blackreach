@@ -650,3 +650,565 @@ class TestGetErrorLogs:
         levels = [r["level"] for r in results]
         assert "ERROR" in levels
         assert "CRITICAL" in levels
+
+
+# =============================================================================
+# ConsoleLogHandler Tests
+# =============================================================================
+
+class TestConsoleLogHandler:
+    """Tests for ConsoleLogHandler class."""
+
+    def test_init_default_console(self):
+        """ConsoleLogHandler creates default console if not provided."""
+        handler = ConsoleLogHandler()
+        assert handler.console is not None
+        assert handler.level == LogLevel.INFO
+
+    def test_init_custom_console(self):
+        """ConsoleLogHandler accepts custom console."""
+        from rich.console import Console
+        custom_console = Console()
+        handler = ConsoleLogHandler(console=custom_console)
+        assert handler.console is custom_console
+
+    def test_init_custom_level(self):
+        """ConsoleLogHandler accepts custom level."""
+        handler = ConsoleLogHandler(level=LogLevel.DEBUG)
+        assert handler.level == LogLevel.DEBUG
+
+    def test_init_show_timestamp(self):
+        """ConsoleLogHandler accepts show_timestamp setting."""
+        handler = ConsoleLogHandler(show_timestamp=True)
+        assert handler.show_timestamp is True
+
+    def test_init_show_source(self):
+        """ConsoleLogHandler accepts show_source setting."""
+        handler = ConsoleLogHandler(show_source=True)
+        assert handler.show_source is True
+
+    def test_emit_filters_below_level(self):
+        """emit() does not output entries below handler level."""
+        from unittest.mock import Mock
+        mock_console = Mock()
+        handler = ConsoleLogHandler(console=mock_console, level=LogLevel.WARNING)
+
+        entry = LogEntry(
+            timestamp=datetime.now().isoformat(),
+            level="INFO",
+            event="info_event"
+        )
+        handler.emit(entry)
+
+        mock_console.print.assert_not_called()
+
+    def test_emit_outputs_at_level(self):
+        """emit() outputs entries at handler level."""
+        from unittest.mock import Mock
+        mock_console = Mock()
+        handler = ConsoleLogHandler(console=mock_console, level=LogLevel.INFO)
+
+        entry = LogEntry(
+            timestamp=datetime.now().isoformat(),
+            level="INFO",
+            event="info_event"
+        )
+        handler.emit(entry)
+
+        mock_console.print.assert_called_once()
+
+    def test_emit_outputs_above_level(self):
+        """emit() outputs entries above handler level."""
+        from unittest.mock import Mock
+        mock_console = Mock()
+        handler = ConsoleLogHandler(console=mock_console, level=LogLevel.INFO)
+
+        entry = LogEntry(
+            timestamp=datetime.now().isoformat(),
+            level="ERROR",
+            event="error_event"
+        )
+        handler.emit(entry)
+
+        mock_console.print.assert_called_once()
+
+    def test_format_data_act_event(self):
+        """_format_data formats act events correctly."""
+        handler = ConsoleLogHandler()
+        entry = LogEntry(
+            timestamp=datetime.now().isoformat(),
+            level="INFO",
+            event="act",
+            data={"action": "click", "args": {"selector": "#btn"}}
+        )
+        result = handler._format_data(entry)
+        assert "click" in result
+        assert "selector" in result
+
+    def test_format_data_download_event(self):
+        """_format_data formats download events correctly."""
+        handler = ConsoleLogHandler()
+        entry = LogEntry(
+            timestamp=datetime.now().isoformat(),
+            level="INFO",
+            event="download",
+            data={"filename": "test.pdf", "size": 1024}
+        )
+        result = handler._format_data(entry)
+        assert "test.pdf" in result
+        assert "KB" in result
+
+    def test_format_data_error_event(self):
+        """_format_data formats error events correctly."""
+        handler = ConsoleLogHandler()
+        entry = LogEntry(
+            timestamp=datetime.now().isoformat(),
+            level="ERROR",
+            event="error",
+            data={"error": "Something went wrong"}
+        )
+        result = handler._format_data(entry)
+        assert "Something went wrong" in result
+
+    def test_format_size_bytes(self):
+        """_format_size formats bytes correctly."""
+        handler = ConsoleLogHandler()
+        assert "B" in handler._format_size(100)
+
+    def test_format_size_kilobytes(self):
+        """_format_size formats kilobytes correctly."""
+        handler = ConsoleLogHandler()
+        assert "KB" in handler._format_size(1024)
+
+    def test_format_size_megabytes(self):
+        """_format_size formats megabytes correctly."""
+        handler = ConsoleLogHandler()
+        assert "MB" in handler._format_size(1024 * 1024)
+
+
+# =============================================================================
+# FileLogHandler Tests
+# =============================================================================
+
+class TestFileLogHandler:
+    """Tests for FileLogHandler class."""
+
+    def test_init_creates_directory(self, tmp_path):
+        """FileLogHandler creates parent directory."""
+        log_file = tmp_path / "logs" / "test.jsonl"
+        handler = FileLogHandler(log_file)
+        assert log_file.parent.exists()
+
+    def test_init_default_level(self, tmp_path):
+        """FileLogHandler defaults to DEBUG level."""
+        log_file = tmp_path / "test.jsonl"
+        handler = FileLogHandler(log_file)
+        assert handler.level == LogLevel.DEBUG
+
+    def test_init_custom_level(self, tmp_path):
+        """FileLogHandler accepts custom level."""
+        log_file = tmp_path / "test.jsonl"
+        handler = FileLogHandler(log_file, level=LogLevel.INFO)
+        assert handler.level == LogLevel.INFO
+
+    def test_init_custom_max_size(self, tmp_path):
+        """FileLogHandler accepts custom max_size_mb."""
+        log_file = tmp_path / "test.jsonl"
+        handler = FileLogHandler(log_file, max_size_mb=5)
+        assert handler.max_size_bytes == 5 * 1024 * 1024
+
+    def test_emit_writes_to_file(self, tmp_path):
+        """emit() writes entry to file."""
+        log_file = tmp_path / "test.jsonl"
+        handler = FileLogHandler(log_file)
+
+        entry = LogEntry(
+            timestamp=datetime.now().isoformat(),
+            level="INFO",
+            event="test_event"
+        )
+        handler.emit(entry)
+
+        content = log_file.read_text()
+        assert "test_event" in content
+
+    def test_emit_filters_below_level(self, tmp_path):
+        """emit() does not write entries below level."""
+        log_file = tmp_path / "test.jsonl"
+        handler = FileLogHandler(log_file, level=LogLevel.WARNING)
+
+        entry = LogEntry(
+            timestamp=datetime.now().isoformat(),
+            level="DEBUG",
+            event="debug_event"
+        )
+        handler.emit(entry)
+
+        content = log_file.read_text() if log_file.exists() else ""
+        assert "debug_event" not in content
+
+    def test_emit_handles_write_error(self, tmp_path):
+        """emit() handles write errors gracefully."""
+        log_file = tmp_path / "test.jsonl"
+        handler = FileLogHandler(log_file)
+
+        # Make the file unwritable by removing the parent directory
+        import shutil
+        # Write to check it works first
+        entry = LogEntry(
+            timestamp=datetime.now().isoformat(),
+            level="INFO",
+            event="test"
+        )
+        handler.emit(entry)
+
+        # This should not raise even if path is broken
+        handler.log_file = tmp_path / "nonexistent_dir" / "test.jsonl"
+        handler.emit(entry)  # Should not raise
+
+
+# =============================================================================
+# SessionLogger Additional Tests
+# =============================================================================
+
+class TestSessionLoggerAdvanced:
+    """Advanced tests for SessionLogger."""
+
+    def test_warn_alias(self, tmp_path, monkeypatch):
+        """warn is an alias for warning."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal")
+        logger.warn("warn_event")
+
+        with open(logger.log_file) as f:
+            lines = f.readlines()
+            entry = json.loads(lines[-1])
+            assert entry["level"] == "WARNING"
+
+    def test_set_console_level(self, tmp_path, monkeypatch):
+        """set_console_level changes console handler level."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal", enable_console=True)
+        logger.set_console_level(LogLevel.DEBUG)
+
+        assert logger._console_handler.level == LogLevel.DEBUG
+
+    def test_set_console_level_string(self, tmp_path, monkeypatch):
+        """set_console_level accepts string level."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal", enable_console=True)
+        logger.set_console_level("warning")
+
+        assert logger._console_handler.level == LogLevel.WARNING
+
+    def test_set_file_level(self, tmp_path, monkeypatch):
+        """set_file_level changes file handler level."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal")
+        logger.set_file_level(LogLevel.WARNING)
+
+        assert logger._file_handler.level == LogLevel.WARNING
+
+    def test_set_file_level_string(self, tmp_path, monkeypatch):
+        """set_file_level accepts string level."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal")
+        logger.set_file_level("error")
+
+        assert logger._file_handler.level == LogLevel.ERROR
+
+    def test_enable_console(self, tmp_path, monkeypatch):
+        """enable_console enables console logging."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal", enable_console=False)
+        assert logger._console_handler is None
+
+        logger.enable_console()
+        assert logger._console_handler is not None
+
+    def test_disable_console(self, tmp_path, monkeypatch):
+        """disable_console disables console logging."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal", enable_console=True)
+        assert logger._console_handler is not None
+
+        logger.disable_console()
+        assert logger._console_handler is None
+
+    def test_timed_operation_success(self, tmp_path, monkeypatch):
+        """timed_operation logs start and end with duration."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal")
+
+        with logger.timed_operation("test_op", step=1):
+            import time
+            time.sleep(0.01)
+
+        with open(logger.log_file) as f:
+            lines = f.readlines()
+
+        # Should have start and end entries (plus session_start)
+        events = [json.loads(line)["event"] for line in lines]
+        assert "test_op_start" in events
+        assert "test_op_end" in events
+
+    def test_timed_operation_with_error(self, tmp_path, monkeypatch):
+        """timed_operation logs error when exception raised."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        logger = SessionLogger(1, "test goal")
+
+        with pytest.raises(ValueError):
+            with logger.timed_operation("test_op", step=1):
+                raise ValueError("Test error")
+
+        with open(logger.log_file) as f:
+            lines = f.readlines()
+
+        events = [json.loads(line)["event"] for line in lines]
+        assert "test_op_error" in events
+
+
+# =============================================================================
+# GlobalLogger Tests
+# =============================================================================
+
+class TestGlobalLogger:
+    """Tests for GlobalLogger singleton."""
+
+    def test_is_singleton(self, tmp_path, monkeypatch):
+        """GlobalLogger returns same instance."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+
+        # Reset singleton for testing
+        GlobalLogger._instance = None
+
+        logger1 = GlobalLogger()
+        logger2 = GlobalLogger()
+
+        assert logger1 is logger2
+
+    def test_debug_method(self, tmp_path, monkeypatch):
+        """GlobalLogger.debug logs at DEBUG level."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+        GlobalLogger._instance = None
+
+        logger = GlobalLogger()
+        logger.debug("test_debug")
+
+        content = logger.log_file.read_text()
+        assert "DEBUG" in content
+        assert "test_debug" in content
+
+    def test_info_method(self, tmp_path, monkeypatch):
+        """GlobalLogger.info logs at INFO level."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+        GlobalLogger._instance = None
+
+        logger = GlobalLogger()
+        logger.info("test_info")
+
+        content = logger.log_file.read_text()
+        assert "INFO" in content
+
+    def test_warning_method(self, tmp_path, monkeypatch):
+        """GlobalLogger.warning logs at WARNING level."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+        GlobalLogger._instance = None
+
+        logger = GlobalLogger()
+        logger.warning("test_warning")
+
+        content = logger.log_file.read_text()
+        assert "WARNING" in content
+
+    def test_error_method(self, tmp_path, monkeypatch):
+        """GlobalLogger.error logs at ERROR level."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+        GlobalLogger._instance = None
+
+        logger = GlobalLogger()
+        logger.error("test_error")
+
+        content = logger.log_file.read_text()
+        assert "ERROR" in content
+
+    def test_critical_method(self, tmp_path, monkeypatch):
+        """GlobalLogger.critical logs at CRITICAL level."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+        GlobalLogger._instance = None
+
+        logger = GlobalLogger()
+        logger.critical("test_critical")
+
+        content = logger.log_file.read_text()
+        assert "CRITICAL" in content
+
+    def test_set_level(self, tmp_path, monkeypatch):
+        """GlobalLogger.set_level changes console level."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+        GlobalLogger._instance = None
+
+        logger = GlobalLogger()
+        logger.set_level(LogLevel.ERROR)
+
+        assert logger._console_level == LogLevel.ERROR
+
+    def test_set_level_string(self, tmp_path, monkeypatch):
+        """GlobalLogger.set_level accepts string level."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+        GlobalLogger._instance = None
+
+        logger = GlobalLogger()
+        logger.set_level("warning")
+
+        assert logger._console_level == LogLevel.WARNING
+
+    def test_log_with_data(self, tmp_path, monkeypatch):
+        """GlobalLogger methods accept keyword data."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+        GlobalLogger._instance = None
+
+        logger = GlobalLogger()
+        logger.info("test_with_data", key="value", number=42)
+
+        content = logger.log_file.read_text()
+        assert "key" in content
+        assert "value" in content
+
+
+class TestGetLoggerFunction:
+    """Tests for get_logger function."""
+
+    def test_returns_global_logger(self, tmp_path, monkeypatch):
+        """get_logger returns GlobalLogger instance."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+        GlobalLogger._instance = None
+
+        logger = get_logger()
+        assert isinstance(logger, GlobalLogger)
+
+    def test_returns_same_instance(self, tmp_path, monkeypatch):
+        """get_logger returns same instance on multiple calls."""
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
+        GlobalLogger._instance = None
+
+        logger1 = get_logger()
+        logger2 = get_logger()
+        assert logger1 is logger2
+
+
+# =============================================================================
+# LogLevel Additional Tests
+# =============================================================================
+
+class TestLogLevelAdvanced:
+    """Additional tests for LogLevel enum."""
+
+    def test_warn_alias_equals_warning(self):
+        """WARN alias has same value as WARNING."""
+        assert LogLevel.WARN == LogLevel.WARNING
+        assert LogLevel.WARN.value == LogLevel.WARNING.value
+
+    def test_from_string_case_insensitive(self):
+        """from_string is case insensitive."""
+        assert LogLevel.from_string("DEBUG") == LogLevel.DEBUG
+        assert LogLevel.from_string("debug") == LogLevel.DEBUG
+        assert LogLevel.from_string("Debug") == LogLevel.DEBUG
+
+    def test_from_string_warn_alias(self):
+        """from_string handles warn alias."""
+        assert LogLevel.from_string("warn") == LogLevel.WARNING
+
+    def test_comparison_works(self):
+        """LogLevel comparisons work correctly."""
+        assert LogLevel.DEBUG < LogLevel.INFO
+        assert LogLevel.INFO < LogLevel.WARNING
+        assert LogLevel.WARNING < LogLevel.ERROR
+        assert LogLevel.ERROR < LogLevel.CRITICAL
+
+    def test_can_use_as_int(self):
+        """LogLevel can be used as integer."""
+        assert int(LogLevel.DEBUG) == 10
+        assert int(LogLevel.INFO) == 20
+        assert int(LogLevel.WARNING) == 30
+        assert int(LogLevel.ERROR) == 40
+        assert int(LogLevel.CRITICAL) == 50
+
+
+# =============================================================================
+# LogEntry Additional Tests
+# =============================================================================
+
+class TestLogEntryAdvanced:
+    """Additional tests for LogEntry dataclass."""
+
+    def test_source_field(self):
+        """LogEntry has source field."""
+        entry = LogEntry(
+            timestamp="2026-01-23T10:00:00",
+            level="INFO",
+            event="test",
+            source="browser"
+        )
+        assert entry.source == "browser"
+
+    def test_duration_ms_field(self):
+        """LogEntry has duration_ms field."""
+        entry = LogEntry(
+            timestamp="2026-01-23T10:00:00",
+            level="INFO",
+            event="test",
+            duration_ms=123.45
+        )
+        assert entry.duration_ms == 123.45
+
+    def test_to_dict_includes_source(self):
+        """to_dict includes source if set."""
+        entry = LogEntry(
+            timestamp="2026-01-23T10:00:00",
+            level="INFO",
+            event="test",
+            source="agent"
+        )
+        d = entry.to_dict()
+        assert d["source"] == "agent"
+
+    def test_to_dict_includes_duration(self):
+        """to_dict includes duration_ms if set."""
+        entry = LogEntry(
+            timestamp="2026-01-23T10:00:00",
+            level="INFO",
+            event="test",
+            duration_ms=50.0
+        )
+        d = entry.to_dict()
+        assert d["duration_ms"] == 50.0

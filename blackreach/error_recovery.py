@@ -81,6 +81,7 @@ class RecoveryResult:
     should_retry: bool
     should_skip: bool
     message: str
+    wait_seconds: float = 0.0
     new_context: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -136,11 +137,13 @@ ERROR_PATTERNS = {
     ],
     ErrorCategory.AUTH_REQUIRED: [
         r"login required",
+        r"log in",
         r"sign in",
         r"401",
         r"unauthorized",
         r"authentication",
         r"not logged in",
+        r"please.+log",
     ],
     ErrorCategory.INVALID_RESPONSE: [
         r"invalid response",
@@ -335,24 +338,24 @@ class ErrorRecovery:
             )
 
         elif action == RecoveryAction.RETRY_WITH_BACKOFF:
-            time.sleep(info.retry_delay)
             return RecoveryResult(
                 success=True,
                 action_taken=action,
                 should_retry=info.recoverable,
                 should_skip=False,
                 message=f"Retrying after {info.retry_delay}s delay",
+                wait_seconds=info.retry_delay,
             )
 
         elif action == RecoveryAction.WAIT_AND_RETRY:
             wait_time = info.retry_delay * 2
-            time.sleep(wait_time)
             return RecoveryResult(
                 success=True,
                 action_taken=action,
                 should_retry=info.recoverable,
                 should_skip=False,
                 message=f"Waited {wait_time}s, retrying",
+                wait_seconds=wait_time,
             )
 
         elif action == RecoveryAction.TRY_ALTERNATIVE:
@@ -454,6 +457,10 @@ def with_recovery(
                     if not result.should_retry:
                         break
 
+                    # Apply recovery delay at caller level
+                    if result.wait_seconds > 0:
+                        time.sleep(result.wait_seconds)
+
                     # Apply any context changes
                     if result.new_context.get("use_alternative"):
                         kwargs["use_alternative"] = True
@@ -474,3 +481,9 @@ def get_recovery() -> ErrorRecovery:
     if _global_recovery is None:
         _global_recovery = ErrorRecovery()
     return _global_recovery
+
+
+def reset_global_recovery() -> None:
+    """Reset the global error recovery instance (for testing)."""
+    global _global_recovery
+    _global_recovery = None

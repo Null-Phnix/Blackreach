@@ -16,7 +16,10 @@ from collections import OrderedDict
 from pathlib import Path
 import hashlib
 import json
+import logging
 import threading
+
+logger = logging.getLogger(__name__)
 
 
 T = TypeVar('T')
@@ -184,6 +187,21 @@ class LRUCache(Generic[T]):
             "hit_rate": hit_rate
         }
 
+    def stats(self) -> Dict:
+        """Alias for get_stats() for API compatibility."""
+        return self.get_stats()
+
+    def contains(self, key: str) -> bool:
+        """Check if a key exists in the cache (and is not expired)."""
+        with self._lock:
+            if key not in self._cache:
+                return False
+            entry = self._cache[key]
+            if entry.is_expired():
+                self._remove_entry(key)
+                return False
+            return True
+
     def _save_to_disk(self):
         """Save cache to disk (for serializable values only)."""
         if not self.config.persist_path:
@@ -200,8 +218,8 @@ class LRUCache(Generic[T]):
                 if not entry.is_expired()
             }
             self.config.persist_path.write_text(json.dumps(data))
-        except Exception:
-            pass  # Ignore serialization errors
+        except Exception as e:
+            logger.debug("Failed to save cache to disk: %s", e)
 
     def _load_from_disk(self):
         """Load cache from disk."""
@@ -221,8 +239,8 @@ class LRUCache(Generic[T]):
                 )
                 if not entry.is_expired():
                     self._cache[key] = entry
-        except Exception:
-            pass  # Ignore load errors
+        except Exception as e:
+            logger.debug("Failed to load cache from disk: %s", e)
 
 
 class PageCache:
@@ -260,8 +278,12 @@ class PageCache:
         self._parsed_cache.delete(key)
 
     def _url_key(self, url: str) -> str:
-        """Generate cache key from URL."""
-        return hashlib.md5(url.encode()).hexdigest()
+        """Generate cache key from URL.
+
+        Uses blake2b which is ~2x faster than MD5 for small inputs.
+        Only 16 bytes needed for cache keys (no cryptographic security needed).
+        """
+        return hashlib.blake2b(url.encode(), digest_size=16).hexdigest()
 
     def get_stats(self) -> Dict:
         """Get cache statistics."""
@@ -291,9 +313,12 @@ class ResultCache:
         return self._cache.get(self._query_key(query, source))
 
     def _query_key(self, query: str, source: str) -> str:
-        """Generate cache key from query."""
+        """Generate cache key from query.
+
+        Uses blake2b for faster hashing (no cryptographic security needed).
+        """
         combined = f"{source}:{query.lower().strip()}"
-        return hashlib.md5(combined.encode()).hexdigest()
+        return hashlib.blake2b(combined.encode(), digest_size=16).hexdigest()
 
     def get_stats(self) -> Dict:
         """Get cache statistics."""

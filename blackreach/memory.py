@@ -216,6 +216,27 @@ class PersistentMemory:
             )
         """)
 
+        # P0-PERF: Add indexes for frequently queried columns
+        # These significantly speed up lookups for has_downloaded(), has_visited(), etc.
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_downloads_url ON downloads(url)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_downloads_file_hash ON downloads(file_hash)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_visits_url ON visits(url)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_site_patterns_domain ON site_patterns(domain)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_failures_url ON failures(url)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_session_state_status ON session_state(status)
+        """)
+
         self._conn.commit()
 
     # -------------------------------------------------------------------------

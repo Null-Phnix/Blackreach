@@ -26,6 +26,8 @@ import time
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
+from playwright._impl._errors import TimeoutError as PlaywrightTimeoutError
+
 from blackreach.browser import Hand
 from blackreach.stealth import StealthConfig
 from blackreach.resilience import RetryConfig
@@ -134,7 +136,8 @@ class TestBrowserNavigation:
 
     def test_goto_navigates_to_url(self, browser, mock_server_with_pages):
         """goto() navigates to specified URL."""
-        result = browser.goto(mock_server_with_pages.url)
+        # Use wait_for_content=False for fast mock server navigation
+        result = browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         assert result is not None
         assert result["action"] == "goto"
@@ -142,30 +145,30 @@ class TestBrowserNavigation:
 
     def test_goto_returns_title(self, browser, mock_server_with_pages):
         """goto() returns page title."""
-        result = browser.goto(mock_server_with_pages.url)
+        result = browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         assert "title" in result
         assert result["title"] == "Test Page"
 
     def test_goto_updates_current_url(self, browser, mock_server_with_pages):
         """goto() updates the current URL."""
-        browser.goto(mock_server_with_pages.url_for('/page1'))
+        browser.goto(mock_server_with_pages.url_for('/page1'), wait_for_content=False)
         url = browser.get_url()
 
         assert '/page1' in url
 
     def test_goto_handles_different_pages(self, browser, mock_server_with_pages):
         """goto() can navigate to different pages."""
-        browser.goto(mock_server_with_pages.url_for('/page1'))
+        browser.goto(mock_server_with_pages.url_for('/page1'), wait_for_content=False)
         assert 'page1' in browser.get_url()
 
-        browser.goto(mock_server_with_pages.url_for('/page2'))
+        browser.goto(mock_server_with_pages.url_for('/page2'), wait_for_content=False)
         assert 'page2' in browser.get_url()
 
     def test_back_navigation(self, browser, mock_server_with_pages):
         """back() navigates to previous page."""
-        browser.goto(mock_server_with_pages.url)
-        browser.goto(mock_server_with_pages.url_for('/page1'))
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
+        browser.goto(mock_server_with_pages.url_for('/page1'), wait_for_content=False)
 
         result = browser.back()
 
@@ -174,8 +177,8 @@ class TestBrowserNavigation:
 
     def test_forward_navigation(self, browser, mock_server_with_pages):
         """forward() navigates forward after back."""
-        browser.goto(mock_server_with_pages.url)
-        browser.goto(mock_server_with_pages.url_for('/page1'))
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
+        browser.goto(mock_server_with_pages.url_for('/page1'), wait_for_content=False)
         browser.back()
 
         result = browser.forward()
@@ -185,7 +188,7 @@ class TestBrowserNavigation:
 
     def test_refresh_reloads_page(self, browser, mock_server_with_pages):
         """refresh() reloads the current page."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         result = browser.refresh()
 
@@ -213,7 +216,7 @@ class TestElementInteraction:
 
     def test_click_element(self, browser, mock_server_with_pages):
         """click() clicks an element by selector."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         result = browser.click('#submit')
 
@@ -222,14 +225,14 @@ class TestElementInteraction:
 
     def test_click_nonexistent_element_raises(self, browser, mock_server_with_pages):
         """click() raises ElementNotFoundError for missing element."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         with pytest.raises(Exception):  # Could be TimeoutError or ElementNotFoundError
             browser.click('#nonexistent-element-xyz123', human=False)
 
     def test_type_into_input(self, browser, mock_server_with_pages):
         """type() enters text into an input field."""
-        browser.goto(mock_server_with_pages.url_for('/form'))
+        browser.goto(mock_server_with_pages.url_for('/form'), wait_for_content=False)
 
         result = browser.type('#username', 'testuser', human=False)
 
@@ -239,7 +242,7 @@ class TestElementInteraction:
 
     def test_type_into_search_input(self, browser, mock_server_with_pages):
         """type() enters text into search input."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         result = browser.type('#search', 'test query', human=False)
 
@@ -247,7 +250,7 @@ class TestElementInteraction:
 
     def test_type_clears_existing_text(self, browser, mock_server_with_pages):
         """type() clears existing text by default."""
-        browser.goto(mock_server_with_pages.url_for('/form'))
+        browser.goto(mock_server_with_pages.url_for('/form'), wait_for_content=False)
 
         browser.type('#username', 'first', human=False)
         browser.type('#username', 'second', human=False, clear=True)
@@ -258,7 +261,7 @@ class TestElementInteraction:
 
     def test_press_key(self, browser, mock_server_with_pages):
         """press() presses a keyboard key."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         result = browser.press('Escape')
 
@@ -268,7 +271,7 @@ class TestElementInteraction:
 
     def test_scroll_down(self, browser, mock_server_with_pages):
         """scroll() scrolls the page down."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         result = browser.scroll('down', 200)
 
@@ -278,7 +281,7 @@ class TestElementInteraction:
 
     def test_scroll_up(self, browser, mock_server_with_pages):
         """scroll() scrolls the page up."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
         browser.scroll('down', 300)
 
         result = browser.scroll('up', 100)
@@ -288,7 +291,7 @@ class TestElementInteraction:
 
     def test_hover_element(self, browser, mock_server_with_pages):
         """hover() hovers over an element."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         result = browser.hover('#submit')
 
@@ -305,7 +308,7 @@ class TestPageInformation:
 
     def test_get_url(self, browser, mock_server_with_pages):
         """get_url() returns current URL."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         url = browser.get_url()
 
@@ -314,7 +317,7 @@ class TestPageInformation:
 
     def test_get_title(self, browser, mock_server_with_pages):
         """get_title() returns page title."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         title = browser.get_title()
 
@@ -323,7 +326,7 @@ class TestPageInformation:
 
     def test_get_html(self, browser, mock_server_with_pages):
         """get_html() returns page HTML content."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         html = browser.get_html()
 
@@ -333,7 +336,7 @@ class TestPageInformation:
 
     def test_get_html_with_ensure_content(self, browser, mock_server_with_pages):
         """get_html() with ensure_content waits for content."""
-        browser.goto(mock_server_with_pages.url_for('/dynamic'))
+        browser.goto(mock_server_with_pages.url_for('/dynamic'), wait_for_content=False)
 
         html = browser.get_html(ensure_content=True)
 
@@ -350,7 +353,7 @@ class TestScreenshot:
 
     def test_screenshot_creates_file(self, browser, mock_server_with_pages, temp_dir):
         """screenshot() creates an image file."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
         screenshot_path = temp_dir / "test_screenshot.png"
 
         result = browser.screenshot(str(screenshot_path))
@@ -361,7 +364,7 @@ class TestScreenshot:
 
     def test_screenshot_full_page(self, browser, mock_server_with_pages, temp_dir):
         """screenshot() with full_page captures entire page."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
         screenshot_path = temp_dir / "full_page.png"
 
         result = browser.screenshot(str(screenshot_path), full_page=True)
@@ -431,15 +434,15 @@ class TestErrorHandling:
         assert result["action"] == "wait"
 
     def test_click_graceful_failure(self, browser, mock_server_with_pages):
-        """Click on missing element fails gracefully."""
-        browser.goto(mock_server_with_pages.url)
+        """Click on missing element raises ElementNotFoundError or TimeoutError."""
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
-        try:
+        with pytest.raises((ElementNotFoundError, TimeoutError, PlaywrightTimeoutError)) as exc_info:
             browser.click('#nonexistent-element')
-            assert False, "Should have raised an exception"
-        except Exception as e:
-            # Should be a timeout or element not found error
-            assert True
+
+        # Verify we got an actual error about the element
+        error_msg = str(exc_info.value).lower()
+        assert 'element' in error_msg or 'timeout' in error_msg or 'not found' in error_msg
 
     def test_navigation_error_handled(self, browser, mock_server):
         """Navigation to non-existent page returns error status."""
@@ -448,7 +451,7 @@ class TestErrorHandling:
             'body': '<html><body>Not Found</body></html>'
         })
 
-        result = browser.goto(mock_server.url_for('/404'))
+        result = browser.goto(mock_server.url_for('/404'), wait_for_content=False)
 
         assert result is not None
         assert result.get("http_status") == 404
@@ -471,7 +474,7 @@ class TestDebugTools:
 
     def test_capture_screenshot(self, browser, mock_server_with_pages, debug_tools):
         """capture_screenshot() saves screenshot file."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         path = debug_tools.capture_screenshot(browser)
 
@@ -481,7 +484,7 @@ class TestDebugTools:
 
     def test_capture_html(self, browser, mock_server_with_pages, debug_tools):
         """capture_html() saves HTML file."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         path = debug_tools.capture_html(browser)
 
@@ -492,7 +495,7 @@ class TestDebugTools:
 
     def test_capture_snapshot(self, browser, mock_server_with_pages, debug_tools):
         """capture_snapshot() captures complete debug info."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         snapshot = debug_tools.capture_snapshot(browser)
 
@@ -505,7 +508,7 @@ class TestDebugTools:
 
     def test_capture_snapshot_with_error(self, browser, mock_server_with_pages, debug_tools):
         """capture_snapshot() includes error information."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
         test_error = ValueError("Test error message")
 
         snapshot = debug_tools.capture_snapshot(browser, error=test_error)
@@ -515,7 +518,7 @@ class TestDebugTools:
 
     def test_capture_on_error_context_manager(self, browser, mock_server_with_pages, debug_tools):
         """capture_on_error context manager captures on exception."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         with pytest.raises(ValueError):
             with debug_tools.capture_on_error(browser, "test_error"):
@@ -527,7 +530,7 @@ class TestDebugTools:
 
     def test_get_all_snapshots(self, browser, mock_server_with_pages, debug_tools):
         """get_all_snapshots() returns all captured snapshots."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         debug_tools.capture_snapshot(browser)
         debug_tools.capture_snapshot(browser)
@@ -537,7 +540,7 @@ class TestDebugTools:
 
     def test_clear_snapshots(self, browser, mock_server_with_pages, debug_tools):
         """clear_snapshots() removes snapshots from memory."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
         debug_tools.capture_snapshot(browser)
 
         debug_tools.clear_snapshots()
@@ -546,7 +549,7 @@ class TestDebugTools:
 
     def test_generate_report(self, browser, mock_server_with_pages, debug_tools, temp_dir):
         """generate_report() creates HTML report."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
         debug_tools.capture_snapshot(browser)
 
         report_path = temp_dir / "report.html"
@@ -579,7 +582,7 @@ class TestResultTracker:
 
     def test_record_failing_test(self, test_result_tracker, browser, mock_server_with_pages):
         """record_test() records a failing test with snapshot."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
         error = ValueError("Test failed")
 
         test_result_tracker.record_test(
@@ -617,7 +620,7 @@ class TestErrorCapturingWrapper:
     def test_wrapper_passes_through_methods(self, browser, debug_tools, mock_server_with_pages):
         """Wrapper passes through method calls."""
         wrapped = ErrorCapturingWrapper(browser, debug_tools)
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         url = wrapped.get_url()
 
@@ -626,7 +629,7 @@ class TestErrorCapturingWrapper:
     def test_wrapper_captures_on_error(self, browser, debug_tools, mock_server_with_pages):
         """Wrapper captures debug info on error."""
         wrapped = ErrorCapturingWrapper(browser, debug_tools)
-        wrapped.goto(mock_server_with_pages.url)
+        wrapped.goto(mock_server_with_pages.url, wait_for_content=False)
 
         try:
             wrapped.click('#nonexistent-element-abc')
@@ -659,7 +662,7 @@ class TestDynamicContent:
 
     def test_force_render(self, browser, mock_server_with_pages):
         """force_render() triggers page rendering."""
-        browser.goto(mock_server_with_pages.url_for('/dynamic'))
+        browser.goto(mock_server_with_pages.url_for('/dynamic'), wait_for_content=False)
 
         result = browser.force_render()
 
@@ -675,7 +678,7 @@ class TestStealthMode:
 
     def test_webdriver_hidden(self, browser, mock_server_with_pages):
         """Stealth mode hides webdriver property."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         result = browser.page.evaluate("() => navigator.webdriver")
 
@@ -684,7 +687,7 @@ class TestStealthMode:
 
     def test_user_agent_present(self, browser, mock_server_with_pages):
         """User agent is set."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         ua = browser.page.evaluate("() => navigator.userAgent")
 
@@ -710,7 +713,7 @@ class TestExecuteCommand:
 
     def test_execute_click(self, browser, mock_server_with_pages):
         """execute() handles click command."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         result = browser.execute({
             "action": "click",
@@ -721,7 +724,7 @@ class TestExecuteCommand:
 
     def test_execute_type(self, browser, mock_server_with_pages):
         """execute() handles type command."""
-        browser.goto(mock_server_with_pages.url_for('/form'))
+        browser.goto(mock_server_with_pages.url_for('/form'), wait_for_content=False)
 
         result = browser.execute({
             "action": "type",
@@ -733,7 +736,7 @@ class TestExecuteCommand:
 
     def test_execute_scroll(self, browser, mock_server_with_pages):
         """execute() handles scroll command."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         result = browser.execute({
             "action": "scroll",
@@ -745,7 +748,7 @@ class TestExecuteCommand:
 
     def test_execute_press(self, browser, mock_server_with_pages):
         """execute() handles press command."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
 
         result = browser.execute({
             "action": "press",
@@ -756,7 +759,7 @@ class TestExecuteCommand:
 
     def test_execute_screenshot(self, browser, mock_server_with_pages, temp_dir):
         """execute() handles screenshot command."""
-        browser.goto(mock_server_with_pages.url)
+        browser.goto(mock_server_with_pages.url, wait_for_content=False)
         path = str(temp_dir / "exec_screenshot.png")
 
         result = browser.execute({
@@ -870,14 +873,14 @@ class TestMockServer:
     def test_mock_server_serves_routes(self, browser, mock_server):
         """Mock server serves configured routes."""
         mock_server.add_route('/', '<html><body>Test</body></html>')
-        browser.goto(mock_server.url)
+        browser.goto(mock_server.url, wait_for_content=False)
 
         html = browser.get_html()
         assert 'Test' in html
 
     def test_mock_server_returns_404(self, browser, mock_server):
         """Mock server returns 404 for unknown routes."""
-        result = browser.goto(mock_server.url_for('/unknown'))
+        result = browser.goto(mock_server.url_for('/unknown'), wait_for_content=False)
 
         assert result.get("http_status") == 404
 
@@ -888,6 +891,6 @@ class TestMockServer:
             'body': 'Server Error'
         })
 
-        result = browser.goto(mock_server.url_for('/error'))
+        result = browser.goto(mock_server.url_for('/error'), wait_for_content=False)
 
         assert result.get("http_status") == 500

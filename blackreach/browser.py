@@ -5,15 +5,18 @@ Controls the browser: click, type, scroll, navigate, screenshot, download.
 Now with stealth and resilience features.
 """
 
-from playwright.sync_api import sync_playwright, Browser, Page, Playwright, BrowserContext, Route, Download
+from playwright.sync_api import sync_playwright, Browser, Page, Playwright, BrowserContext, Route, Download, Error as PlaywrightError
 from typing import Optional, List, Union, Callable, Dict, Any
 from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
+import urllib.request
+import urllib.error
 import time
 import random
 import hashlib
+import threading
 
 from blackreach.stealth import Stealth, StealthConfig
 from blackreach.resilience import (
@@ -27,7 +30,160 @@ from blackreach.exceptions import (
     InvalidActionArgsError,
     UnknownActionError,
 )
-from blackreach.detection import SiteDetector
+from blackreach.detection import SiteDetector, get_site_characteristics, SiteType
+
+# === Browser Constants ===
+
+# Navigation timeouts (milliseconds)
+GOTO_TIMEOUT_MS = 30_000
+LOAD_STATE_TIMEOUT_MS = 10_000
+ELEMENT_WAIT_TIMEOUT_MS = 3_000
+DOWNLOAD_TIMEOUT_MS = 60_000
+
+# Content readiness thresholds
+MIN_LINKS_FOR_READY = 3
+MIN_TEXT_LENGTH_FOR_READY = 200
+
+# Challenge handling
+MAX_CHALLENGE_WAIT_S = 30
+CHALLENGE_MOUSE_INTERVAL_S = 3
+CHALLENGE_CLICK_AFTER_S = 10
+
+# Human-like delays (seconds)
+HUMAN_CLICK_PRE_DELAY = (0.1, 0.3)
+HUMAN_CLICK_POST_DELAY = (0.2, 0.5)
+
+# Precompiled regex for filename sanitization (P0-SEC fix)
+import re
+_UNSAFE_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_PATH_TRAVERSAL = re.compile(r'(?:^|[\\/])\.\.(?:[\\/]|$)')
+
+
+def _sanitize_filename(filename: str) -> str:
+    r"""
+    Sanitize a filename to prevent path traversal and injection attacks.
+
+    Security fixes:
+    1. Removes path traversal patterns (../, ..\, etc.)
+    2. Removes unsafe characters for all platforms
+    3. Uses only the basename (no directory components)
+    4. Falls back to safe default if filename becomes empty
+
+    Args:
+        filename: The potentially unsafe filename
+
+    Returns:
+        A sanitized filename safe for use on all platforms
+    """
+    import os
+    # Get only the base filename (removes any path components)
+    filename = os.path.basename(filename)
+
+    # Remove path traversal patterns that might remain
+    filename = _PATH_TRAVERSAL.sub('', filename)
+
+    # Remove characters that are unsafe on Windows/Linux/Mac
+    filename = _UNSAFE_FILENAME_CHARS.sub('_', filename)
+
+    # Remove leading/trailing dots and spaces (Windows issue)
+    filename = filename.strip('. ')
+
+    # Fall back to safe default if filename became empty
+    if not filename:
+        filename = 'downloaded_file'
+
+    return filename
+
+
+_download_lock = threading.Lock()
+
+
+def _reserve_unique_path(download_dir: Path, base_path: Path) -> Path:
+    """Atomically reserve a unique filename, avoiding TOCTOU races.
+
+    Holds a lock while checking existence and creating a placeholder file,
+    so two threads won't pick the same name.
+    """
+    with _download_lock:
+        save_path = base_path
+        counter = 1
+        while save_path.exists():
+            stem = base_path.stem
+            save_path = download_dir / f"{stem}_{counter}{base_path.suffix}"
+            counter += 1
+        save_path.touch()  # Reserve the name
+    return save_path
+
+
+def _is_ssrf_safe(url: str) -> bool:
+    """
+    Validate URL is safe from SSRF attacks by checking against private IP ranges.
+
+    This prevents the browser/fetch from being used to access internal services.
+
+    Args:
+        url: URL to validate
+
+    Returns:
+        True if URL is safe to fetch, False if it targets private/internal networks
+
+    Raises:
+        ValueError: If URL is invalid or targets internal network
+    """
+    import socket
+    import ipaddress
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+
+        if not hostname:
+            raise ValueError("URL has no hostname")
+
+        # Block localhost variants
+        if hostname.lower() in ('localhost', '127.0.0.1', '::1', '0.0.0.0'):
+            raise ValueError(f"SSRF blocked: localhost access not allowed")
+
+        # Resolve hostname to IP address(es)
+        try:
+            addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        except socket.gaierror:
+            # Can't resolve - might be a DNS rebinding attempt, but allow for now
+            # as it will fail at the actual request time
+            return True
+
+        # Check each resolved IP against private ranges
+        private_ranges = [
+            ipaddress.ip_network('10.0.0.0/8'),       # Class A private
+            ipaddress.ip_network('172.16.0.0/12'),    # Class B private
+            ipaddress.ip_network('192.168.0.0/16'),   # Class C private
+            ipaddress.ip_network('127.0.0.0/8'),      # Loopback
+            ipaddress.ip_network('169.254.0.0/16'),   # Link-local
+            ipaddress.ip_network('fc00::/7'),         # IPv6 unique local
+            ipaddress.ip_network('fe80::/10'),        # IPv6 link-local
+            ipaddress.ip_network('::1/128'),          # IPv6 loopback
+        ]
+
+        for family, _, _, _, sockaddr in addr_info:
+            ip_str = sockaddr[0]
+            try:
+                ip = ipaddress.ip_address(ip_str)
+                for private_range in private_ranges:
+                    if ip in private_range:
+                        raise ValueError(f"SSRF blocked: {hostname} resolves to private IP {ip}")
+            except ValueError as e:
+                if "SSRF blocked" in str(e):
+                    raise
+                continue  # Invalid IP string, skip
+
+        return True
+
+    except ValueError:
+        raise
+    except Exception as e:
+        # On any parsing error, block as a safety measure
+        raise ValueError(f"SSRF validation failed: {e}")
 
 
 class ProxyType(Enum):
@@ -358,7 +514,7 @@ class Hand:
             _ = self._page.title()
             self._consecutive_errors = 0
             return True
-        except Exception:
+        except PlaywrightError:
             self._consecutive_errors += 1
             return False
 
@@ -376,7 +532,7 @@ class Hand:
             try:
                 self.sleep()
             except Exception:
-                pass  # Ignore cleanup errors
+                pass  # Best-effort cleanup
 
         try:
             self.wake()
@@ -398,13 +554,13 @@ class Hand:
             try:
                 current_url = self._page.url
             except Exception:
-                pass
+                pass  # Best-effort cleanup
 
         # Close existing browser
         try:
             self.sleep()
         except Exception:
-            pass  # Ignore cleanup errors
+            pass  # Best-effort cleanup
 
         # Start fresh browser
         try:
@@ -415,7 +571,7 @@ class Hand:
                 try:
                     self.goto(current_url, wait_for_content=False)
                 except Exception:
-                    pass  # Navigation may fail, that's ok
+                    pass  # Best-effort cleanup
 
             return True
         except Exception:
@@ -425,7 +581,6 @@ class Hand:
         """Start the browser with stealth configuration."""
         self._playwright = sync_playwright().start()
 
-        # Ensure download directory exists
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
         # Browser launch args for stealth - comprehensive anti-detection
@@ -466,7 +621,6 @@ class Hand:
         # Get proxy configuration (priority: rotator > direct proxy > stealth config)
         proxy_config = self._get_proxy_config()
 
-        # Select browser type
         if self.browser_type == "firefox":
             # Firefox-specific launch options
             self._browser = self._playwright.firefox.launch(
@@ -507,7 +661,9 @@ class Hand:
             "is_mobile": False,
             "java_script_enabled": True,
             "bypass_csp": True,  # Helps with some challenges
-            "ignore_https_errors": True,
+            # Security: Only ignore HTTPS errors when explicitly configured via StealthConfig
+            # Default is False - SSL verification is enabled by default
+            "ignore_https_errors": self.stealth.config.ignore_https_errors,
         }
         if user_agent:
             context_options["user_agent"] = user_agent
@@ -515,16 +671,10 @@ class Hand:
         self._context = self._browser.new_context(**context_options)
         self._page = self._context.new_page()
 
-        # Set up download handler
         self._page.on("download", self._handle_download)
-
-        # Set up resource blocking
         self._setup_resource_blocking()
-
-        # Inject stealth scripts
         self._inject_stealth_scripts()
 
-        # Initialize helpers
         self._selector = SmartSelector(self._page)
         self._popups = PopupHandler(self._page)
         self._waits = WaitConditions(self._page)
@@ -625,9 +775,9 @@ class Hand:
                 try:
                     self._page.keyboard.up(key)
                 except Exception:
-                    pass
+                    pass  # Best-effort cleanup
         except Exception:
-            pass  # Page might already be closed
+            pass  # Best-effort cleanup
 
     def sleep(self) -> None:
         """Close the browser safely, releasing any stuck keys."""
@@ -645,6 +795,17 @@ class Hand:
         self._browser = None
         self._context = None
         self._page = None
+
+    # P1-ARCH: Context manager support for proper resource cleanup
+    def __enter__(self) -> "Hand":
+        """Enter context - wake the browser."""
+        self.wake()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit context - ensure browser is properly closed."""
+        self.sleep()
+        return False  # Don't suppress exceptions
 
     @property
     def page(self) -> Page:
@@ -697,6 +858,9 @@ class Hand:
     def goto(self, url: str, handle_popups: bool = True, wait_for_content: bool = True) -> dict:
         """Navigate to a URL with retry logic and smart content waiting.
 
+        Uses adaptive timeouts based on site characteristics - static sites like
+        Wikipedia get much shorter timeouts than SPAs.
+
         Args:
             url: URL to navigate to
             handle_popups: Whether to automatically dismiss popups
@@ -705,8 +869,11 @@ class Hand:
         Returns:
             Dict with action, url, title, content_found, and http_status
         """
+        # Get site characteristics for adaptive timeouts
+        site_chars = get_site_characteristics(url)
+
         # Navigate and wait for initial DOM
-        response = self.page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        response = self.page.goto(url, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
 
         # Track HTTP status for error detection
         http_status = response.status if response else None
@@ -714,56 +881,110 @@ class Hand:
             # Log HTTP errors but don't fail - page may still have useful content
             print(f"  [HTTP {http_status}: {url[:50]}...]")
 
-        # Wait for full page load (all resources including images, scripts)
+        # Wait for full page load - use adaptive timeout
+        load_timeout = min(site_chars.network_idle_timeout, 10000)
         try:
-            self.page.wait_for_load_state("load", timeout=15000)
-        except Exception:
+            self.page.wait_for_load_state("load", timeout=load_timeout)
+        except PlaywrightError:
             pass  # Continue - page may still be usable
 
-        # Wait for network to settle
+        # Wait for network to settle - shorter for static sites
         try:
-            self.page.wait_for_load_state("networkidle", timeout=10000)
-        except Exception:
+            self.page.wait_for_load_state("networkidle", timeout=site_chars.network_idle_timeout)
+        except PlaywrightError:
             pass  # Don't fail if network doesn't go idle
 
+        # FAST PATH: For known static sites, do a quick content check and exit early
+        if site_chars.site_type in (SiteType.STATIC, SiteType.SEARCH_ENGINE):
+            quick_ready = self._quick_content_ready_check(
+                min_links=site_chars.min_links_for_ready,
+                min_text=site_chars.min_text_length_for_ready
+            )
+            if quick_ready:
+                self._human_delay(0.3, 0.6)
+                if handle_popups:
+                    self._popups.handle_all()
+                return {
+                    "action": "goto",
+                    "url": url,
+                    "title": self.page.title(),
+                    "content_found": True,
+                    "http_status": http_status,
+                    "site_type": site_chars.site_type.value
+                }
+
         # Check for and wait through challenge pages (DDoS-Guard, Cloudflare, etc.)
-        self._wait_for_challenge_resolution()
+        # Skip for known safe sites
+        if site_chars.site_type == SiteType.UNKNOWN:
+            self._wait_for_challenge_resolution(max_wait=15)  # Reduced from 30
 
         # Wait for dynamic content if enabled
         content_found = False
-        if wait_for_content:
-            content_found = self._wait_for_dynamic_content(timeout=20000)
+        if wait_for_content and not site_chars.skip_dynamic_content_wait:
+            content_found = self._wait_for_dynamic_content(
+                timeout=site_chars.content_wait_timeout,
+                skip_framework=site_chars.skip_framework_detection
+            )
 
-            # If no content found, try scrolling to trigger lazy loading
-            if not content_found:
+            # Only do scroll recovery for unknown/SPA sites, with shorter waits
+            if not content_found and site_chars.site_type in (SiteType.SPA, SiteType.UNKNOWN):
                 self.scroll("down", 300)
-                time.sleep(2)
-                content_found = self._wait_for_dynamic_content(timeout=8000)
+                time.sleep(1)
+                content_found = self._wait_for_dynamic_content(timeout=3000, skip_framework=True)
+        elif site_chars.skip_dynamic_content_wait:
+            # For static sites, just verify basic content is present
+            content_found = self._quick_content_ready_check(min_links=1, min_text=100)
 
-                # Second scroll attempt
-                if not content_found:
-                    self.scroll("up", 300)
-                    time.sleep(1)
-                    self.scroll("down", 100)
-                    time.sleep(2)
-                    content_found = self._wait_for_dynamic_content(timeout=5000)
-
-        self._human_delay(0.5, 1.0)
+        self._human_delay(0.3, 0.6)
 
         if handle_popups:
             self._popups.handle_all()
-            self._human_delay(0.2, 0.4)
-            self._popups.handle_all()
+            self._human_delay(0.1, 0.2)
 
         return {
             "action": "goto",
             "url": url,
             "title": self.page.title(),
             "content_found": content_found,
-            "http_status": http_status
+            "http_status": http_status,
+            "site_type": site_chars.site_type.value
         }
 
-    def _wait_for_challenge_resolution(self, max_wait: int = 30) -> bool:
+    def _quick_content_ready_check(self, min_links: int = MIN_LINKS_FOR_READY, min_text: int = MIN_TEXT_LENGTH_FOR_READY) -> bool:
+        """
+        Quick check if page has enough content to be considered ready.
+
+        This is a fast-path for static sites that don't need full dynamic
+        content waiting. Returns True if the page appears to have loaded.
+
+        Args:
+            min_links: Minimum number of links to consider page ready
+            min_text: Minimum text length to consider page ready
+
+        Returns:
+            True if page appears ready, False otherwise
+        """
+        try:
+            result = self.page.evaluate(f"""
+                () => {{
+                    const links = document.querySelectorAll('a[href]').length;
+                    const text = (document.body?.innerText || '').length;
+                    const title = document.title || '';
+                    const hasMainContent = document.querySelector('main, article, #content, .content, #mw-content-text');
+                    return {{
+                        links: links,
+                        textLength: text,
+                        hasTitle: title.length > 0,
+                        hasMainContent: !!hasMainContent,
+                        ready: (links >= {min_links} || text >= {min_text}) && title.length > 0
+                    }};
+                }}
+            """)
+            return result.get('ready', False)
+        except PlaywrightError:
+            return False
+
+    def _wait_for_challenge_resolution(self, max_wait: int = MAX_CHALLENGE_WAIT_S) -> bool:
         """
         Wait for challenge/interstitial pages to resolve.
 
@@ -773,8 +994,6 @@ class Hand:
 
         Returns True if a challenge was detected and resolved, False otherwise.
         """
-        import random
-
         for attempt in range(max_wait):
             html = self.page.content()
             result = self._detector.detect_challenge(html)
@@ -787,7 +1006,7 @@ class Hand:
                 print(f"  [Challenge detected: {result.details or 'unknown'} - waiting...]")
 
             # Human-like interaction to help solve challenge
-            if attempt % 3 == 0:  # Every 3 seconds
+            if attempt % CHALLENGE_MOUSE_INTERVAL_S == 0:  # Every 3 seconds
                 try:
                     # Move mouse randomly (some challenges check for mouse activity)
                     viewport = self.page.viewport_size
@@ -795,21 +1014,21 @@ class Hand:
                         x = random.randint(100, viewport['width'] - 100)
                         y = random.randint(100, viewport['height'] - 100)
                         self.page.mouse.move(x, y)
-                except Exception:
+                except PlaywrightError:
                     pass
 
             if attempt == 5:  # After 5 seconds, try scrolling
                 try:
                     self.page.mouse.wheel(0, 100)
-                except Exception:
+                except PlaywrightError:
                     pass
 
-            if attempt == 10:  # After 10 seconds, try clicking in center
+            if attempt == CHALLENGE_CLICK_AFTER_S:  # After 10 seconds, try clicking in center
                 try:
                     viewport = self.page.viewport_size
                     if viewport:
                         self.page.mouse.click(viewport['width'] // 2, viewport['height'] // 2)
-                except Exception:
+                except PlaywrightError:
                     pass
 
             time.sleep(1)
@@ -817,111 +1036,100 @@ class Hand:
             # Check if page URL changed (redirect after challenge)
             try:
                 self.page.wait_for_load_state("domcontentloaded", timeout=2000)
-            except Exception:
+            except PlaywrightError:
                 pass
 
         # If we're still on a challenge page after max_wait, log it
         print(f"  [Challenge did not resolve after {max_wait}s]")
         return True
 
-    def _wait_for_dynamic_content(self, timeout: int = 10000) -> bool:
+    def _wait_for_dynamic_content(self, timeout: int = LOAD_STATE_TIMEOUT_MS, skip_framework: bool = False) -> bool:
         """
         Wait for JavaScript-rendered content to appear.
 
         Uses multiple strategies with verification:
-        1. Wait for network idle
-        2. Wait for framework hydration (React, Vue, Angular)
-        3. Wait for common content containers
+        1. Wait for network idle (shortened)
+        2. Wait for framework hydration (React, Vue, Angular) - optional
+        3. Early exit if content already appears ready
         4. Wait for loading indicators to disappear
         5. VERIFY actual content exists (links, buttons, text)
-        6. Use JavaScript to check DOM readiness
+
+        Args:
+            timeout: Maximum time to wait in milliseconds
+            skip_framework: Skip framework detection for known static sites
 
         Returns True if content was found, False otherwise.
         """
         start_time = time.time()
         max_time = timeout / 1000  # Convert to seconds
 
-        # Strategy 1: Wait for network to settle
+        # EARLY EXIT CHECK: If content is already ready, return immediately
+        # This is the key optimization for static sites
+        if self._quick_content_ready_check(min_links=5, min_text=300):
+            return True
+
+        # Strategy 1: Brief wait for network to settle (reduced timeout)
+        network_timeout = min(timeout, 5000)  # Max 5s for network idle
         try:
-            self.page.wait_for_load_state("networkidle", timeout=min(timeout, 10000))
-        except Exception:
+            self.page.wait_for_load_state("networkidle", timeout=network_timeout)
+        except PlaywrightError:
             pass
 
-        # Strategy 2: Wait for framework hydration
-        try:
-            self.page.evaluate("""
-                () => {
-                    return new Promise((resolve) => {
-                        // Check if React has finished hydrating
-                        if (window.__REACT_DEVTOOLS_GLOBAL_HOOK__ || document.querySelector('[data-reactroot]')) {
-                            // Wait for React to finish rendering
-                            setTimeout(resolve, 500);
-                            return;
-                        }
-                        // Check for Vue
-                        if (window.__VUE__ || document.querySelector('[data-v-]')) {
-                            setTimeout(resolve, 500);
-                            return;
-                        }
-                        // Check for Angular
-                        if (window.ng || document.querySelector('[ng-version]')) {
-                            setTimeout(resolve, 500);
-                            return;
-                        }
-                        // Check for Next.js
-                        if (window.__NEXT_DATA__ || document.querySelector('#__next')) {
-                            setTimeout(resolve, 800);
-                            return;
-                        }
-                        // No framework detected, resolve immediately
-                        resolve();
-                    });
-                }
-            """)
-        except Exception:
-            pass
+        # Early exit check after network settles
+        if self._quick_content_ready_check(min_links=MIN_LINKS_FOR_READY, min_text=MIN_TEXT_LENGTH_FOR_READY):
+            return True
 
-        # Strategy 3: Wait for document.readyState === 'complete'
+        # Strategy 2: Wait for framework hydration (only for SPAs)
+        if not skip_framework:
+            try:
+                self.page.evaluate("""
+                    () => {
+                        return new Promise((resolve) => {
+                            // Check if React has finished hydrating
+                            if (window.__REACT_DEVTOOLS_GLOBAL_HOOK__ || document.querySelector('[data-reactroot]')) {
+                                setTimeout(resolve, 300);
+                                return;
+                            }
+                            // Check for Vue
+                            if (window.__VUE__ || document.querySelector('[data-v-]')) {
+                                setTimeout(resolve, 300);
+                                return;
+                            }
+                            // Check for Angular
+                            if (window.ng || document.querySelector('[ng-version]')) {
+                                setTimeout(resolve, 300);
+                                return;
+                            }
+                            // Check for Next.js
+                            if (window.__NEXT_DATA__ || document.querySelector('#__next')) {
+                                setTimeout(resolve, 400);
+                                return;
+                            }
+                            // No framework detected, resolve immediately
+                            resolve();
+                        });
+                    }
+                """)
+            except PlaywrightError:
+                pass
+
+        # Strategy 3: Wait for document.readyState === 'complete' (brief)
         try:
             self.page.wait_for_function(
                 "() => document.readyState === 'complete'",
-                timeout=5000
+                timeout=2000
             )
-        except Exception:
+        except PlaywrightError:
             pass
 
-        # Strategy 4: Wait for common content containers to have content
-        content_selectors = [
-            'main', 'article', '.content', '#content', '#root', '#app',
-            '.results', '.items', '.list', '.cards', '.search-results',
-            '[role="main"]', '.container', '.page-content', '.main-content',
-            'form', 'input[type="search"]', 'input[type="text"]'
-        ]
+        # Check again - many pages are ready by now
+        if self._quick_content_ready_check(min_links=MIN_LINKS_FOR_READY, min_text=MIN_TEXT_LENGTH_FOR_READY):
+            return True
 
-        for selector in content_selectors:
-            if time.time() - start_time > max_time:
-                break
-            try:
-                loc = self.page.locator(selector)
-                if loc.count() > 0:
-                    loc.first.wait_for(state="visible", timeout=2000)
-                    # Check if container actually has content
-                    has_content = self.page.evaluate(f"""
-                        () => {{
-                            const el = document.querySelector('{selector}');
-                            return el && el.innerText && el.innerText.trim().length > 50;
-                        }}
-                    """)
-                    if has_content:
-                        break
-            except Exception:
-                continue
-
-        # Strategy 5: Wait for loading indicators to disappear
+        # Strategy 4: Wait for loading indicators to disappear (shortened)
         spinner_selectors = [
-            '.loading', '.spinner', '.loader', '[class*="loading"]',
-            '[class*="spinner"]', '.skeleton', '[aria-busy="true"]',
-            '.lds-ring', '.lds-dual-ring', '.progress', '.loading-overlay'
+            '.loading', '.spinner', '.loader', '[aria-busy="true"]',
+            '.skeleton', '.loading-overlay'
         ]
         for selector in spinner_selectors:
             if time.time() - start_time > max_time:
@@ -929,42 +1137,35 @@ class Hand:
             try:
                 loc = self.page.locator(selector)
                 if loc.count() > 0 and loc.first.is_visible():
-                    loc.first.wait_for(state="hidden", timeout=5000)
-            except Exception:
+                    loc.first.wait_for(state="hidden", timeout=2000)
+            except PlaywrightError:
                 pass
 
-        # Strategy 6: Use JavaScript to verify DOM has meaningful content
-        # This is the KEY fix - actually verify content exists
-        for attempt in range(8):  # More attempts
+        # Strategy 5: Final content verification loop (reduced iterations)
+        for attempt in range(3):  # Reduced from 8
             if time.time() - start_time > max_time:
                 break
 
             try:
-                # Comprehensive check for page readiness
                 content_check = self.page.evaluate("""
                     () => {
                         const links = document.querySelectorAll('a[href]');
                         const buttons = document.querySelectorAll('button, [role="button"], input[type="submit"]');
                         const inputs = document.querySelectorAll('input, textarea, select');
-                        const images = document.querySelectorAll('img[src]');
                         const textLength = document.body?.innerText?.length || 0;
 
-                        // Check for empty placeholder states
                         const hasPlaceholder = document.querySelector('.loading, .skeleton, [aria-busy="true"]');
                         const hasEmptyRoot = document.querySelector('#root:empty, #app:empty, #__next:empty');
 
-                        // Check for visible content (not hidden or zero-sized)
                         const visibleLinks = Array.from(links).filter(el => {
                             const rect = el.getBoundingClientRect();
                             return rect.width > 0 && rect.height > 0;
                         }).length;
 
                         return {
-                            links: links.length,
                             visibleLinks: visibleLinks,
                             buttons: buttons.length,
                             inputs: inputs.length,
-                            images: images.length,
                             textLength: textLength,
                             hasPlaceholder: !!hasPlaceholder,
                             hasEmptyRoot: !!hasEmptyRoot,
@@ -976,27 +1177,22 @@ class Hand:
                 if content_check.get('hasContent', False) and not content_check.get('hasPlaceholder', True):
                     return True
 
-                # Content not ready yet, wait and retry
-                time.sleep(1.5)
+                # Wait briefly before retry
+                time.sleep(0.5)
 
-            except Exception:
-                time.sleep(1)
+            except PlaywrightError:
+                time.sleep(0.3)
 
-        # Strategy 7: Final fallback with longer wait for very slow sites
-        time.sleep(2)
-
-        # Final verification
+        # Final verification - accept any page with minimal content
         try:
-            final_check = self.page.evaluate("""
+            return self.page.evaluate("""
                 () => {
-                    const links = document.querySelectorAll('a[href]');
+                    const links = document.querySelectorAll('a[href]').length;
                     const text = document.body?.innerText?.length || 0;
-                    // At this point, accept any page with some links or text
-                    return links.length > 0 || text > 100;
+                    return links > 0 || text > 100;
                 }
             """)
-            return final_check
-        except Exception:
+        except PlaywrightError:
             return False
 
     def force_render(self) -> bool:
@@ -1009,7 +1205,7 @@ class Hand:
         # Trigger resize event (some sites render on resize)
         try:
             self.page.evaluate("window.dispatchEvent(new Event('resize'))")
-        except Exception:
+        except PlaywrightError:
             pass
 
         # Scroll to trigger lazy loading
@@ -1022,20 +1218,20 @@ class Hand:
                 }
             """)
             time.sleep(1)
-        except Exception:
+        except PlaywrightError:
             pass
 
         # Trigger mouse move (some sites wait for user activity)
         try:
             self.page.mouse.move(100, 100)
             self.page.mouse.move(200, 200)
-        except Exception:
+        except PlaywrightError:
             pass
 
         # Click on body to trigger focus events
         try:
             self.page.evaluate("document.body.click()")
-        except Exception:
+        except PlaywrightError:
             pass
 
         # Wait a moment for any triggered renders
@@ -1079,7 +1275,7 @@ class Hand:
                         if loc.count() > 0:
                             locator = loc.first
                             break
-                    except Exception:
+                    except PlaywrightError:
                         continue
         else:
             locator = self.page.locator(selector).first
@@ -1089,12 +1285,12 @@ class Hand:
 
         # Simple human delay before click
         if human:
-            self._human_delay(0.1, 0.3)
+            self._human_delay(*HUMAN_CLICK_PRE_DELAY)
 
         locator.click()
 
         if human:
-            self._human_delay(0.2, 0.5)
+            self._human_delay(*HUMAN_CLICK_POST_DELAY)
         else:
             time.sleep(0.3)
 
@@ -1129,12 +1325,12 @@ class Hand:
         for sel in selectors_to_try:
             try:
                 loc = self.page.locator(sel).first
-                loc.wait_for(state="visible", timeout=3000)
+                loc.wait_for(state="visible", timeout=ELEMENT_WAIT_TIMEOUT_MS)
                 if loc.is_visible():
                     locator = loc
                     used_selector = sel
                     break
-            except Exception:
+            except PlaywrightError:
                 continue
 
         if locator is None:
@@ -1153,7 +1349,7 @@ class Hand:
                     try:
                         locator.click(click_count=3)  # Triple-click to select all
                         self._human_delay(0.05, 0.1)
-                    except Exception:
+                    except PlaywrightError:
                         # Fallback: use fill to clear first, then type
                         locator.fill("")
                         self._human_delay(0.05, 0.1)
@@ -1168,11 +1364,11 @@ class Hand:
                 else:
                     locator.click()
                     self.page.keyboard.type(text)
-        except Exception as e:
+        except PlaywrightError as e:
             # Last resort: try using fill() directly
             try:
                 locator.fill(text)
-            except Exception:
+            except PlaywrightError:
                 raise e
         finally:
             # Always release modifier keys after typing operations
@@ -1228,16 +1424,16 @@ class Hand:
         """
         if wait_for_load:
             try:
-                self.page.wait_for_load_state("networkidle", timeout=10000)
-            except Exception:
+                self.page.wait_for_load_state("networkidle", timeout=LOAD_STATE_TIMEOUT_MS)
+            except PlaywrightError:
                 try:
                     self.page.wait_for_load_state("domcontentloaded", timeout=5000)
-                except Exception:
+                except PlaywrightError:
                     pass  # Continue anyway - page may be usable
 
         # If ensure_content is True, wait for actual content to appear
         if ensure_content:
-            self._wait_for_dynamic_content(timeout=10000)
+            self._wait_for_dynamic_content(timeout=LOAD_STATE_TIMEOUT_MS)
 
         # Retry logic for pages that are still navigating
         for attempt in range(retries):
@@ -1252,7 +1448,7 @@ class Hand:
                         continue
 
                 return html
-            except Exception as e:
+            except PlaywrightError as e:
                 if "navigating" in str(e).lower() and attempt < retries - 1:
                     time.sleep(1)  # Wait a bit and retry
                 else:
@@ -1268,13 +1464,13 @@ class Hand:
         for attempt in range(retries):
             try:
                 return self.page.title()
-            except Exception as e:
+            except PlaywrightError as e:
                 if "navigation" in str(e).lower() or "destroyed" in str(e).lower():
                     if attempt < retries - 1:
                         time.sleep(1)
                         try:
                             self.page.wait_for_load_state("domcontentloaded", timeout=5000)
-                        except Exception:
+                        except PlaywrightError:
                             pass  # Continue anyway - will retry or fallback to URL
                     else:
                         return self.page.url  # Fallback to URL
@@ -1286,10 +1482,10 @@ class Hand:
         """Wait for page to finish navigating."""
         try:
             self.page.wait_for_load_state("networkidle", timeout=timeout)
-        except Exception:
+        except PlaywrightError:
             try:
                 self.page.wait_for_load_state("domcontentloaded", timeout=5000)
-            except Exception:
+            except PlaywrightError:
                 pass  # Navigation may still be usable
 
     def screenshot(self, path: str = "screenshot.png", full_page: bool = False) -> dict:
@@ -1309,7 +1505,7 @@ class Hand:
         """Set a callback for download events."""
         self._download_callback = callback
 
-    def download_file(self, selector: str = None, url: str = None, timeout: int = 60000) -> dict:
+    def download_file(self, selector: str = None, url: str = None, timeout: int = DOWNLOAD_TIMEOUT_MS) -> dict:
         """
         Download a file by clicking a link or navigating to a URL.
 
@@ -1330,7 +1526,7 @@ class Hand:
             with self.page.expect_download(timeout=timeout) as download_info:
                 try:
                     self.page.goto(url, wait_until="commit", timeout=timeout)
-                except Exception as e:
+                except PlaywrightError as e:
                     # "Download is starting" error is expected for direct file URLs
                     if "Download is starting" not in str(e):
                         raise
@@ -1343,20 +1539,13 @@ class Hand:
         else:
             raise InvalidActionArgsError("download", "Must provide either selector or url")
 
-        # Save to download directory
-        suggested_name = download.suggested_filename
-        save_path = self.download_dir / suggested_name
-
-        # Handle duplicate filenames
-        counter = 1
-        while save_path.exists():
-            stem = save_path.stem.rsplit('_', 1)[0] if '_' in save_path.stem else save_path.stem
-            save_path = self.download_dir / f"{stem}_{counter}{save_path.suffix}"
-            counter += 1
+        # Save to download directory (P0-SEC: sanitize filename to prevent path traversal)
+        suggested_name = _sanitize_filename(download.suggested_filename)
+        base_path = self.download_dir / suggested_name
+        save_path = _reserve_unique_path(self.download_dir, base_path)
 
         download.save_as(str(save_path))
 
-        # Compute file hash and size
         file_hash = self._compute_hash(save_path)
         file_size = save_path.stat().st_size
 
@@ -1369,7 +1558,7 @@ class Hand:
             "url": download.url
         }
 
-    def download_link(self, href: str, timeout: int = 60000) -> dict:
+    def download_link(self, href: str, timeout: int = DOWNLOAD_TIMEOUT_MS) -> dict:
         """
         Download a file from a direct link URL.
 
@@ -1392,7 +1581,7 @@ class Hand:
         # For other files, try browser download first with shorter timeout
         try:
             return self.download_file(url=href, timeout=min(timeout, 30000))  # Max 30s
-        except Exception as e:
+        except (PlaywrightError, OSError) as e:
             if "Timeout" in str(e) or "download" in str(e).lower():
                 # Browser displays file inline - use HTTP fetch instead
                 return self._fetch_file_directly(href)
@@ -1401,26 +1590,20 @@ class Hand:
     def _fetch_file_directly(self, url: str) -> dict:
         """
         Download a file using direct HTTP fetch (for inline content like images).
-        """
-        import urllib.request
-        import urllib.error
-        from urllib.parse import urlparse, unquote
-        import hashlib
 
-        # Get filename from URL
+        Security: Validates URL against SSRF attacks before fetching.
+        """
+        # P0-SEC: Validate URL is not targeting internal networks (SSRF protection)
+        _is_ssrf_safe(url)  # Raises ValueError if unsafe
+
+        # Get filename from URL (P0-SEC: sanitize to prevent path traversal)
         parsed = urlparse(url)
-        filename = unquote(parsed.path.split('/')[-1]) or 'downloaded_file'
+        raw_filename = unquote(parsed.path.split('/')[-1]) or 'downloaded_file'
+        filename = _sanitize_filename(raw_filename)
 
         # Add extension if missing based on content type
-        save_path = self.download_dir / filename
-
-        # Handle duplicate filenames
-        counter = 1
-        base_path = save_path
-        while save_path.exists():
-            stem = base_path.stem
-            save_path = self.download_dir / f"{stem}_{counter}{base_path.suffix}"
-            counter += 1
+        base_path = self.download_dir / filename
+        save_path = _reserve_unique_path(self.download_dir, base_path)
 
         # Download the file with User-Agent to avoid 403 errors
         try:
@@ -1431,9 +1614,12 @@ class Hand:
                 with open(save_path, 'wb') as f:
                     f.write(response.read())
         except urllib.error.HTTPError as e:
+            save_path.unlink(missing_ok=True)
             raise DownloadError(url, reason=e.reason, status_code=e.code)
+        except (urllib.error.URLError, OSError) as e:
+            save_path.unlink(missing_ok=True)
+            raise DownloadError(url, reason=str(e))
 
-        # Compute hash and size
         file_hash = self._compute_hash(save_path)
         file_size = save_path.stat().st_size
 
@@ -1446,7 +1632,7 @@ class Hand:
             "url": url
         }
 
-    def click_and_download(self, selector: str, timeout: int = 60000) -> dict:
+    def click_and_download(self, selector: str, timeout: int = DOWNLOAD_TIMEOUT_MS) -> dict:
         """
         Click an element and wait for download to start.
 
@@ -1458,7 +1644,7 @@ class Hand:
         """Get list of pending/recent downloads."""
         return self._pending_downloads.copy()
 
-    def wait_for_download(self, timeout: int = 60000) -> Optional[dict]:
+    def wait_for_download(self, timeout: int = DOWNLOAD_TIMEOUT_MS) -> Optional[dict]:
         """
         Wait for any download to complete.
 
@@ -1469,7 +1655,9 @@ class Hand:
                 pass  # Just wait
             download = download_info.value
 
-            save_path = self.download_dir / download.suggested_filename
+            # P0-SEC: sanitize filename to prevent path traversal
+            safe_filename = _sanitize_filename(download.suggested_filename)
+            save_path = self.download_dir / safe_filename
             download.save_as(str(save_path))
 
             return {
@@ -1479,7 +1667,7 @@ class Hand:
                 "hash": self._compute_hash(save_path),
                 "url": download.url
             }
-        except Exception:
+        except (PlaywrightError, OSError):
             return None
 
     def _compute_hash(self, path: Path) -> str:

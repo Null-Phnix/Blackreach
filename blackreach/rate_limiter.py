@@ -85,6 +85,11 @@ RATE_LIMIT_PATTERNS = [
     re.compile(r'retry\s*after', re.I),
 ]
 
+# P0-PERF: Pre-compiled patterns for wait time extraction
+_RE_RETRY_AFTER = re.compile(r'retry[- ]after[:\s]+(\d+)', re.I)
+_RE_WAIT_SECONDS = re.compile(r'wait\s+(\d+)\s*(?:seconds?|secs?|s\b)', re.I)
+_RE_WAIT_MINUTES = re.compile(r'(\d+)\s*(?:minutes?|mins?|m\b)', re.I)
+
 
 class RateLimiter:
     """Manages rate limiting across domains."""
@@ -228,18 +233,18 @@ class RateLimiter:
 
     def _extract_wait_time(self, response: str) -> Optional[float]:
         """Try to extract wait time from a rate limit response."""
-        # Look for "Retry-After: X" style
-        match = re.search(r'retry[- ]after[:\s]+(\d+)', response, re.I)
+        # Look for "Retry-After: X" style (uses pre-compiled pattern)
+        match = _RE_RETRY_AFTER.search(response)
         if match:
             return float(match.group(1))
 
-        # Look for "wait X seconds" style
-        match = re.search(r'wait\s+(\d+)\s*(?:seconds?|secs?|s\b)', response, re.I)
+        # Look for "wait X seconds" style (uses pre-compiled pattern)
+        match = _RE_WAIT_SECONDS.search(response)
         if match:
             return float(match.group(1))
 
-        # Look for "X minutes" style
-        match = re.search(r'(\d+)\s*(?:minutes?|mins?|m\b)', response, re.I)
+        # Look for "X minutes" style (uses pre-compiled pattern)
+        match = _RE_WAIT_MINUTES.search(response)
         if match:
             return float(match.group(1)) * 60
 

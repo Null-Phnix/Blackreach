@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from blackreach import __version__
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
@@ -401,7 +402,9 @@ class StatusBar:
 
 def print_banner():
     """Print the Blackreach banner."""
-    banner = """[bold cyan]
+    # Pad version to fit banner (14 chars total for version area)
+    version_str = f"v{__version__}"
+    banner = f"""[bold cyan]
 ╔══════════════════════════════════════════════════════════╗
 ║   ██████╗ ██╗      █████╗  ██████╗██╗  ██╗              ║
 ║   ██╔══██╗██║     ██╔══██╗██╔════╝██║ ██╔╝              ║
@@ -410,7 +413,7 @@ def print_banner():
 ║   ██████╔╝███████╗██║  ██║╚██████╗██║  ██╗              ║
 ║   ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝              ║
 ║                                                          ║
-║   [white]Autonomous Browser Agent[/white]              [dim]v2.0.0[/dim]   ║
+║   [white]Autonomous Browser Agent[/white]   [dim]{version_str:>14}[/dim]   ║
 ╚══════════════════════════════════════════════════════════╝[/bold cyan]
 """
     console.print(banner)

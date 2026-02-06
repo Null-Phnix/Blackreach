@@ -80,12 +80,21 @@ class DomainKnowledge:
     """Accumulated knowledge about a specific domain."""
     domain: str
     visits: int = 0
+    successes: int = 0
+    failures: int = 0
     successful_paths: List[List[str]] = field(default_factory=list)
     content_locations: Dict[str, List[str]] = field(default_factory=dict)  # content_type -> urls
     navigation_patterns: Dict[str, str] = field(default_factory=dict)  # pattern -> description
     best_entry_points: List[str] = field(default_factory=list)
     pages_to_avoid: Set[str] = field(default_factory=set)
     last_visit: Optional[datetime] = None
+
+    @property
+    def success_rate(self) -> float:
+        """Calculate success rate for this domain."""
+        if self.visits == 0:
+            return 0.5  # Default for no data
+        return self.successes / self.visits
 
     def record_content_location(self, content_type: str, url: str):
         """Record where specific content types are found."""
@@ -227,6 +236,40 @@ class NavigationContext:
             elif value in (PageValue.EXCELLENT, PageValue.GOOD):
                 if url in self.domain_knowledge[domain].pages_to_avoid:
                     self.domain_knowledge[domain].pages_to_avoid.discard(url)
+
+    # =========================================================================
+    # API compatibility methods for simpler interface
+    # =========================================================================
+
+    @property
+    def path(self) -> NavigationPath:
+        """Alias for current_path for API compatibility."""
+        return self.current_path
+
+    def visit(
+        self,
+        url: str,
+        title: str,
+        links_found: int = 0,
+        from_action: str = "",
+        content_preview: str = "",
+        value: PageValue = PageValue.NEUTRAL
+    ) -> Breadcrumb:
+        """Convenience method for record_navigation."""
+        return self.record_navigation(
+            url=url,
+            title=title,
+            content_preview=content_preview,
+            links_found=links_found,
+            from_action=from_action,
+            value=value
+        )
+
+    def mark_value(self, value: PageValue) -> None:
+        """Mark the current (last visited) page with a value."""
+        if self.current_path.breadcrumbs:
+            current_url = self.current_path.breadcrumbs[-1].url
+            self.mark_page_value(current_url, value)
 
     def record_valuable_selector(self, domain: str, selector: str):
         """Record a selector that led to valuable content."""

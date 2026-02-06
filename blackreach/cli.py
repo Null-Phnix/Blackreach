@@ -16,6 +16,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.prompt import Prompt, Confirm
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from datetime import datetime
 from pathlib import Path
 import subprocess
 import sys
@@ -24,8 +25,9 @@ import signal
 import atexit
 import time
 
+from blackreach import __version__
 from blackreach.config import config_manager, AVAILABLE_MODELS, CONFIG_FILE, validate_config, validate_for_run
-from blackreach.exceptions import SessionNotFoundError
+from blackreach.exceptions import BlackreachError, SessionNotFoundError
 from blackreach.logging import LogLevel
 
 # Global reference to active agent for cleanup
@@ -37,7 +39,7 @@ def _cleanup_keyboard():
     if _active_agent and hasattr(_active_agent, 'hand') and _active_agent.hand:
         try:
             _active_agent.hand._release_all_keys()
-        except Exception:
+        except Exception:  # Best-effort cleanup
             pass
 
 def _signal_handler(signum, frame):
@@ -45,22 +47,28 @@ def _signal_handler(signum, frame):
     _cleanup_keyboard()
     sys.exit(0)
 
-# Register cleanup handlers
+# Register cleanup handlers - but not during testing to avoid interfering with pytest
+def _is_running_under_pytest():
+    """Check if we're running under pytest."""
+    return "pytest" in sys.modules or "_pytest" in sys.modules
+
 atexit.register(_cleanup_keyboard)
-signal.signal(signal.SIGTERM, _signal_handler)
-# SIGINT is handled by KeyboardInterrupt, but register anyway for safety
-try:
-    signal.signal(signal.SIGINT, _signal_handler)
-except ValueError:
-    pass  # Can't set SIGINT handler in some contexts
+
+# Only register signal handlers when not under pytest
+if not _is_running_under_pytest():
+    signal.signal(signal.SIGTERM, _signal_handler)
+    # SIGINT is handled by KeyboardInterrupt, but register anyway for safety
+    try:
+        signal.signal(signal.SIGINT, _signal_handler)
+    except ValueError:
+        pass  # Can't set SIGINT handler in some contexts
 
 console = Console()
 
-# Version
-__version__ = "4.0.0-beta.2"
 
-
-BANNER = """[bold cyan]
+def _make_banner():
+    v = f"v{__version__}"
+    return f"""[bold cyan]
 ╔══════════════════════════════════════════════════════════╗
 ║   ██████╗ ██╗      █████╗  ██████╗██╗  ██╗              ║
 ║   ██╔══██╗██║     ██╔══██╗██╔════╝██║ ██╔╝              ║
@@ -69,9 +77,11 @@ BANNER = """[bold cyan]
 ║   ██████╔╝███████╗██║  ██║╚██████╗██║  ██╗              ║
 ║   ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝              ║
 ║                                                          ║
-║   [white]Autonomous Browser Agent[/white]        [dim]v4.0.0-beta.2[/dim]   ║
+║   [white]Autonomous Browser Agent[/white]   [dim]{v:>14}[/dim]   ║
 ╚══════════════════════════════════════════════════════════╝[/bold cyan]
 """
+
+BANNER = _make_banner()
 
 
 def is_first_run() -> bool:
@@ -123,7 +133,7 @@ def check_ollama_running() -> bool:
         import ollama
         ollama.list()
         return True
-    except Exception:
+    except (ImportError, OSError):
         return False
 
 
@@ -307,8 +317,11 @@ def run(goal: str, provider: str, model: str, headless: bool, browser: str, step
             sys.exit(1)
         except KeyboardInterrupt:
             console.print("\n[yellow]Interrupted - session state saved[/yellow]")
-        except Exception as e:
+        except BlackreachError as e:
             console.print(f"[red]Error: {e}[/red]")
+            sys.exit(1)
+        except Exception as e:
+            console.print(f"[red]Unexpected error: {e}[/red]")
             sys.exit(1)
         return
 
@@ -350,8 +363,11 @@ def run(goal: str, provider: str, model: str, headless: bool, browser: str, step
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted - session state saved for resume[/yellow]")
-    except Exception as e:
+    except BlackreachError as e:
         console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Unexpected error: {e}[/red]")
         sys.exit(1)
 
 
@@ -385,7 +401,7 @@ def list_resumable():
         mem = PersistentMemory(Path("./memory.db"))
         resumable = mem.get_resumable_sessions()
         mem.close()
-    except Exception as e:
+    except (OSError, BlackreachError) as e:
         console.print(f"[red]Error: {e}[/red]")
         return
 
@@ -545,7 +561,7 @@ def status():
         mem = PersistentMemory(Path("./memory.db"))
         stats = mem.get_stats()
         mem.close()
-    except Exception:
+    except Exception:  # Best-effort stats display
         stats = {"total_sessions": 0, "total_downloads": 0, "total_visits": 0}
 
     console.print(Panel(
@@ -582,6 +598,80 @@ def version():
     import platform
     console.print(f"[bold cyan]Blackreach[/bold cyan] v{__version__}")
     console.print(f"[dim]Python {platform.python_version()} on {platform.system()} {platform.release()}[/dim]")
+
+
+@cli.command()
+@click.option('--force', '-f', is_flag=True, help='Force reinstall even if up to date')
+def update(force: bool):
+    """Update Blackreach to the latest version from source."""
+    import subprocess
+    from pathlib import Path
+
+    console.print(BANNER)
+    console.print("[bold]Blackreach Updater[/bold]\n")
+
+    # Find the project root (where pyproject.toml is)
+    current_file = Path(__file__).resolve()
+    project_root = current_file.parent.parent  # blackreach/cli.py -> blackreach -> project root
+
+    pyproject = project_root / "pyproject.toml"
+    if not pyproject.exists():
+        console.print("[red]Error: Could not find project root (pyproject.toml)[/red]")
+        console.print(f"[dim]Searched in: {project_root}[/dim]")
+        return
+
+    console.print(f"[dim]Project root: {project_root}[/dim]")
+    console.print(f"[cyan]Current version:[/cyan] {__version__}\n")
+
+    # Check if git repo and pull latest
+    git_dir = project_root / ".git"
+    if git_dir.exists():
+        console.print("[yellow]Pulling latest changes...[/yellow]")
+        try:
+            result = subprocess.run(
+                ["git", "pull"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            if result.returncode == 0:
+                if "Already up to date" in result.stdout:
+                    console.print("[green]Already up to date[/green]")
+                    if not force:
+                        console.print("[dim]Use --force to reinstall anyway[/dim]")
+                        return
+                else:
+                    console.print(f"[green]{result.stdout.strip()}[/green]")
+            else:
+                console.print(f"[yellow]Git pull warning: {result.stderr.strip()}[/yellow]")
+        except (subprocess.SubprocessError, OSError) as e:
+            console.print(f"[yellow]Git pull skipped: {e}[/yellow]")
+
+    # Reinstall package
+    console.print("\n[yellow]Reinstalling package...[/yellow]")
+    try:
+        result = subprocess.run(
+            ["pip", "install", "-e", ".", "--quiet"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        if result.returncode == 0:
+            console.print("[green]Package reinstalled successfully[/green]")
+        else:
+            console.print(f"[red]Install error: {result.stderr.strip()}[/red]")
+            return
+    except (subprocess.SubprocessError, OSError) as e:
+        console.print(f"[red]Install failed: {e}[/red]")
+        return
+
+    # Show success and instructions
+    console.print("\n[bold green]Update complete![/bold green]")
+    console.print("\n[yellow]To use the new version, run:[/yellow]")
+    console.print("  [cyan]hash -r[/cyan]  (clear shell cache)")
+    console.print("  [dim]or just open a new terminal[/dim]")
 
 
 @cli.command()
@@ -650,7 +740,7 @@ def validate(fix: bool):
     try:
         download_path.mkdir(parents=True, exist_ok=True)
         dir_ok = True
-    except Exception:
+    except OSError:
         dir_ok = False
     table.add_row(
         "Download Dir",
@@ -1034,7 +1124,6 @@ def health(content_type: str, timeout: float):
 def downloads(limit: int, show_all: bool):
     """Show download history."""
     from blackreach.memory import PersistentMemory
-    from datetime import datetime
 
     console.print(BANNER)
     console.print("[bold]Download History[/bold]\n")
@@ -1078,7 +1167,7 @@ def downloads(limit: int, show_all: bool):
             try:
                 dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
                 date_str = dt.strftime("%Y-%m-%d %H:%M")
-            except Exception:
+            except (ValueError, TypeError):
                 date_str = date_str[:16]
 
         table.add_row(filename, size_str, source, date_str)
@@ -1101,7 +1190,6 @@ def downloads(limit: int, show_all: bool):
 def sessions(limit: int):
     """Show session history."""
     from blackreach.memory import PersistentMemory
-    from datetime import datetime
 
     console.print(BANNER)
     console.print("[bold]Session History[/bold]\n")
@@ -1155,7 +1243,7 @@ def sessions(limit: int):
                     duration = f"{duration_sec / 60:.0f}m"
                 else:
                     duration = f"{duration_sec:.0f}s"
-            except Exception:
+            except (ValueError, TypeError):
                 duration = "-"
         else:
             duration = "-"
@@ -1165,7 +1253,7 @@ def sessions(limit: int):
             try:
                 dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
                 date_str = dt.strftime("%m/%d %H:%M")
-            except Exception:
+            except (ValueError, TypeError):
                 date_str = start[:10]
         else:
             date_str = "-"
@@ -1290,10 +1378,9 @@ def logs(limit: int, session_id: int):
         # Format date
         if timestamp:
             try:
-                from datetime import datetime
                 dt = datetime.strptime(timestamp, "%Y%m%d_%H%M%S")
                 date_str = dt.strftime("%m/%d %H:%M")
-            except Exception:
+            except (ValueError, TypeError):
                 date_str = timestamp[:8]
         else:
             date_str = "-"
@@ -1343,7 +1430,7 @@ def interactive_mode():
         mem = PersistentMemory(Path("./memory.db"))
         stats = mem.get_stats()
         mem.close()
-    except Exception:
+    except Exception:  # Best-effort stats display
         stats = {"total_sessions": 0, "total_downloads": 0}
 
     # Welcome message
@@ -1385,7 +1472,7 @@ def interactive_mode():
                     for i, line in enumerate(history_lines, 1):
                         console.print(f"  [dim]{i}.[/dim] {line}")
                     console.print()
-                except Exception:
+                except OSError:
                     ui.print_info("No history yet")
 
             elif cmd_lower in ['/config', '/cfg', 'config']:
@@ -1469,7 +1556,7 @@ def interactive_mode():
                             status_icon = "⏸" if session.get("status") == "paused" else "⚡"
                             console.print(f"  {status_icon} [cyan]#{session['session_id']}[/cyan]: {goal} (step {session.get('current_step', 0)})")
                         console.print("\n  [dim]Type /resume <ID> to continue a session[/dim]")
-                except Exception as e:
+                except (OSError, BlackreachError) as e:
                     ui.print_error(f"Failed to load sessions: {e}")
 
             elif cmd_lower.startswith('/resume '):
@@ -1512,8 +1599,10 @@ def interactive_mode():
 
                 except SessionNotFoundError as e:
                     ui.print_error(str(e))
-                except Exception as e:
+                except BlackreachError as e:
                     ui.print_error(f"Resume failed: {e}")
+                except Exception as e:
+                    ui.print_error(f"Unexpected error during resume: {e}")
 
             elif cmd_lower in ['/provider', '/p', 'provider']:
                 # Interactive provider selection menu
@@ -1689,8 +1778,10 @@ def run_agent_with_ui(goal: str, provider: str, model: str, cfg):
     except KeyboardInterrupt:
         console.print("\n")
         ui.print_warning("Agent interrupted")
-    except Exception as e:
+    except BlackreachError as e:
         ui.print_error(str(e))
+    except Exception as e:
+        ui.print_error(f"Unexpected error: {e}")
 
 
 def show_help():

@@ -38,6 +38,12 @@ from datetime import datetime
 from blackreach.knowledge import find_best_sources, extract_subject
 
 
+# P0-PERF: Pre-compiled regex patterns for goal parsing
+_RE_NUMBERS = re.compile(r'\b(\d+)\b')
+_RE_URL = re.compile(r'https?://\S+')
+_RE_DOMAIN = re.compile(r'\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}\b')
+
+
 class SubtaskStatus(Enum):
     """Status of a subtask."""
     PENDING = "pending"
@@ -160,15 +166,21 @@ class GoalDecomposition:
 
     @property
     def is_complete(self) -> bool:
-        """Check if goal is achieved."""
-        completed = sum(1 for st in self.subtasks if st.status == SubtaskStatus.COMPLETED)
+        """Check if goal is achieved.
+
+        Only counts non-optional completed subtasks toward the success ratio
+        to prevent optional completions from masking missing required work.
+        """
+        required_completed = sum(
+            1 for st in self.subtasks
+            if st.status == SubtaskStatus.COMPLETED and not st.optional
+        )
         required = sum(1 for st in self.subtasks if not st.optional)
 
         if required == 0:
-            return completed > 0
+            return any(st.status == SubtaskStatus.COMPLETED for st in self.subtasks)
 
-        success_ratio = completed / max(required, 1)
-        return success_ratio >= self.min_success_ratio
+        return required_completed / required >= self.min_success_ratio
 
     def get_next_subtask(self) -> Optional[EnhancedSubtask]:
         """Get the next subtask to execute."""
@@ -250,8 +262,11 @@ class GoalEngine:
         return compiled
 
     def _generate_id(self, text: str) -> str:
-        """Generate a unique ID for a goal/subtask."""
-        return hashlib.md5(f"{text}{datetime.now().isoformat()}".encode()).hexdigest()[:12]
+        """Generate a unique ID for a goal/subtask.
+
+        Uses blake2b (faster than MD5) with 6-byte digest (12 hex chars).
+        """
+        return hashlib.blake2b(f"{text}{datetime.now().isoformat()}".encode(), digest_size=6).hexdigest()
 
     def detect_goal_type(self, goal: str) -> GoalType:
         """Detect the type of goal."""
@@ -261,10 +276,14 @@ class GoalEngine:
                     return goal_type
         return GoalType.UNKNOWN
 
+    def _classify_goal(self, goal: str) -> GoalType:
+        """Alias for detect_goal_type for API compatibility."""
+        return self.detect_goal_type(goal)
+
     def extract_quantity(self, goal: str) -> int:
         """Extract quantity from goal (e.g., 'download 5 papers' -> 5)."""
-        # Look for explicit numbers
-        numbers = re.findall(r'\b(\d+)\b', goal)
+        # Look for explicit numbers (uses pre-compiled pattern)
+        numbers = _RE_NUMBERS.findall(goal)
         if numbers:
             return int(numbers[0])
 
@@ -439,9 +458,9 @@ class GoalEngine:
 
     def _decompose_navigate_goal(self, goal: str) -> List[EnhancedSubtask]:
         """Decompose a navigation goal."""
-        # Extract URL from goal
-        url_match = re.search(r'https?://\S+', goal)
-        domain_match = re.search(r'\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}\b', goal)
+        # Extract URL from goal (uses pre-compiled patterns)
+        url_match = _RE_URL.search(goal)
+        domain_match = _RE_DOMAIN.search(goal)
 
         target_url = ""
         if url_match:
@@ -574,6 +593,77 @@ class GoalEngine:
                 lines.append(f"      Error: {st.error[:50]}")
 
         return "\n".join(lines)
+
+    # =========================================================================
+    # API compatibility methods for simpler test interface
+    # =========================================================================
+
+    def _get_subtask(self, subtask_id: str) -> Optional[EnhancedSubtask]:
+        """Get a subtask by ID from any decomposition."""
+        for decomposition in self._decompositions.values():
+            for subtask in decomposition.subtasks:
+                if subtask.id == subtask_id:
+                    return subtask
+        return None
+
+    def _get_decomposition_for_subtask(self, subtask_id: str) -> Optional[str]:
+        """Get the decomposition ID containing a subtask."""
+        for decomp_id, decomposition in self._decompositions.items():
+            for subtask in decomposition.subtasks:
+                if subtask.id == subtask_id:
+                    return decomp_id
+        return None
+
+    def complete_subtask(self, subtask_id: str, result: Dict = None) -> None:
+        """Mark a subtask as completed (simplified API)."""
+        decomp_id = self._get_decomposition_for_subtask(subtask_id)
+        if decomp_id:
+            self.update_progress(decomp_id, subtask_id, SubtaskStatus.COMPLETED, result)
+
+    def fail_subtask(self, subtask_id: str, error: str = "") -> None:
+        """Mark a subtask as failed (simplified API)."""
+        decomp_id = self._get_decomposition_for_subtask(subtask_id)
+        if decomp_id:
+            self.update_progress(decomp_id, subtask_id, SubtaskStatus.FAILED, error=error)
+
+    def _dependencies_satisfied(self, subtask_id: str) -> bool:
+        """Check if all dependencies for a subtask are satisfied."""
+        subtask = self._get_subtask(subtask_id)
+        if not subtask:
+            return False
+
+        if not subtask.depends_on:
+            return True
+
+        for dep_id in subtask.depends_on:
+            dep_subtask = self._get_subtask(dep_id)
+            if dep_subtask and dep_subtask.status != SubtaskStatus.COMPLETED:
+                return False
+
+        return True
+
+    def set_subtask_progress(self, subtask_id: str, progress: float) -> None:
+        """Set progress percentage for a subtask (simplified API)."""
+        subtask = self._get_subtask(subtask_id)
+        if subtask:
+            subtask.progress_percent = progress
+            if progress >= 1.0:
+                subtask.status = SubtaskStatus.COMPLETED
+            elif progress > 0:
+                subtask.status = SubtaskStatus.IN_PROGRESS
+
+    def is_complete(self) -> bool:
+        """Check if all decompositions are complete."""
+        if not self._decompositions:
+            return False
+        return all(d.is_complete for d in self._decompositions.values())
+
+    def get_remaining_subtasks(self) -> List[EnhancedSubtask]:
+        """Get all remaining (incomplete) subtasks from all decompositions."""
+        remaining = []
+        for decomposition in self._decompositions.values():
+            remaining.extend(decomposition.get_remaining_subtasks())
+        return remaining
 
 
 # Global instance

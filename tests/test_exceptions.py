@@ -11,6 +11,8 @@ from blackreach.exceptions import (
     # Browser
     BrowserError,
     BrowserNotReadyError,
+    BrowserUnhealthyError,
+    BrowserRestartFailedError,
     ElementNotFoundError,
     NavigationError,
     DownloadError,
@@ -110,6 +112,28 @@ class TestBrowserErrors:
         """BrowserNotReadyError accepts custom message."""
         err = BrowserNotReadyError("Custom message")
         assert str(err) == "Custom message"
+
+    def test_browser_unhealthy_default_message(self):
+        """BrowserUnhealthyError has default message."""
+        err = BrowserUnhealthyError()
+        assert "unresponsive" in str(err).lower()
+        assert err.recoverable is True
+
+    def test_browser_unhealthy_custom_message(self):
+        """BrowserUnhealthyError accepts custom message."""
+        err = BrowserUnhealthyError("Browser crashed")
+        assert str(err) == "Browser crashed"
+
+    def test_browser_restart_failed_default_message(self):
+        """BrowserRestartFailedError has default message."""
+        err = BrowserRestartFailedError()
+        assert "restart" in str(err).lower()
+        assert err.recoverable is False
+
+    def test_browser_restart_failed_custom_message(self):
+        """BrowserRestartFailedError accepts custom message."""
+        err = BrowserRestartFailedError("Out of memory")
+        assert str(err) == "Out of memory"
 
     def test_element_not_found_with_selector(self):
         """ElementNotFoundError with selector."""
@@ -428,6 +452,8 @@ class TestExceptionHierarchy:
         exceptions = [
             BrowserError("test"),
             BrowserNotReadyError(),
+            BrowserUnhealthyError(),
+            BrowserRestartFailedError(),
             ElementNotFoundError(selector="x"),
             NavigationError("url"),
             DownloadError("url"),
@@ -463,6 +489,8 @@ class TestExceptionHierarchy:
         """Browser exceptions inherit from BrowserError."""
         exceptions = [
             BrowserNotReadyError(),
+            BrowserUnhealthyError(),
+            BrowserRestartFailedError(),
             ElementNotFoundError(selector="x"),
             NavigationError("url"),
             DownloadError("url"),

@@ -285,6 +285,14 @@ class SourceManager:
         """Get health status for a domain."""
         return self._health[domain]
 
+    def get_status(self, domain: str) -> SourceHealth:
+        """Alias for get_source_status."""
+        return self.get_source_status(domain)
+
+    def is_available(self, domain: str) -> bool:
+        """Check if a source domain is currently available."""
+        return self._health[domain].is_available
+
     def get_all_status(self) -> Dict[str, Dict]:
         """Get status of all tracked sources."""
         result = {}

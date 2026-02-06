@@ -8,8 +8,11 @@ Optimized for performance and LLM consumption.
 from bs4 import BeautifulSoup, Tag
 from typing import List, Dict, Optional, Set
 from dataclasses import dataclass
+import logging
 import re
 import hashlib
+
+logger = logging.getLogger(__name__)
 
 
 # Precompiled regex patterns for performance
@@ -73,8 +76,12 @@ class Eyes:
         self._cache: Dict[str, dict] = {}
 
     def _get_cache_key(self, html: str) -> str:
-        """Generate cache key from HTML content."""
-        return hashlib.md5(html.encode()[:10000]).hexdigest()
+        """Generate cache key from HTML content.
+
+        Uses blake2b (faster than MD5) with 16-byte digest for cache keys.
+        Only uses first 10KB of HTML for performance.
+        """
+        return hashlib.blake2b(html.encode()[:10000], digest_size=16).hexdigest()
 
     def see(self, html: str, use_cache: bool = None) -> dict:
         """
@@ -96,8 +103,14 @@ class Eyes:
             if cache_key in self._cache:
                 return self._cache[cache_key]
 
-        # Use html.parser instead of lxml - more lenient with malformed HTML
-        soup = BeautifulSoup(html, 'html.parser')
+        # P0-PERF: Use lxml for ~10x faster parsing performance
+        # lxml handles malformed HTML well and is much faster than html.parser
+        # Falls back to html.parser if lxml is not installed
+        try:
+            soup = BeautifulSoup(html, 'lxml')
+        except Exception as e:
+            logger.debug("lxml parser unavailable, falling back to html.parser: %s", e)
+            soup = BeautifulSoup(html, 'html.parser')
 
         # Remove unwanted tags
         for tag in soup.find_all(self.REMOVE_TAGS):
@@ -140,7 +153,12 @@ class Eyes:
         Debug helper to understand what's in the HTML.
         Returns statistics about the HTML structure.
         """
-        soup = BeautifulSoup(html, 'html.parser')
+        # P0-PERF: Use lxml for faster parsing
+        try:
+            soup = BeautifulSoup(html, 'lxml')
+        except Exception as e:
+            logger.debug("lxml parser unavailable in debug_html, falling back to html.parser: %s", e)
+            soup = BeautifulSoup(html, 'html.parser')
 
         # Count raw elements before any filtering
         raw_links = len(soup.find_all('a', href=True))

@@ -10,6 +10,59 @@ from typing import List, Dict, Optional
 import re
 
 
+# P0-PERF: Pre-compiled regex patterns for extract_subject()
+_RE_PREFIXES = [
+    re.compile(r'^find\s+me\s+', re.I),
+    re.compile(r'^find\s+', re.I),
+    re.compile(r'^get\s+me\s+', re.I),
+    re.compile(r'^get\s+', re.I),
+    re.compile(r'^download\s+', re.I),
+    re.compile(r'^fetch\s+', re.I),
+    re.compile(r'^search\s+for\s+', re.I),
+    re.compile(r'^search\s+', re.I),
+    re.compile(r'^look\s+for\s+', re.I),
+    re.compile(r'^looking\s+for\s+', re.I),
+    re.compile(r'^i\s+need\s+', re.I),
+    re.compile(r'^i\s+want\s+', re.I),
+    re.compile(r'^can\s+you\s+find\s+', re.I),
+    re.compile(r'^please\s+find\s+', re.I),
+]
+
+_RE_SUFFIXES = [
+    re.compile(r'\s+for\s+me$', re.I),
+    re.compile(r'\s+please$', re.I),
+    re.compile(r'\s+now$', re.I),
+    re.compile(r'\s+as\s+soon\s+as\s+possible$', re.I),
+    re.compile(r'\s+asap$', re.I),
+]
+
+_RE_QUANTITY = re.compile(r'\b(a\s+single|one|some|a\s+few|several|multiple)\s+', re.I)
+_RE_FILE_TYPES = re.compile(r'\b(epub|pdf|mobi|mp3|mp4|jpg|png|zip|rar|cbr|cbz|stl|fbx|obj|ttf|otf|svg)\b', re.I)
+_RE_CONTENT_TYPES = re.compile(r'\b(ebook|e-book|book|paper|image|video|file|wallpaper|comic|manga|font|icon|model)\b', re.I)
+_RE_PREPOSITIONS = re.compile(r'\b(for|about|of|on|the|a|an)\s+', re.I)
+
+# P0-PERF: Pre-compiled content type detection patterns (for detect_content_type())
+_CONTENT_TYPE_PATTERNS = {
+    "ebook": [re.compile(p, re.I) for p in [r'\bepub\b', r'\bebook\b', r'\be-book\b', r'\bkindle\b', r'\bmobi\b']],
+    "book": [re.compile(p, re.I) for p in [r'\bbook\b', r'\bnovel\b', r'\bread\b', r'\bstory\b', r'\bfiction\b', r'\btextbook\b']],
+    "paper": [re.compile(p, re.I) for p in [r'\bpaper\b', r'\bresearch\b', r'\bjournal\b', r'\barticle\b', r'\bstudy\b', r'\bpreprint\b']],
+    "code": [re.compile(p, re.I) for p in [r'\bcode\b', r'\brepo\b', r'\brepository\b', r'\bgithub\b', r'\bsource\b', r'\bproject\b']],
+    "image": [re.compile(p, re.I) for p in [r'\bimages?\b', r'\bpictures?\b', r'\bphotos?\b', r'\bjpg\b', r'\bpng\b']],
+    "wallpaper": [re.compile(p, re.I) for p in [r'\bwallpaper\b', r'\bdesktop\b', r'\bbackground\b', r'\b4k\b', r'\bhd\b', r'\b8k\b', r'\bultra\s*hd\b']],
+    "video": [re.compile(p, re.I) for p in [r'\bvideo\b', r'\bmovie\b', r'\bfilm\b', r'\bdocumentary\b', r'\bmp4\b']],
+    "audio": [re.compile(p, re.I) for p in [r'\baudio\b', r'\bmusic\b', r'\bsong\b', r'\bmp3\b', r'\bpodcast\b', r'\balbum\b']],
+    "dataset": [re.compile(p, re.I) for p in [r'\bdataset\b', r'\bdata\b', r'\bcsv\b', r'\btraining data\b']],
+    "pdf": [re.compile(r'\bpdf\b', re.I)],
+    "package": [re.compile(p, re.I) for p in [r'\bpackage\b', r'\blibrary\b', r'\bmodule\b', r'\bpip\b', r'\bnpm\b']],
+    "comic": [re.compile(p, re.I) for p in [r'\bcomic\b', r'\bcomics\b', r'\bcbr\b', r'\bcbz\b', r'\bgraphic novel\b', r'\bmarvel\b', r'\bdc\b']],
+    "manga": [re.compile(p, re.I) for p in [r'\bmanga\b', r'\bmanhwa\b', r'\bmanhua\b', r'\bwebtoon\b', r'\banime\b']],
+    "font": [re.compile(p, re.I) for p in [r'\bfont\b', r'\bfonts\b', r'\btypeface\b', r'\bttf\b', r'\botf\b', r'\btypography\b']],
+    "icon": [re.compile(p, re.I) for p in [r'\bicon\b', r'\bicons\b', r'\bsvg\b', r'\bemoji\b']],
+    "3d": [re.compile(p, re.I) for p in [r'\b3d\b', r'\bstl\b', r'\bmodel\b', r'\bfbx\b', r'\bobj\b', r'\bblender\b', r'\b3d\s*print\b']],
+    "software": [re.compile(p, re.I) for p in [r'\bsoftware\b', r'\bapp\b', r'\bapplication\b', r'\bprogram\b', r'\btool\b', r'\bdownload\b']],
+}
+
+
 @dataclass
 class ContentSource:
     """A known source for a specific type of content."""
@@ -485,30 +538,10 @@ def detect_content_type(goal: str) -> List[str]:
     goal_lower = goal.lower()
     detected_types = []
 
-    # Content type patterns
-    type_patterns = {
-        "ebook": [r'\bepub\b', r'\bebook\b', r'\be-book\b', r'\bkindle\b', r'\bmobi\b'],
-        "book": [r'\bbook\b', r'\bnovel\b', r'\bread\b', r'\bstory\b', r'\bfiction\b', r'\btextbook\b'],
-        "paper": [r'\bpaper\b', r'\bresearch\b', r'\bjournal\b', r'\barticle\b', r'\bstudy\b', r'\bpreprint\b'],
-        "code": [r'\bcode\b', r'\brepo\b', r'\brepository\b', r'\bgithub\b', r'\bsource\b', r'\bproject\b'],
-        "image": [r'\bimages?\b', r'\bpictures?\b', r'\bphotos?\b', r'\bjpg\b', r'\bpng\b'],
-        "wallpaper": [r'\bwallpaper\b', r'\bdesktop\b', r'\bbackground\b', r'\b4k\b', r'\bhd\b', r'\b8k\b', r'\bultra\s*hd\b'],
-        "video": [r'\bvideo\b', r'\bmovie\b', r'\bfilm\b', r'\bdocumentary\b', r'\bmp4\b'],
-        "audio": [r'\baudio\b', r'\bmusic\b', r'\bsong\b', r'\bmp3\b', r'\bpodcast\b', r'\balbum\b'],
-        "dataset": [r'\bdataset\b', r'\bdata\b', r'\bcsv\b', r'\btraining data\b'],
-        "pdf": [r'\bpdf\b'],
-        "package": [r'\bpackage\b', r'\blibrary\b', r'\bmodule\b', r'\bpip\b', r'\bnpm\b'],
-        "comic": [r'\bcomic\b', r'\bcomics\b', r'\bcbr\b', r'\bcbz\b', r'\bgraphic novel\b', r'\bmarvel\b', r'\bdc\b'],
-        "manga": [r'\bmanga\b', r'\bmanhwa\b', r'\bmanhua\b', r'\bwebtoon\b', r'\banime\b'],
-        "font": [r'\bfont\b', r'\bfonts\b', r'\btypeface\b', r'\bttf\b', r'\botf\b', r'\btypography\b'],
-        "icon": [r'\bicon\b', r'\bicons\b', r'\bsvg\b', r'\bemoji\b'],
-        "3d": [r'\b3d\b', r'\bstl\b', r'\bmodel\b', r'\bfbx\b', r'\bobj\b', r'\bblender\b', r'\b3d\s*print\b'],
-        "software": [r'\bsoftware\b', r'\bapp\b', r'\bapplication\b', r'\bprogram\b', r'\btool\b', r'\bdownload\b'],
-    }
-
-    for content_type, patterns in type_patterns.items():
+    # Use pre-compiled patterns from module level for performance
+    for content_type, patterns in _CONTENT_TYPE_PATTERNS.items():
         for pattern in patterns:
-            if re.search(pattern, goal_lower):
+            if pattern.search(goal_lower):
                 if content_type not in detected_types:
                     detected_types.append(content_type)
                 break
@@ -537,36 +570,23 @@ def extract_subject(goal: str) -> str:
         "find me a single epub for red rising" -> "red rising"
         "download papers about transformer architecture" -> "transformer architecture"
     """
-    goal_lower = goal.lower()
+    subject = goal.lower()
 
-    # Remove common prefixes
-    prefixes = [
-        r'^find\s+me\s+', r'^find\s+', r'^get\s+me\s+', r'^get\s+',
-        r'^download\s+', r'^fetch\s+', r'^search\s+for\s+', r'^search\s+',
-        r'^look\s+for\s+', r'^looking\s+for\s+', r'^i\s+need\s+',
-        r'^i\s+want\s+', r'^can\s+you\s+find\s+', r'^please\s+find\s+',
-    ]
-
-    subject = goal_lower
-    for prefix in prefixes:
-        subject = re.sub(prefix, '', subject)
+    # Remove common prefixes (using precompiled patterns for performance)
+    for pattern in _RE_PREFIXES:
+        subject = pattern.sub('', subject)
 
     # Remove common suffixes/qualifiers
-    suffixes = [
-        r'\s+for\s+me$', r'\s+please$', r'\s+now$',
-        r'\s+as\s+soon\s+as\s+possible$', r'\s+asap$',
-    ]
+    for pattern in _RE_SUFFIXES:
+        subject = pattern.sub('', subject)
 
-    for suffix in suffixes:
-        subject = re.sub(suffix, '', subject)
-
-    # Remove quantity indicators and file types
-    subject = re.sub(r'\b(a\s+single|one|some|a\s+few|several|multiple)\s+', '', subject)
-    subject = re.sub(r'\b(epub|pdf|mobi|mp3|mp4|jpg|png|zip|rar|cbr|cbz|stl|fbx|obj|ttf|otf|svg)\b', '', subject)
-    subject = re.sub(r'\b(ebook|e-book|book|paper|image|video|file|wallpaper|comic|manga|font|icon|model)\b', '', subject)
+    # Remove quantity indicators, file types, and content types (precompiled)
+    subject = _RE_QUANTITY.sub('', subject)
+    subject = _RE_FILE_TYPES.sub('', subject)
+    subject = _RE_CONTENT_TYPES.sub('', subject)
 
     # Remove prepositions that might be left over
-    subject = re.sub(r'\b(for|about|of|on|the|a|an)\s+', ' ', subject)
+    subject = _RE_PREPOSITIONS.sub(' ', subject)
 
     # Clean up extra whitespace
     subject = ' '.join(subject.split())

@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch, MagicMock
 from blackreach.agent import Agent, AgentConfig, AgentCallbacks
 from blackreach.llm import LLMConfig
 from blackreach.browser import Hand
-from blackreach.exceptions import UnknownActionError, InvalidActionArgsError
+from blackreach.exceptions import UnknownActionError, InvalidActionArgsError, BrowserError
 
 
 # Mark all tests in this module as integration tests
@@ -776,7 +776,7 @@ class TestAgentClickAction:
         agent.hand = Mock()
         agent.hand.page = Mock()
         # Make text-based click fail
-        agent.hand.page.get_by_text.side_effect = Exception("Not found")
+        agent.hand.page.get_by_text.side_effect = BrowserError("Not found")
         agent.hand.click.return_value = {"action": "click", "success": True}
 
         result = agent._execute_action("click", {

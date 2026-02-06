@@ -136,17 +136,33 @@ class ParallelFetcher:
             tasks.append(task)
             self._results[task.task_id] = task
 
-        # Process in batches respecting max_parallel
+        # P0-PERF: Use ThreadPoolExecutor for actual parallel execution
+        # Previous implementation was sequential despite claiming to be parallel
         completed = 0
-        for i in range(0, len(tasks), self.max_parallel):
-            batch = tasks[i:i + self.max_parallel]
+        failed_count = 0
 
-            # Fetch batch
-            for task in batch:
-                self._fetch_single(task, on_page_loaded)
-                completed += 1
+        with ThreadPoolExecutor(max_workers=self.max_parallel) as executor:
+            # Submit all tasks to the executor
+            future_to_task = {
+                executor.submit(self._fetch_single, task, on_page_loaded): task
+                for task in tasks
+            }
+
+            # Process results as they complete
+            for future in as_completed(future_to_task):
+                task = future_to_task[future]
+                try:
+                    future.result()  # Get any exception that occurred
+                    if task.status == ParallelTaskStatus.COMPLETED:
+                        completed += 1
+                    else:
+                        failed_count += 1
+                except Exception:  # Future may propagate any error from the task thread
+                    failed_count += 1
+                    task.status = ParallelTaskStatus.FAILED
+
                 if on_progress:
-                    on_progress(completed, len(tasks))
+                    on_progress(completed + failed_count, len(tasks))
 
         # Compile results
         elapsed = time.time() - start_time
@@ -158,6 +174,10 @@ class ParallelFetcher:
             results=tasks,
             elapsed_seconds=elapsed
         )
+
+        # Clean up completed tasks from internal tracking to prevent memory leak
+        for task in tasks:
+            self._results.pop(task.task_id, None)
 
         return result
 
@@ -209,7 +229,7 @@ class ParallelFetcher:
             # Release tab back to pool
             self.tab_manager.release_tab(tab.tab_id)
 
-        except Exception as e:
+        except Exception as e:  # Task may raise any error type (browser, network, timeout, etc.)
             task.status = ParallelTaskStatus.FAILED
             task.error = str(e)
         finally:
@@ -282,26 +302,36 @@ class ParallelDownloader:
             )
             tasks.append(task)
 
-        # Process downloads
+        # P0-PERF: Use ThreadPoolExecutor for actual parallel downloads
         completed = 0
         failed = 0
 
-        for i in range(0, len(tasks), self.max_parallel):
-            batch = tasks[i:i + self.max_parallel]
+        with ThreadPoolExecutor(max_workers=self.max_parallel) as executor:
+            # Submit all download tasks
+            future_to_task = {
+                executor.submit(self._download_single, task): task
+                for task in tasks
+            }
 
-            for task in batch:
-                success = self._download_single(task)
-
-                if success:
-                    completed += 1
-                else:
+            # Process as they complete
+            for future in as_completed(future_to_task):
+                task = future_to_task[future]
+                try:
+                    success = future.result()
+                    if success:
+                        completed += 1
+                    else:
+                        failed += 1
+                except Exception:  # Future may propagate any error from the download thread
                     failed += 1
+                    task.status = ParallelTaskStatus.FAILED
 
                 if on_progress:
                     on_progress(completed, failed, len(tasks))
 
                 if on_download_complete:
                     path = task.result.get("path", "") if task.result else ""
+                    success = task.status == ParallelTaskStatus.COMPLETED
                     on_download_complete(task.url, path, success)
 
         elapsed = time.time() - start_time
@@ -358,7 +388,7 @@ class ParallelDownloader:
             self.tab_manager.release_tab(tab.tab_id)
             return True
 
-        except Exception as e:
+        except Exception as e:  # Task may raise any error type (browser, network, I/O, etc.)
             task.status = ParallelTaskStatus.FAILED
             task.error = str(e)
             return False
@@ -409,10 +439,11 @@ class ParallelSearcher:
         from urllib.parse import quote
 
         all_results = {}
+        lock = threading.Lock()
 
-        for source in sources:
+        def search_single(source: str) -> Tuple[str, List[Dict]]:
+            """Search a single source."""
             search_url = source.replace("{query}", quote(query))
-
             try:
                 tab = self.tab_manager.get_tab(task=f"search_{source}")
                 self.tab_manager.navigate_in_tab(tab.tab_id, search_url)
@@ -421,15 +452,22 @@ class ParallelSearcher:
                 html = tab.page.content()
                 results = self._extract_search_results(html, source)
 
-                all_results[source] = results
+                self.tab_manager.release_tab(tab.tab_id)
+                return (source, results)
 
+            except Exception as e:  # Search task may raise any error type (browser, network, parse, etc.)
+                return (source, [])
+
+        # P0-PERF: Use ThreadPoolExecutor for parallel search
+        with ThreadPoolExecutor(max_workers=self.max_parallel) as executor:
+            futures = [executor.submit(search_single, source) for source in sources]
+
+            for future in as_completed(futures):
+                source, results = future.result()
+                with lock:
+                    all_results[source] = results
                 if on_results:
                     on_results(source, results)
-
-                self.tab_manager.release_tab(tab.tab_id)
-
-            except Exception as e:
-                all_results[source] = []
 
         return all_results
 
