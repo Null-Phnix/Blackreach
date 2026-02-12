@@ -31,6 +31,14 @@ from blackreach.exceptions import (
     UnknownActionError,
 )
 from blackreach.detection import SiteDetector, get_site_characteristics, SiteType
+from blackreach.cloudflare_bypass import CloudflareBypasser, CloudflareBypassConfig, UNDETECTED_AVAILABLE
+
+# Use playwright-stealth for better Cloudflare bypass
+try:
+    from playwright_stealth import stealth_sync
+    PLAYWRIGHT_STEALTH_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_STEALTH_AVAILABLE = False
 
 # === Browser Constants ===
 
@@ -476,6 +484,7 @@ class Hand:
         self._popups: Optional[PopupHandler] = None
         self._waits: Optional[WaitConditions] = None
         self._detector = SiteDetector()  # Reuse for performance
+        self._cf_bypasser = CloudflareBypasser()  # Cloudflare bypass helper
 
         # State tracking
         self._mouse_pos = (0, 0)
@@ -759,7 +768,11 @@ class Hand:
 
     def _inject_stealth_scripts(self) -> None:
         """Inject JavaScript to hide automation and spoof fingerprints."""
-        # Combine all stealth scripts into single injection (faster startup)
+        # Use playwright-stealth if available (better for Cloudflare/Indeed)
+        if PLAYWRIGHT_STEALTH_AVAILABLE:
+            stealth_sync(self._page)
+
+        # Also apply our custom stealth scripts for extra protection
         scripts = self.stealth.get_all_stealth_scripts()
         if scripts:
             combined = "\n".join(scripts)
@@ -994,6 +1007,12 @@ class Hand:
 
         Returns True if a challenge was detected and resolved, False otherwise.
         """
+        # Check if this is specifically Cloudflare using advanced detection
+        if self._cf_bypasser.is_challenge_page(self.page):
+            print("  [Cloudflare challenge detected - using advanced bypass...]")
+            return self._cf_bypasser.wait_for_challenge_resolution(self.page)
+
+        # Fall back to generic challenge detection for other services
         for attempt in range(max_wait):
             html = self.page.content()
             result = self._detector.detect_challenge(html)
