@@ -23,6 +23,7 @@ from urllib.parse import urlparse, urljoin, quote as url_quote
 from blackreach.browser import Hand
 from blackreach.detection import SiteDetector
 from blackreach.observer import Eyes
+from blackreach.dom_walker import walk_dom, format_elements as format_dom_elements, format_text_summary
 from blackreach.llm import LLM, LLMConfig
 from blackreach.stealth import StealthConfig
 from blackreach.resilience import RetryConfig
@@ -219,6 +220,10 @@ class Agent:
             '[class*="download"] a',
         }
 
+        # Action history for LLM context (last N actions + results)
+        self._action_history = []
+        self._max_action_history = 5
+
         # Session resume support
         self._paused = False
         self._current_step = 0
@@ -396,6 +401,12 @@ class Agent:
         # Keep only recent history
         if len(self._recent_urls) > MAX_RECENT_URLS:
             self._recent_urls.pop(0)
+
+    def _format_action_history(self) -> str:
+        """Format recent action history for inclusion in the LLM prompt."""
+        if not self._action_history:
+            return ""
+        return "\n".join(self._action_history)
 
     def _get_stuck_hint(self) -> str:
         """Get a hint for the LLM when stuck or repeating failed actions."""
@@ -948,142 +959,70 @@ class Agent:
             # Reset challenge counter when page loads normally
             self._consecutive_challenges = 0
 
-        # Check for download landing pages (need another click to get file)
-        download_landing = self.detector.detect_download_landing(html, url)
-        download_landing_hint = ""
-        if download_landing.detected:
-            log(f"  [Download landing page detected - look for download button]")
+        # Check for download landing pages (only for download-oriented goals)
+        goal_lower_check = goal.lower()
+        is_download_goal = any(word in goal_lower_check for word in [
+            'download', 'fetch', 'save', 'epub', 'pdf', 'wallpaper',
+        ])
+        if is_download_goal:
+            download_landing = self.detector.detect_download_landing(html, url)
+            if download_landing.detected:
+                log(f"  [Download landing page detected - look for download button]")
 
-            # Use centralized site handlers for hints
-            site_hint = get_site_hints(url, html, goal)
-            if site_hint:
-                download_landing_hint = f"\n\n{site_hint}"
-            else:
-                download_landing_hint = (
-                    "\n\nDOWNLOAD PAGE DETECTED: This is a landing page, NOT the actual file. "
-                    "You must click a download button (like 'Download', 'Get', 'Start Download') "
-                    "to get the real file. Look for buttons with download-related text."
-                )
+        # Walk the live DOM to get all interactive elements with numeric IDs
+        # This replaces the old BeautifulSoup parsing with live browser DOM walking
+        context_size = getattr(self.llm.config, 'context_size', 'large')
+        dom_result = walk_dom(self.hand.page, context_size=context_size)
 
-        # Debug: Check HTML content before parsing
-        debug_info = self.eyes.debug_html(html)
-        render_attempts = 0
+        elements = format_dom_elements(dom_result, context_size=context_size)
+        text_summary = format_text_summary(dom_result, context_size=context_size)
 
-        # If page appears empty or is an SPA, try multiple render strategies
-        while (debug_info.get("empty_root") or not debug_info.get("has_meaningful_content")) and render_attempts < 3:
-            render_attempts += 1
-            log(f"  [Render attempt {render_attempts}/3 - {'empty root' if debug_info.get('empty_root') else 'no content'}...]")
-
-            if render_attempts == 1:
-                # First attempt: just wait longer
-                time.sleep(RENDER_WAIT_SECONDS)
-            elif render_attempts == 2:
-                # Second attempt: use force_render
-                log("  [Forcing render...]")
-                self.hand.force_render()
-            else:
-                # Third attempt: refresh and wait
-                log("  [Refreshing page...]")
-                self.hand.refresh()
-                time.sleep(RENDER_WAIT_SECONDS)
-                self.hand._wait_for_dynamic_content(timeout=DYNAMIC_CONTENT_TIMEOUT_MS)
-
-            html = self.hand.get_html()
+        # If DOM walker found nothing, try render recovery then re-walk
+        if not dom_result.get("elements"):
             debug_info = self.eyes.debug_html(html)
+            log(f"  [No elements found - render recovery...]")
 
-            if debug_info.get("has_meaningful_content"):
-                log(f"  [Content loaded on attempt {render_attempts}]")
-                break
+            for attempt in range(2):
+                if attempt == 0:
+                    time.sleep(RENDER_WAIT_SECONDS)
+                    self.hand.force_render()
+                else:
+                    self.hand.refresh()
+                    time.sleep(RENDER_WAIT_SECONDS)
+                    self.hand._wait_for_dynamic_content(timeout=DYNAMIC_CONTENT_TIMEOUT_MS)
 
-        parsed = self.eyes.see(html)
+                html = self.hand.get_html()
+                dom_result = walk_dom(self.hand.page, context_size=context_size)
+                elements = format_dom_elements(dom_result, context_size=context_size)
+                text_summary = format_text_summary(dom_result, context_size=context_size)
 
-        # Build list of URLs to exclude (already visited detail pages + downloaded URLs)
-        detail_patterns = ['/w/', '/abs/', '/paper/', '/article/', '/item/', '/full/', '/pdf/']
-        exclude_urls = [
-            u for u in self.session_memory.visited_urls
-            if any(p in u for p in detail_patterns)
-        ]
-        # Also exclude URLs we've already downloaded from
-        exclude_urls.extend(self.session_memory.downloaded_urls)
-
-        elements = self._format_elements(parsed, exclude_urls=exclude_urls)
-
-        # If still no elements after all that, log debug info and try one final time
-        if elements == "No interactive elements found":
-            log(f"  [DEBUG: HTML={debug_info['html_length']}b, text={debug_info['text_length']}, links={debug_info['raw_links']}, inputs={debug_info['raw_inputs']}]")
-
-            # Last resort: full page scroll and wait
-            log("  [Final attempt - full page interaction...]")
-
-            # Scroll the entire page to trigger any lazy loading
-            self.hand.scroll("down", 1000)
-            time.sleep(SCROLL_WAIT_SECONDS)
-            self.hand.scroll("up", 500)
-            time.sleep(SCROLL_WAIT_SECONDS)
-
-            # Force render one more time
-            self.hand.force_render()
-
-            html = self.hand.get_html()
-            parsed = self.eyes.see(html)
-            elements = self._format_elements(parsed, exclude_urls=exclude_urls)
+                if dom_result.get("elements"):
+                    log(f"  [Content loaded on attempt {attempt+1}]")
+                    break
 
         # Cache for potential reuse
         self._page_cache["url"] = url
         self._page_cache["html"] = html
-        self._page_cache["parsed"] = parsed
+        self._page_cache["dom_result"] = dom_result
         self._page_cache["elements"] = elements
 
-        content_preview = parsed.get("text_preview", "") if isinstance(parsed, dict) else ""
-        links_count = len(parsed.get("links", [])) if isinstance(parsed, dict) else 0
         self.nav_context.record_navigation(
             url=url,
             title=title,
-            content_preview=content_preview,
-            links_found=links_count,
+            content_preview=text_summary[:200],
+            links_found=dom_result.get("total_elements", 0),
             from_action=self._last_action or "initial",
-            value=PageValue.NEUTRAL  # Will be updated based on action outcome
+            value=PageValue.NEUTRAL
         )
 
-        # Build extra context (stuck hints, learned patterns, download landing hints, etc.)
+        # Build extra context
         extra_context = ""
-
-        if download_landing_hint:
-            extra_context += download_landing_hint
 
         stuck_hint = self._get_stuck_hint()
         if stuck_hint:
             self._stuck_counter += 1
             extra_context += stuck_hint
             log("  [STUCK DETECTED]")
-
-            # Try direct intervention using site-specific handlers
-            if self._stuck_counter >= 2:
-                # Get download actions from site handler
-                download_actions = get_download_sequence(url, html)
-                fallback_selectors = [
-                    action.target for action in download_actions
-                    if action.action_type == "click"
-                ]
-
-                if fallback_selectors:
-                    handler = get_handler_for_url(url)
-                    handler_name = handler.__class__.__name__ if handler else "Unknown"
-                    log(f"  [{handler_name} FALLBACK - trying site-specific download selectors]")
-
-                for sel in fallback_selectors:
-                    try:
-                        loc = self.hand.page.locator(sel)
-                        if loc.count() > 0 and loc.first.is_visible():
-                            log(f"  [CLICKING: {sel}]")
-                            loc.first.click()
-                            time.sleep(1)
-                            # Reset stuck counter on successful click
-                            self._stuck_counter = 0
-                            return {"done": False, "fallback": True, "clicked": sel}
-                    except (BrowserError, OSError):
-                        # Playwright locator may fail - try next selector
-                        continue
 
             # Force reset after being stuck too many times
             if self._stuck_counter >= 5:
@@ -1093,87 +1032,69 @@ class Agent:
                 self._recent_urls = []
                 return {"done": False, "reset": True}
         else:
-            self._stuck_counter = 0  # Reset counter when not stuck
+            self._stuck_counter = 0
 
-        # Get learned patterns for the current domain
         domain = self._get_domain()
-        if domain:
-            patterns = self.persistent_memory.get_best_patterns(domain, "selector")
-            if patterns:
-                extra_context += f"\nPreviously successful selectors on {domain}: {patterns[:3]}"
 
         last_failure = self.session_memory.last_failure
         if last_failure:
             extra_context += f"\nLAST ERROR: {last_failure}"
 
-        # Add hint if we recently clicked an expansion button (look for new content)
-        if self._clicked_selectors:
-            expansion_clicked = [s for s in self._clicked_selectors if s in self._expansion_buttons]
-            if expansion_clicked:
-                extra_context += "\nNOTE: Download section should now be expanded - look for 'Slow download' or 'Fast download' links, or direct file links (.epub, .pdf)"
-
-        # Add hint if selectors are being clicked repeatedly without success
-        high_click_selectors = [s for s, count in self._selector_click_counts.items() if count >= self._max_same_selector_clicks]
-        if high_click_selectors:
-            extra_context += f"\nWARNING: These buttons have been clicked {self._max_same_selector_clicks}+ times without result - try something DIFFERENT: {high_click_selectors[:3]}"
-
-        # Add hint about failed download URLs
         if self._failed_download_urls:
             extra_context += f"\nFAILED DOWNLOADS ({len(self._failed_download_urls)} URLs) - try different mirrors or sources"
 
-        # Add list of already visited detail pages (to avoid re-navigating)
-        # Detect detail pages by common URL patterns
-        detail_patterns = ['/w/', '/abs/', '/paper/', '/article/', '/item/', '/full/', '/pdf/']
-        visited_detail_pages = [
-            u for u in self.session_memory.visited_urls
-            if any(p in u for p in detail_patterns)
-        ]
-        if visited_detail_pages:
-            extra_context += f"\nALREADY VISITED (pick a DIFFERENT link): {visited_detail_pages[-5:]}"
-
-        # Add info about downloaded files (so LLM knows to pick different items)
         downloaded = self.session_memory.downloaded_files
         if downloaded:
             filenames = [Path(f).name for f in downloaded[-5:]]
             extra_context += f"\nALREADY DOWNLOADED: {filenames}"
 
-        # Add navigation context - domain knowledge and path info
-        domain_summary = self.nav_context.get_domain_summary(domain)
-        if domain_summary and self.nav_context.domain_knowledge.get(domain, None):
-            dk = self.nav_context.domain_knowledge[domain]
-            if dk.visits > 2:  # Only add if we have meaningful history
-                if dk.best_entry_points:
-                    extra_context += f"\nKNOWN GOOD ENTRY POINTS for {domain}: {dk.best_entry_points[:2]}"
-                if dk.pages_to_avoid:
-                    avoid_list = list(dk.pages_to_avoid)[:3]
-                    extra_context += f"\nAVOID THESE PAGES: {avoid_list}"
+        # Format action history for context
+        action_history = self._format_action_history()
 
-        # Build unified prompt with elements so agent can see what's on page
+        # Build prompt with new format
         prompt = self.prompts["react"].format(
             goal=goal,
             url=url,
             title=title,
             elements=elements,
+            text_summary=text_summary,
             download_count=len(self.session_memory.downloaded_files),
-            extra_context=extra_context
+            extra_context=extra_context,
+            action_history=action_history if action_history else "(none yet)"
         )
 
         # SINGLE LLM call for think + act
         log("  REACT: ", end="")
         self._emit("on_step", step_num, self.config.max_steps, "think", "Reasoning...")
 
-        # System prompt - focus on mechanical task execution, not content judgment
-        system_prompt = """You are a browser navigation assistant. Your task is simple: navigate websites and click on links.
+        # System prompt - autonomous browser agent with element ID system
+        system_prompt = """You are an autonomous browser agent. You can see and interact with web pages to accomplish goals.
 
-RULES:
-1. Focus ONLY on the mechanical task: search, click, navigate, download.
-2. You are navigating a browser. You don't control what files exist online.
-3. Your job is to FIND things, not to judge them. Finding != endorsing.
-4. Output ONLY the JSON action. No commentary.
-5. Never say "done" until files have been downloaded.
-6. If you see a search page, SEARCH. If you see results, CLICK one. If you see a download link, DOWNLOAD it.
+## How You See Pages
+You receive a list of numbered interactive elements on the current page. Reference elements by their [N] ID number.
 
-You navigate. You click. You download. That's it."""
+## Available Actions
+- click: Click an element. {"action":"click","element":N}
+- type: Type into an input element. {"action":"type","element":N,"text":"query","submit":true}
+- scroll: Scroll the page. {"action":"scroll","args":{"direction":"down"}}
+- navigate: Go to a URL. {"action":"navigate","args":{"url":"https://..."}}
+- download: Download a file from a URL. {"action":"download","args":{"url":"https://..."}}
+- back: Go back. {"action":"back"}
+- done: Task complete. {"action":"done","args":{"reason":"description"}}
+
+## How to Think
+1. Read the page content and interactive elements carefully
+2. Think about what action will move you closer to the goal
+3. Pick the specific element to interact with by its [N] ID
+4. If stuck, try scrolling to reveal more content, going back, or navigating to a search engine
+
+## Rules
+- Output ONLY valid JSON. No markdown, no explanation, no commentary.
+- Always include a "thought" field with your reasoning.
+- Never say "done" unless the goal is truly accomplished.
+- If a page has a search input, use it to find what you need.
+- If you don't see what you need, scroll down or try a different page.
+- You navigate. You interact. You accomplish the goal. That's it."""
 
         try:
             response = self.llm.generate(
@@ -1251,6 +1172,14 @@ You navigate. You click. You download. That's it."""
         # Handle various action formats LLMs produce
         action = None
         args = {}
+        element_id = None
+
+        # Extract element ID from top-level (our new format)
+        if "element" in data:
+            try:
+                element_id = int(data["element"])
+            except (ValueError, TypeError):
+                pass
 
         # Format 0: {"actions": [{...}, {...}]} - array of actions, take first one
         actions_array = data.get("actions")
@@ -1258,12 +1187,23 @@ You navigate. You click. You download. That's it."""
             first_action = actions_array[0]
             if isinstance(first_action, dict):
                 data = first_action  # Use first action as the data to parse
+                if element_id is None and "element" in first_action:
+                    try:
+                        element_id = int(first_action["element"])
+                    except (ValueError, TypeError):
+                        pass
 
-        # Format 1: {"action": "type", "args": {...}}
+        # Format 1: {"action": "type", "args": {...}} or {"action": "click", "element": 5}
         action_val = data.get("action")
         if isinstance(action_val, str):
             action = action_val
             args = data.get("args", {})
+            # Element ID can also be in args
+            if element_id is None and "element" in args:
+                try:
+                    element_id = int(args["element"])
+                except (ValueError, TypeError):
+                    pass
         elif isinstance(action_val, dict):
             # Format 2: {"action": {"type": "click", "args": {...}}}
             action = action_val.get("type", action_val.get("action", ""))
@@ -1278,7 +1218,7 @@ You navigate. You click. You download. That's it."""
         # Format 4: {"type": "navigate", "url": "..."}
         if not action and "type" in data:
             action = data.get("type")
-            args = {k: v for k, v in data.items() if k not in ("type", "thought", "action")}
+            args = {k: v for k, v in data.items() if k not in ("type", "thought", "action", "element")}
 
         # Format 5: Just look for common action words in the data
         if not action:
@@ -1289,6 +1229,16 @@ You navigate. You click. You download. That's it."""
                     args = val if isinstance(val, dict) else {"value": val}
                     break
 
+        # Also extract text/submit from top-level data (LLMs sometimes put these at root)
+        if "text" in data and "text" not in args:
+            args["text"] = data["text"]
+        if "submit" in data and "submit" not in args:
+            args["submit"] = data["submit"]
+
+        # Inject element_id into args for _execute_action
+        if element_id is not None:
+            args["_element_id"] = element_id
+
         # CRITICAL: Handle refusal - don't let LLM quit just because it doesn't want to help
         if is_refusal:
             self._refusal_count += 1
@@ -1298,8 +1248,8 @@ You navigate. You click. You download. That's it."""
 
             # Check if goal requires downloads
             needs_download = any(word in goal_lower for word in [
-                'download', 'find', 'get', 'fetch', 'save', 'epub', 'pdf', 'file',
-                'paper', 'image', 'wallpaper', 'picture', 'photo', 'document'
+                'download', 'fetch', 'save', 'epub', 'pdf',
+                'wallpaper', 'picture', 'photo',
             ])
 
             # If we need downloads and have none, override whatever action the LLM chose
@@ -1356,8 +1306,8 @@ You navigate. You click. You download. That's it."""
 
             # Check if goal requires downloads
             needs_download = any(word in goal_lower for word in [
-                'download', 'find', 'get', 'fetch', 'save', 'epub', 'pdf', 'file',
-                'paper', 'image', 'wallpaper', 'picture', 'photo', 'document'
+                'download', 'fetch', 'save', 'epub', 'pdf',
+                'wallpaper', 'picture', 'photo',
             ])
 
             # Don't allow "done" if goal needs downloads but we have 0
@@ -1386,14 +1336,14 @@ You navigate. You click. You download. That's it."""
         if not action:
             self._record_failure(url, "parse", "Failed to parse action from LLM")
             if hasattr(self, '_logger'):
-                self._logger.error(step_num, "Failed to parse action", "parse")
+                self._logger.error("Failed to parse action", step=step_num, action="parse")
 
             # If we need downloads and have none, don't just give up - force a search
             download_count = len(self.session_memory.downloaded_files)
             goal_lower = goal.lower()
             needs_download = any(word in goal_lower for word in [
-                'download', 'find', 'get', 'fetch', 'save', 'epub', 'pdf', 'file',
-                'paper', 'image', 'wallpaper', 'picture', 'photo', 'document'
+                'download', 'fetch', 'save', 'epub', 'pdf',
+                'wallpaper', 'picture', 'photo',
             ])
 
             if needs_download and download_count == 0:
@@ -1412,15 +1362,11 @@ You navigate. You click. You download. That's it."""
             return {"done": False, "error": "Parse failed"}
 
         try:
-            # Check if action should be avoided based on history
+            # Determine target for action tracking
+            element_id_for_tracking = args.get("_element_id")
             target = args.get("selector", args.get("url", args.get("text", "")))
-            if self.action_tracker.should_avoid(action, target, domain):
-                confidence = self.action_tracker.get_confidence(action, target, domain)
-                log(f"  [AVOIDED: {action} has {confidence:.0%} success rate on {domain}]")
-                alternatives = self.action_tracker.get_alternative_actions(action, target, domain)
-                if alternatives:
-                    log(f"  [ALTERNATIVES: {', '.join(alternatives[:3])}]")
-                return {"done": False, "skipped": True, "reason": "action historically fails"}
+            if element_id_for_tracking is not None:
+                target = f"element:{element_id_for_tracking}"
 
             # Pass thought to execute_action for text extraction when args are missing
             args["_thought"] = thought
@@ -1454,6 +1400,20 @@ You navigate. You click. You download. That's it."""
             self._consecutive_failures = 0
             self._emit("on_action", action, result)
 
+            # Record to action history for LLM context
+            history_entry = f"[Step {step_num}] {action}"
+            if element_id_for_tracking is not None:
+                history_entry += f" element {element_id_for_tracking}"
+            if args.get("text"):
+                history_entry += f' "{args["text"][:30]}"'
+            outcome = result.get("url", result.get("filename", result.get("reason", "ok")))
+            if isinstance(outcome, str) and len(outcome) > 50:
+                outcome = outcome[:47] + "..."
+            history_entry += f" -> {outcome}"
+            self._action_history.append(history_entry)
+            if len(self._action_history) > self._max_action_history:
+                self._action_history.pop(0)
+
             if hasattr(self, '_logger'):
                 self._logger.act(step_num, action, result, success=True)
 
@@ -1463,6 +1423,15 @@ You navigate. You click. You download. That's it."""
             error_msg = str(e)
             self._record_failure(url, action, error_msg)
             self._consecutive_failures += 1
+
+            # Record failure to action history
+            history_entry = f"[Step {step_num}] {action}"
+            if element_id_for_tracking is not None:
+                history_entry += f" element {element_id_for_tracking}"
+            history_entry += f" -> ERROR: {str(e)[:40]}"
+            self._action_history.append(history_entry)
+            if len(self._action_history) > self._max_action_history:
+                self._action_history.pop(0)
 
             # Use error recovery system to categorize and handle
             recovery_result = self.error_recovery.handle(e, context={
@@ -1509,7 +1478,7 @@ You navigate. You click. You download. That's it."""
             self._emit("on_error", error_msg)
 
             if hasattr(self, '_logger'):
-                self._logger.error(step_num, error_msg, action)
+                self._logger.error(error_msg, step=step_num, action=action)
 
             # Apply recovery strategy suggestions
             if recovery_result.should_skip:
@@ -1562,174 +1531,69 @@ You navigate. You click. You download. That's it."""
         action = action_aliases.get(action, action)
 
         if action == "click":
+            element_id = args.get("_element_id")
             selector = args.get("selector", "")
             text = args.get("text", "")
-            thought = args.get("_thought", "")  # Internal: thought passed from step
+            thought = args.get("_thought", "")
 
-            # Clean text - strip brackets and quotes that may come from formatting
+            # Priority 1: Click by element ID (new DOM walker system)
+            if element_id is not None:
+                br_selector = f'[data-br-id="{element_id}"]'
+                loc = self.hand.page.locator(br_selector)
+                if loc.count() > 0:
+                    loc.first.click(timeout=10000)
+                    return {"action": "click", "element": element_id}
+
+            # Priority 2: Click by explicit text
             if text:
                 text = text.strip('[]"\'')
-
-            # If no text provided but thought mentions clicking something, extract it
-            # Common patterns: "click 'Button'", "click the Download button", "click on Submit"
-            if not text and not selector and thought:
-                # Look for quoted text in thought (highest priority)
-                quoted = RE_QUOTED_TEXT.findall(thought)
-                if quoted:
-                    text = quoted[0].strip('[]"\'')
-                else:
-                    # Look for Anna's Archive specific patterns first (precompiled)
-                    annas_patterns = [
-                        RE_SLOW_DOWNLOAD,
-                        RE_FAST_DOWNLOAD,
-                        RE_SLOW_PARTNER,
-                        RE_FAST_PARTNER,
-                    ]
-                    for pattern in annas_patterns:
-                        match = pattern.search(thought)
-                        if match:
-                            text = match.group(1).strip()
-                            break
-
-                    # Look for "click X button" or "click the X" patterns (more words allowed)
-                    if not text:
-                        click_match = RE_CLICK_PATTERN.search(thought)
-                        if click_match:
-                            text = click_match.group(1).strip()
-
-            # If we have text, always try text-based clicking first
-            if text:
                 try:
                     self.hand.page.get_by_text(text, exact=False).first.click()
                     return {"action": "click", "text": text}
                 except (BrowserError, OSError):
-                    pass  # Playwright text click may fail - fall through to selector
+                    pass
 
-            # If selector is too generic, try to find a visible link instead
-            generic_selectors = ['a', 'button', 'div', 'span', 'input', 'li', 'p']
-            if selector in generic_selectors or not selector:
-                # Try clicking the first visible content link (prioritize downloads, then galleries)
-                # IMPORTANT: Order matters! Actual download links must come BEFORE expansion buttons
-                # to avoid re-clicking buttons that just reveal more content
-                result_selectors = [
-                    # TIER 1: Direct download links (highest priority - these actually download files)
-                    # Anna's Archive actual download links (appear after clicking Downloads button)
-                    'a[href*="/slow_download"]',
-                    'a[href*="/fast_download"]',
-                    'a:has-text("Slow download")',
-                    'a:has-text("Fast download")',
-                    'a:has-text("Slow Partner Server")',
-                    'a:has-text("Fast Partner Server")',
-                    # Library Genesis / Z-Library direct downloads
-                    'a[href*="get.php"]',
-                    'a[href*="download.php"]',
-                    'a[href*=".epub"]',
-                    'a[href*=".pdf"]',
-                    'a[href$=".epub"]',
-                    'a[href$=".pdf"]',
-                    # Direct download attributes
-                    'a[download]',
-                    'a[href*="/download/"]',
-
-                    # TIER 2: Specific download buttons (these usually trigger downloads)
-                    'a:has-text("Download EPUB")',
-                    'a:has-text("Download PDF")',
-                    'a:has-text("Get EPUB")',
-                    'a:has-text("Get PDF")',
-                    '#download-button',
-                    '.download-btn',
-                    'button:has-text("Download Now")',
-                    'a:has-text("Download Now")',
-                    'a:has-text("GET")',
-
-                    # TIER 3: Generic download buttons (may be expansion buttons)
-                    'button:has-text("Download")',
-                    'a:has-text("Download")',
-                    '[class*="download"] button',
-                    '[class*="download"] a',
-                    'button[class*="download"]',
-                    'a[class*="download"]',
-                    'a[href*="download"]',
-                    'button:has-text("Get")',
-
-                    # TIER 4: Expansion buttons (last resort - these may need multiple clicks)
-                    'button:has-text("Downloads")',  # Anna's Archive expansion button
-                    'a:has-text("Downloads")',
-
-                    # Image gallery selectors (wallpaper sites)
-                    'a:has(img)',          # Links containing images
-                    '.thumb a',            # Thumbnail links
-                    '.boxgrid a',          # Alpha Coders grid
-                    '.item a',             # Gallery items
-                    '.pic a',              # Picture links
-                    '.image a',
-                    '.wallpaper a',
-                    'a[href*="big"]',      # Alpha Coders big image links
-                    'a[href*="wallpaper"]',
-                    'a[href*=".php"]',     # PHP detail pages
-                    # Search result selectors
-                    'article a',
-                    '.result a',
-                    '.result__a',
-                    '[data-testid="result"] a',
-                    'main a[href^="http"]',
-                    'a[href^="http"]:not([href*="duck"])',
-                    'a[href*=".html"]',
-                ]
-
-                # Reset clicked selector tracking if we're on a new page
-                current_url = self.hand.get_url()
-                if current_url != self._clicked_page_url:
-                    self._clicked_selectors = set()
-                    self._clicked_page_url = current_url
-                    self._selector_click_counts = {}
-
-                for sel in result_selectors:
+            # Priority 3: Extract text from thought (backward compat)
+            if not text and thought:
+                quoted = RE_QUOTED_TEXT.findall(thought)
+                if quoted:
+                    text = quoted[0].strip('[]"\'')
                     try:
-                        # Skip selectors clicked too many times without a download
-                        click_count = self._selector_click_counts.get(sel, 0)
-                        if click_count >= self._max_same_selector_clicks:
-                            continue
-
-                        # Skip expansion buttons we've already clicked on this page
-                        if sel in self._expansion_buttons and sel in self._clicked_selectors:
-                            continue
-
-                        loc = self.hand.page.locator(sel)
-                        if loc.count() > 0 and loc.first.is_visible():
-                            loc.first.click()
-
-                            # Track clicked selector and count
-                            self._clicked_selectors.add(sel)
-                            self._selector_click_counts[sel] = click_count + 1
-
-                            # If this is an expansion button, wait for content to load
-                            if sel in self._expansion_buttons:
-                                time.sleep(EXPANSION_WAIT_SECONDS)
-                                print(f"  -> (expansion button clicked, waiting for content)")
-
-                            return {"action": "click", "selector": sel}
+                        self.hand.page.get_by_text(text, exact=False).first.click()
+                        return {"action": "click", "text": text}
                     except (BrowserError, OSError):
-                        # Playwright selector click may fail - try next
-                        continue
+                        pass
 
-            # Last resort: use the provided selector
+            # Priority 4: Click by CSS selector (backward compat)
             if selector:
                 self.hand.click(selector)
                 return {"action": "click", "selector": selector}
-            else:
-                raise InvalidActionArgsError("click", "Must provide either selector or text argument")
+
+            raise InvalidActionArgsError("click", "Must provide element ID, text, or selector")
 
         elif action == "type":
-            selector = args.get("selector", "input")
+            element_id = args.get("_element_id")
             text = args.get("text", "")
-            # Auto-submit if typing into a search-like input (most common use case)
-            # Only skip submit if explicitly set to False
             submit = args.get("submit", True)
+
+            # Priority 1: Type into element by ID (new DOM walker system)
+            if element_id is not None:
+                br_selector = f'[data-br-id="{element_id}"]'
+                loc = self.hand.page.locator(br_selector)
+                if loc.count() > 0:
+                    loc.first.click(timeout=10000)
+                    loc.first.fill(text, timeout=10000)
+                    if submit:
+                        self.hand.page.keyboard.press("Enter")
+                        time.sleep(STEP_PAUSE_SECONDS)
+                    return {"action": "type", "element": element_id, "text": text, "submit": submit}
+
+            # Priority 2: Type by CSS selector (backward compat)
+            selector = args.get("selector", "input")
             self.hand.type(selector, text)
             if submit:
                 self.hand.page.keyboard.press("Enter")
-                time.sleep(STEP_PAUSE_SECONDS)  # Wait for page to respond
+                time.sleep(STEP_PAUSE_SECONDS)
             return {"action": "type", "selector": selector, "text": text, "submit": submit}
 
         elif action == "press":

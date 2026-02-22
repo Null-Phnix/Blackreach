@@ -10,7 +10,7 @@ Only imports modules when their symbols are first accessed.
 
 from typing import TYPE_CHECKING
 
-__version__ = "4.3.0-beta.1"
+__version__ = "5.0.0-beta.1"
 
 # Mapping of exported names to their source modules
 # Format: "ExportedName": ("module_path", "original_name" or None for same name)

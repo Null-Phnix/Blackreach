@@ -30,6 +30,7 @@ class LLMConfig:
     retry_delay: float = 1.0
     use_gpu: bool = True  # Force GPU usage for local models
     num_gpu_layers: int = 999  # Number of layers to offload to GPU (999 = all)
+    context_size: str = "large"  # DOM walker element cap: "small" (100), "medium" (150), "large" (200)
 
 
 @dataclass

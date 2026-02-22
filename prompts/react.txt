@@ -1,45 +1,41 @@
 GOAL: {goal}
 
-STATE:
-- Page: {title}
+CURRENT PAGE:
+- Title: {title}
 - URL: {url}
 - Downloads so far: {download_count}
 {extra_context}
 
-ELEMENTS ON PAGE:
+PAGE CONTENT:
+{text_summary}
+
+INTERACTIVE ELEMENTS:
 {elements}
 
+RECENT ACTIONS:
+{action_history}
+
 AVAILABLE ACTIONS:
-- type: Enter text in search box
-  Example: {{"action":"type","args":{{"selector":"input[type=search]","text":"search query"}}}}
+- click: Click an element by its [N] ID
+  {{"thought":"...","action":"click","element":N}}
 
-- click: Click on a link or button by its text
-  Example: {{"action":"click","args":{{"text":"Download PDF"}}}}
+- type: Type text into an input element, optionally submit with Enter
+  {{"thought":"...","action":"type","element":N,"text":"query","submit":true}}
 
-- navigate: Go to a specific URL
-  Example: {{"action":"navigate","args":{{"url":"https://example.com/page"}}}}
+- scroll: Scroll the page to see more content
+  {{"thought":"...","action":"scroll","args":{{"direction":"down"}}}}
+
+- navigate: Go directly to a URL
+  {{"thought":"...","action":"navigate","args":{{"url":"https://..."}}}}
 
 - download: Download a file from a URL
-  Example: {{"action":"download","args":{{"url":"https://example.com/file.pdf"}}}}
+  {{"thought":"...","action":"download","args":{{"url":"https://..."}}}}
 
-- scroll: Scroll down to see more content
-  Example: {{"action":"scroll","args":{{"direction":"down"}}}}
+- back: Go back to the previous page
+  {{"thought":"...","action":"back"}}
 
-- done: Mark goal as complete (ONLY when you have achieved the goal)
-  Example: {{"action":"done","args":{{"reason":"Downloaded 1 file successfully"}}}}
+- done: Mark the goal as complete
+  {{"thought":"...","action":"done","args":{{"reason":"what was accomplished"}}}}
 
-DECISION RULES:
-1. SEARCH PAGES (Google, etc): Use TYPE to enter search query, then click results
-2. LISTING PAGES (search results, catalogs): Click on the most relevant link
-3. DETAIL PAGES (book page, article, etc): Look for DOWNLOAD links
-4. If you see a download link (.pdf, .epub, .zip, etc) - USE IT with DOWNLOAD action
-5. If no elements found - try SCROLL down or NAVIGATE back
-
-IMPORTANT:
-- If goal requires downloading something and downloads = 0, you are NOT done
-- Always download at least 1 file before using done action
-- If stuck, try navigating to a different page or back to search
-- Prefer direct download links over buttons that might need JavaScript
-
-OUTPUT FORMAT (JSON only, no markdown, no explanation):
-{{"thought":"brief reasoning","action":"ACTION_NAME","args":{{...}}}}
+DECIDE your next action. Output JSON only, no markdown:
+{{"thought":"your reasoning","action":"ACTION_NAME","element":N,"args":{{...}}}}
