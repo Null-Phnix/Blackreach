@@ -18,6 +18,8 @@ import random
 import hashlib
 import threading
 
+import logging
+
 from blackreach.stealth import Stealth, StealthConfig
 from blackreach.resilience import (
     SmartSelector, PopupHandler, WaitConditions,
@@ -31,7 +33,9 @@ from blackreach.exceptions import (
     UnknownActionError,
 )
 from blackreach.detection import SiteDetector, get_site_characteristics, SiteType
-from blackreach.cloudflare_bypass import CloudflareBypasser, CloudflareBypassConfig, UNDETECTED_AVAILABLE
+from blackreach.cloudflare_bypass import CloudflareBypasser
+
+logger = logging.getLogger(__name__)
 
 # Use playwright-stealth for better Cloudflare bypass
 try:
@@ -540,13 +544,14 @@ class Hand:
         if self._playwright is not None:
             try:
                 self.sleep()
-            except Exception:
-                pass  # Best-effort cleanup
+            except Exception as e:
+                logger.warning("Failed to close unhealthy browser during ensure_awake: %s", e)
 
         try:
             self.wake()
             return True
-        except Exception:
+        except Exception as e:
+            logger.error("Failed to wake browser during ensure_awake: %s", e)
             return False
 
     def restart(self) -> bool:
@@ -562,14 +567,14 @@ class Hand:
         if self.is_awake:
             try:
                 current_url = self._page.url
-            except Exception:
-                pass  # Best-effort cleanup
+            except Exception as e:
+                logger.debug("Could not save current URL during restart: %s", e)
 
         # Close existing browser
         try:
             self.sleep()
-        except Exception:
-            pass  # Best-effort cleanup
+        except Exception as e:
+            logger.warning("Failed to close browser during restart: %s", e)
 
         # Start fresh browser
         try:
@@ -579,11 +584,12 @@ class Hand:
             if current_url and current_url != "about:blank":
                 try:
                     self.goto(current_url, wait_for_content=False)
-                except Exception:
-                    pass  # Best-effort cleanup
+                except Exception as e:
+                    logger.warning("Failed to navigate to %s after restart: %s", current_url, e)
 
             return True
-        except Exception:
+        except Exception as e:
+            logger.error("Failed to wake browser during restart: %s", e)
             return False
 
     def wake(self) -> None:
@@ -788,9 +794,9 @@ class Hand:
                 try:
                     self._page.keyboard.up(key)
                 except Exception:
-                    pass  # Best-effort cleanup
-        except Exception:
-            pass  # Best-effort cleanup
+                    pass  # Best-effort: individual key release failures are harmless
+        except Exception as e:
+            logger.debug("Failed to release modifier keys: %s", e)
 
     def sleep(self) -> None:
         """Close the browser safely, releasing any stuck keys."""
@@ -892,20 +898,20 @@ class Hand:
         http_status = response.status if response else None
         if http_status and http_status >= 400:
             # Log HTTP errors but don't fail - page may still have useful content
-            print(f"  [HTTP {http_status}: {url[:50]}...]")
+            logger.warning("HTTP %d: %s...", http_status, url[:50])
 
         # Wait for full page load - use adaptive timeout
         load_timeout = min(site_chars.network_idle_timeout, 10000)
         try:
             self.page.wait_for_load_state("load", timeout=load_timeout)
-        except PlaywrightError:
-            pass  # Continue - page may still be usable
+        except PlaywrightError as e:
+            logger.debug("Page load state timeout for %s: %s", url[:80], e)
 
         # Wait for network to settle - shorter for static sites
         try:
             self.page.wait_for_load_state("networkidle", timeout=site_chars.network_idle_timeout)
-        except PlaywrightError:
-            pass  # Don't fail if network doesn't go idle
+        except PlaywrightError as e:
+            logger.debug("Network idle timeout for %s: %s", url[:80], e)
 
         # FAST PATH: For known static sites, do a quick content check and exit early
         if site_chars.site_type in (SiteType.STATIC, SiteType.SEARCH_ENGINE):
@@ -1009,7 +1015,7 @@ class Hand:
         """
         # Check if this is specifically Cloudflare using advanced detection
         if self._cf_bypasser.is_challenge_page(self.page):
-            print("  [Cloudflare challenge detected - using advanced bypass...]")
+            logger.info("Cloudflare challenge detected - using advanced bypass")
             return self._cf_bypasser.wait_for_challenge_resolution(self.page)
 
         # Fall back to generic challenge detection for other services
@@ -1022,7 +1028,7 @@ class Hand:
 
             # Challenge detected - wait and check again
             if attempt == 0:
-                print(f"  [Challenge detected: {result.details or 'unknown'} - waiting...]")
+                logger.info("Challenge detected: %s - waiting...", result.details or 'unknown')
 
             # Human-like interaction to help solve challenge
             if attempt % CHALLENGE_MOUSE_INTERVAL_S == 0:  # Every 3 seconds
@@ -1059,7 +1065,7 @@ class Hand:
                 pass
 
         # If we're still on a challenge page after max_wait, log it
-        print(f"  [Challenge did not resolve after {max_wait}s]")
+        logger.warning("Challenge did not resolve after %ds", max_wait)
         return True
 
     def _wait_for_dynamic_content(self, timeout: int = LOAD_STATE_TIMEOUT_MS, skip_framework: bool = False) -> bool:
@@ -1294,7 +1300,8 @@ class Hand:
                         if loc.count() > 0:
                             locator = loc.first
                             break
-                    except PlaywrightError:
+                    except PlaywrightError as e:
+                        logger.debug("Click selector fallback failed for '%s': %s", sel, e)
                         continue
         else:
             locator = self.page.locator(selector).first
@@ -1686,7 +1693,8 @@ class Hand:
                 "hash": self._compute_hash(save_path),
                 "url": download.url
             }
-        except (PlaywrightError, OSError):
+        except (PlaywrightError, OSError) as e:
+            logger.warning("Download failed or timed out: %s", e)
             return None
 
     def _compute_hash(self, path: Path) -> str:

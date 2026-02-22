@@ -34,7 +34,7 @@ _LAZY_IMPORTS = {
     "ProxyType": ("blackreach.browser", None),
     "ProxyRotator": ("blackreach.browser", None),
 
-    # Observer
+    # Observer (deprecated: replaced by dom_walker.py, kept for backward compatibility)
     "Eyes": ("blackreach.observer", None),
 
     # CAPTCHA detection
@@ -236,7 +236,7 @@ if TYPE_CHECKING:
     from blackreach.memory import SessionMemory, PersistentMemory
     from blackreach.llm import LLM, LLMConfig
     from blackreach.browser import Hand, ProxyConfig, ProxyType, ProxyRotator
-    from blackreach.observer import Eyes
+    from blackreach.observer import Eyes  # Deprecated: use dom_walker instead
     from blackreach.captcha_detect import (
         CaptchaDetector, CaptchaDetectionResult, CaptchaProvider,
         detect_captcha, is_captcha_present, get_captcha_detector

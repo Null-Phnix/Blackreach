@@ -97,9 +97,9 @@ class StuckDetector:
     """
 
     # Detection thresholds
-    URL_REPEAT_THRESHOLD = 3        # Same URL visited N times = stuck
+    URL_REPEAT_THRESHOLD = 5        # Same URL visited N times = stuck
     CONTENT_REPEAT_THRESHOLD = 3    # Same content seen N times = stuck
-    ACTION_REPEAT_THRESHOLD = 4     # Same action repeated N times = stuck
+    ACTION_REPEAT_THRESHOLD = 5     # Same action on same element repeated N times = stuck
     NO_PROGRESS_STEPS = 10          # No downloads for N steps = concern
     HISTORY_SIZE = 50               # Number of observations to keep
 
@@ -273,16 +273,26 @@ class StuckDetector:
         return StuckState(False, StuckReason.NOT_STUCK, 0.0, "")
 
     def _check_action_loop(self) -> StuckState:
-        """Check if stuck repeating same actions."""
+        """Check if stuck repeating the same action on the same element.
+
+        Only triggers when both the action type AND the target element match
+        across repeated observations. Actions without a target (empty target)
+        are not considered for action loop detection since they may be
+        different interactions that just lack target info.
+        """
         if len(self._action_sequence) < self.ACTION_REPEAT_THRESHOLD:
             return StuckState(False, StuckReason.NOT_STUCK, 0.0, "")
 
-        # Check for immediate repeats
+        # Check for immediate repeats of (action, target) pairs
         recent = self._action_sequence[-self.ACTION_REPEAT_THRESHOLD:]
         if len(set(recent)) == 1:
             action, target = recent[0]
             # Don't consider "download" as an action loop - downloads are progress
             if action == "download":
+                return StuckState(False, StuckReason.NOT_STUCK, 0.0, "")
+            # Only flag as stuck if the target is specified -- same action type
+            # on different (unknown) elements is not necessarily a loop
+            if not target:
                 return StuckState(False, StuckReason.NOT_STUCK, 0.0, "")
             return StuckState(
                 is_stuck=True,
@@ -292,18 +302,20 @@ class StuckDetector:
                 steps_stuck=len(recent)
             )
 
-        # Check for action patterns (A-B-A-B loops)
+        # Check for action patterns (A-B-A-B loops) -- requires matching targets too
         if len(self._action_sequence) >= 6:
             last_6 = self._action_sequence[-6:]
             # Check if it's a 2-step loop repeated 3 times
             if last_6[0] == last_6[2] == last_6[4] and last_6[1] == last_6[3] == last_6[5]:
-                return StuckState(
-                    is_stuck=True,
-                    reason=StuckReason.ACTION_LOOP,
-                    confidence=0.85,
-                    details=f"Stuck in action loop: {last_6[0]} -> {last_6[1]}",
-                    steps_stuck=6
-                )
+                # Only flag if at least one step has a target
+                if last_6[0][1] or last_6[1][1]:
+                    return StuckState(
+                        is_stuck=True,
+                        reason=StuckReason.ACTION_LOOP,
+                        confidence=0.85,
+                        details=f"Stuck in action loop: {last_6[0]} -> {last_6[1]}",
+                        steps_stuck=6
+                    )
 
         return StuckState(False, StuckReason.NOT_STUCK, 0.0, "")
 

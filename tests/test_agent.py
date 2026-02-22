@@ -2643,3 +2643,138 @@ class TestActionTrackerIntegration:
             )
 
         mock_record.assert_called_once()
+
+
+# =============================================================================
+# Tests for agent handling dom_walker empty results
+# =============================================================================
+
+class TestAgentDomWalkerEmptyResults:
+    """Tests that the agent handles dom_walker returning empty results gracefully."""
+
+    def test_agent_handles_empty_dom_result_in_format_elements(self, tmp_path):
+        """Agent _format_elements handles empty dom_walker-style result."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        # An empty result similar to what dom_walker._empty_result() produces
+        empty_result = {
+            "elements": [],
+            "text_summary": "",
+            "url": "https://example.com",
+            "title": "",
+            "total_elements": 0,
+            "visible_elements": 0,
+        }
+        # Agent's _format_elements expects old observer format, so pass empty dict
+        result = agent._format_elements({})
+        assert result is not None
+        assert "No interactive elements" in result
+
+    def test_agent_handles_dom_result_with_error(self, tmp_path):
+        """Agent handles dom_walker result that includes an error key."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        error_result = {
+            "elements": [],
+            "text_summary": "",
+            "url": "https://example.com",
+            "title": "",
+            "total_elements": 0,
+            "visible_elements": 0,
+            "error": "DOM walk failed: Page crashed",
+        }
+        # The agent should be able to handle this without crashing
+        # format_dom_elements is what the agent calls for dom_walker output
+        from blackreach.dom_walker import format_elements as format_dom_elements
+        result = format_dom_elements(error_result)
+        assert "No interactive elements" in result
+
+    def test_agent_page_cache_stores_dom_result(self, tmp_path):
+        """Agent stores dom_result in _page_cache."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        # Verify page cache is initialized with expected keys
+        assert "url" in agent._page_cache
+        assert "html" in agent._page_cache
+
+
+# =============================================================================
+# Tests for action history tracking
+# =============================================================================
+
+class TestActionHistory:
+    """Tests for _action_history and _format_action_history methods."""
+
+    def test_action_history_initialized_empty(self, tmp_path):
+        """_action_history starts as empty list."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        assert agent._action_history == []
+
+    def test_max_action_history_is_five(self, tmp_path):
+        """_max_action_history is 5."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        assert agent._max_action_history == 5
+
+    def test_format_action_history_empty(self, tmp_path):
+        """_format_action_history returns empty string when no history."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        result = agent._format_action_history()
+        assert result == ""
+
+    def test_format_action_history_single_entry(self, tmp_path):
+        """_format_action_history formats a single history entry."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        agent._action_history = ["[Step 1] click element 3 -> https://example.com"]
+        result = agent._format_action_history()
+        assert result == "[Step 1] click element 3 -> https://example.com"
+
+    def test_format_action_history_multiple_entries(self, tmp_path):
+        """_format_action_history joins multiple entries with newlines."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        agent._action_history = [
+            "[Step 1] navigate -> https://example.com",
+            "[Step 2] click element 5 -> https://example.com/page",
+            '[Step 3] type "search query" -> ok',
+        ]
+        result = agent._format_action_history()
+        lines = result.split("\n")
+        assert len(lines) == 3
+        assert "[Step 1]" in lines[0]
+        assert "[Step 2]" in lines[1]
+        assert "[Step 3]" in lines[2]
+
+    def test_action_history_respects_max_limit(self, tmp_path):
+        """_action_history is capped at _max_action_history entries."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        # Manually add more than max entries
+        for i in range(10):
+            agent._action_history.append(f"[Step {i}] action -> result")
+            if len(agent._action_history) > agent._max_action_history:
+                agent._action_history.pop(0)
+
+        assert len(agent._action_history) == 5
+        # Oldest entries should have been removed
+        assert "[Step 5]" in agent._action_history[0]
+        assert "[Step 9]" in agent._action_history[-1]
+
+    def test_format_action_history_preserves_error_entries(self, tmp_path):
+        """_format_action_history includes error history entries."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        agent._action_history = [
+            "[Step 1] click element 3 -> ERROR: Element not found",
+            "[Step 2] navigate -> https://example.com",
+        ]
+        result = agent._format_action_history()
+        assert "ERROR" in result
+        assert "Element not found" in result

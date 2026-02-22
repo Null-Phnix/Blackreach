@@ -11,13 +11,24 @@ blackreach run "find and download papers about machine learning from arxiv"
 ## Features
 
 - **General-Purpose**: Download any content type - papers, images, datasets, ebooks, etc.
-- **ReAct Pattern**: Observe → Think → Act loop for intelligent browsing
+- **ReAct Pattern**: Observe -> Think -> Act loop for intelligent browsing
+- **DOM Walker**: Live browser DOM extraction gives the LLM numbered interactive elements
 - **Session Resume**: Pause and resume interrupted sessions
 - **Smart Deduplication**: Never download the same file twice (URL + hash checking)
 - **Memory System**: Remembers successful patterns across sessions
 - **Multi-Provider**: Ollama, OpenAI, Anthropic, Google, xAI
 - **Stealth Mode**: Evades basic bot detection
-- **Pagination Support**: Automatically detects and navigates multi-page results
+- **Stuck Detection**: Automatically detects loops and recovers with alternate strategies
+
+## How It Works
+
+Blackreach uses a **DOM walker** approach to let the LLM interact with web pages:
+
+1. **Observe**: The DOM walker (`dom_walker.py`) runs JavaScript in the live browser to find all interactive elements (links, buttons, inputs, etc.) and assigns each a numeric `[N]` ID.
+2. **Think**: The LLM receives the page text content and the numbered element list, then reasons about which action moves closest to the goal.
+3. **Act**: The LLM outputs a JSON action referencing a specific element ID (e.g., `{"action":"click","element":15}`), and the agent executes it in the browser via Playwright.
+
+This cycle repeats until the goal is accomplished or the step limit is reached. The agent includes stuck detection, automatic source failover, and error recovery to handle real-world browsing challenges.
 
 ## Installation
 
@@ -81,6 +92,9 @@ blackreach run "search wikipedia for artificial intelligence"
 # Run headless (no browser window)
 blackreach run --headless "download papers about transformers from arxiv"
 
+# Use a specific provider/model
+blackreach run -p openai -m gpt-4o "find papers about attention mechanisms"
+
 # Resume an interrupted session
 blackreach run --resume 42
 ```
@@ -96,8 +110,11 @@ blackreach run --resume 42
 | `blackreach config` | Configure settings and API keys |
 | `blackreach models` | List available models |
 | `blackreach status` | Show current configuration |
+| `blackreach stats` | Show performance metrics |
 | `blackreach setup` | Run setup wizard |
 | `blackreach doctor` | Check system requirements |
+| `blackreach health` | Check content source availability |
+| `blackreach downloads` | Show download history |
 
 ### Interactive Commands
 
@@ -109,6 +126,7 @@ In interactive mode, use these slash commands:
 | `/model` | `/m` | Switch model |
 | `/provider` | `/p` | Switch provider |
 | `/status` | `/s` | Show status |
+| `/plan "goal"` | | Preview a plan without executing |
 | `/sessions` | | List resumable sessions |
 | `/resume ID` | | Resume a session |
 | `/logs` | `/l` | View recent logs |
@@ -135,8 +153,8 @@ In interactive mode, use these slash commands:
 ### Using Cloud Providers
 
 1. Get API key from your provider
-2. Configure: `blackreach config` → Set API key
-3. Switch provider: `blackreach config` → Set default provider
+2. Configure: `blackreach config` -> Set API key
+3. Switch provider: `blackreach config` -> Set default provider
 
 ## Configuration
 
@@ -201,17 +219,22 @@ blackreach run --resume 42  # Resume session #42
 
 ```
 blackreach/
-├── agent.py       # ReAct loop coordinator
-├── browser.py     # Playwright browser control (stealth, downloads)
-├── observer.py    # HTML parsing, link detection, pagination
-├── llm.py         # Multi-provider LLM integration
-├── memory.py      # Session memory + SQLite persistence
-├── detection.py   # CAPTCHA, login, paywall detection
-├── resilience.py  # Retry logic, circuit breaker
-├── exceptions.py  # Error hierarchy
-├── config.py      # Configuration management
-├── logging.py     # Structured session logging
-└── cli.py         # Command-line interface
+├── agent.py          # ReAct loop coordinator
+├── browser.py        # Playwright browser control (stealth, downloads)
+├── dom_walker.py     # Live DOM extraction - assigns [N] IDs to interactive elements
+├── observer.py       # Legacy HTML parsing (fallback utilities)
+├── llm.py            # Multi-provider LLM integration
+├── memory.py         # Session memory + SQLite persistence
+├── detection.py      # CAPTCHA, login, paywall detection
+├── knowledge.py      # Content source knowledge base
+├── resilience.py     # Retry logic, circuit breaker
+├── stuck_detector.py # Loop detection and recovery strategies
+├── error_recovery.py # Error categorization and recovery
+├── exceptions.py     # Error hierarchy
+├── config.py         # Configuration management
+├── logging.py        # Structured session logging
+├── ui.py             # Rich terminal UI components
+└── cli.py            # Command-line interface
 ```
 
 ## Troubleshooting
@@ -234,9 +257,17 @@ playwright install chromium
 ollama serve
 ```
 
+**No API key configured:**
+```bash
+blackreach config          # Interactive setup
+# or set environment variable:
+export OPENAI_API_KEY="sk-..."
+```
+
 **Bot detection (418/403 errors):**
 - Some sites block headless browsers
 - Try running without `--headless`
+- Try a different browser: `blackreach run -b firefox "your goal"`
 - Use different search engines (Google/Wikipedia work better than DuckDuckGo)
 
 **Session resume fails:**
@@ -254,11 +285,12 @@ Blackreach maintains two types of memory:
 The persistent memory tracks:
 - All downloads (prevents re-downloading)
 - Site patterns that worked
+- Action success rates per domain
 - Common failures to avoid
 
 View stats:
 ```bash
-blackreach status
+blackreach stats
 ```
 
 ## License

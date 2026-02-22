@@ -9,16 +9,17 @@ STATS: {download_count} downloads, {visit_count} pages visited
 LAST ERROR: {last_failure}
 
 DECISION GUIDE:
-- At wrong website? → navigate directly to the URL
-- Need to search? → type with submit:true (this types AND presses Enter)
-- See target link? → click it by text
-- See download link? → download it
-- Goal complete? → say done
+- At wrong website? -> use navigate to go directly to the URL
+- Need to search? -> use type with submit:true on a search input element [N]
+- See a target link? -> use click with its element [N] ID
+- See a download link? -> use download with the file URL
+- Goal complete? -> use done
 
 ERROR RECOVERY:
-- If typing failed → try clicking a visible search button/link instead
-- If selector not found → try using visible text to click (e.g., click "Search")
-- If stuck on same page → try navigating directly to target URL
-- If popup blocking → try scrolling or clicking elsewhere first
+- If an action failed in RECENT ACTIONS, do NOT repeat it - try a different approach
+- If a click failed -> try navigate directly to the link's URL instead
+- If typing failed -> try clicking a visible search button first
+- If stuck on same page -> scroll down or navigate to a different site
+- If downloads keep failing -> try a different mirror or source
 
-What is the ONE action to take next? Be specific and brief (1 sentence):
+What is the ONE best action to take next? Be specific and reference element [N] IDs:

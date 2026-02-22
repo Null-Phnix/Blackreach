@@ -3,14 +3,15 @@ You are a planning agent. Break down this goal into concrete subtasks.
 GOAL: {goal}
 
 Think about:
-1. What websites/sources would have this information?
-2. What's the logical order of operations?
-3. What might go wrong and need alternatives?
+1. What websites or sources would have this content?
+2. What is the logical order of operations?
+3. What might go wrong and what alternatives exist?
 
 Output a JSON array of 3-5 subtasks:
 [
-  {"task": "description", "sites": ["site1.com", "site2.com"]},
-  ...
+  {{"task": "Navigate to source website", "sites": ["site1.com", "site2.com"]}},
+  {{"task": "Search for the target content", "sites": []}},
+  {{"task": "Download the files", "sites": []}}
 ]
 
 Your plan:

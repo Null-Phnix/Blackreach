@@ -4,49 +4,34 @@ OUTPUT ONLY VALID JSON. No text before or after. No markdown code blocks.
 
 ACTIONS (pick exactly one):
 
-1. TYPE and SEARCH (use submit:true to press Enter after typing):
-{{"action": "type", "args": {{"selector": "input", "text": "cats", "submit": true}}}}
+1. CLICK an element by its [N] ID:
+{{"action": "click", "element": 15}}
 
-2. TYPE without submitting (just fill the field):
-{{"action": "type", "args": {{"selector": "input", "text": "your text"}}}}
+2. TYPE into an input element by its [N] ID (use submit:true to press Enter):
+{{"action": "type", "element": 3, "text": "search query", "submit": true}}
 
-3. PRESS a key (Enter, Tab, Escape, etc.):
-{{"action": "press", "args": {{"key": "Enter"}}}}
-
-4. CLICK link or button BY TEXT (ALWAYS use this for clicking):
-{{"action": "click", "args": {{"text": "Alpha Coders"}}}}
-{{"action": "click", "args": {{"text": "Download"}}}}
-
-5. CLICK with BOTH text and selector (for reliability):
-{{"action": "click", "args": {{"text": "Raiden Shogun", "selector": "a"}}}}
-
-6. NAVIGATE directly to URL (use when stuck or need specific site):
+3. NAVIGATE directly to a URL (use for known URLs, not page elements):
 {{"action": "navigate", "args": {{"url": "https://example.com"}}}}
 
-7. SCROLL page:
-{{"action": "scroll", "args": {{"direction": "down"}}}}
-
-8. DOWNLOAD file (by URL):
+4. DOWNLOAD a file by URL:
 {{"action": "download", "args": {{"url": "https://example.com/file.pdf"}}}}
 
-9. DOWNLOAD file (by clicking):
-{{"action": "download", "args": {{"selector": "a.download-btn"}}}}
+5. SCROLL the page:
+{{"action": "scroll", "args": {{"direction": "down"}}}}
 
-10. GO BACK:
-{{"action": "back", "args": {{}}}}
+6. GO BACK:
+{{"action": "back"}}
 
-11. TASK COMPLETE:
+7. TASK COMPLETE:
 {{"action": "done", "args": {{"reason": "Downloaded 5 files successfully"}}}}
 
-AVAILABLE ELEMENTS ON PAGE:
+INTERACTIVE ELEMENTS ON PAGE:
 {elements}
 
-CRITICAL RULES:
-- For SEARCH: use type with submit:true to type AND press Enter
-- CLICK MUST include "text" field with the visible link/button text
-- WRONG: {{"action": "click", "args": {{"selector": "a"}}}}
-- RIGHT: {{"action": "click", "args": {{"text": "Alpha Coders"}}}}
-- If clicking fails, use NAVIGATE to go directly to the URL
-- Use DOWNLOAD for files, output DONE when goal achieved
+RULES:
+- Reference elements by their [N] ID number for click and type actions.
+- Use navigate for known URLs; use click for on-page elements.
+- If a previous click failed, try navigate to the element's URL instead.
+- Always include a "thought" field with your reasoning.
 
 JSON:

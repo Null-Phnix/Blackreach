@@ -12,8 +12,8 @@ Memory system:
 """
 
 import json
+import logging
 import re
-import sys
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -22,7 +22,7 @@ from urllib.parse import urlparse, urljoin, quote as url_quote
 
 from blackreach.browser import Hand
 from blackreach.detection import SiteDetector
-from blackreach.observer import Eyes
+from blackreach.observer import Eyes  # Deprecated: replaced by dom_walker, kept for debug_html()
 from blackreach.dom_walker import walk_dom, format_elements as format_dom_elements, format_text_summary
 from blackreach.llm import LLM, LLMConfig
 from blackreach.stealth import StealthConfig
@@ -33,23 +33,22 @@ from blackreach.exceptions import (
     InvalidActionArgsError, UnknownActionError, SessionNotFoundError,
     BrowserError, NavigationError, DownloadError, LLMError, NetworkError,
 )
-from blackreach.knowledge import reason_about_goal, extract_subject, get_working_url, get_all_urls_for_source, find_best_sources
+from blackreach.knowledge import reason_about_goal, get_working_url, get_all_urls_for_source, find_best_sources
 from blackreach.action_tracker import ActionTracker
 from blackreach.stuck_detector import StuckDetector, RecoveryStrategy, compute_content_hash
-from blackreach.error_recovery import ErrorRecovery, ErrorCategory, RecoveryAction
-from blackreach.source_manager import SourceManager, get_source_manager
-from blackreach.goal_engine import GoalEngine, GoalDecomposition, SubtaskStatus, get_goal_engine
-from blackreach.nav_context import NavigationContext, PageValue, get_nav_context
-from blackreach.site_handlers import get_handler_for_url, get_site_hints, get_download_sequence, SiteHandlerExecutor
-from blackreach.search_intel import SearchIntelligence, get_search_intel, SearchQuery
-from blackreach.content_verify import ContentVerifier, VerificationStatus, FileType, get_verifier
-from blackreach.retry_strategy import RetryManager, RetryDecision, get_retry_manager
-from blackreach.timeout_manager import TimeoutManager, get_timeout_manager
-from blackreach.rate_limiter import RateLimiter, get_rate_limiter
-from blackreach.session_manager import SessionManager, SessionStatus, get_session_manager
-from blackreach.multi_tab import SyncTabManager, TabStatus, TabPoolConfig
-from blackreach.download_queue import DownloadQueue, DownloadPriority, get_download_queue
-from blackreach.task_scheduler import TaskScheduler, TaskPriority, get_scheduler
+from blackreach.error_recovery import ErrorRecovery
+from blackreach.source_manager import get_source_manager
+from blackreach.goal_engine import GoalDecomposition, get_goal_engine
+from blackreach.nav_context import PageValue, get_nav_context
+from blackreach.site_handlers import get_site_hints
+from blackreach.search_intel import get_search_intel
+from blackreach.content_verify import VerificationStatus, get_verifier
+from blackreach.retry_strategy import get_retry_manager
+from blackreach.timeout_manager import get_timeout_manager
+from blackreach.rate_limiter import get_rate_limiter
+from blackreach.session_manager import get_session_manager
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -262,9 +261,9 @@ class Agent:
                 self._callback_errors[event] = error_count
 
                 if error_count <= self._max_callback_errors_per_event:
-                    print(f"[callback error] {event}: {e}", file=sys.stderr)
+                    logger.warning("Callback error in %s: %s", event, e)
                     if error_count == self._max_callback_errors_per_event:
-                        print(f"[callback error] {event}: suppressing further errors", file=sys.stderr)
+                        logger.warning("Callback error in %s: suppressing further errors", event)
 
     def _load_prompts(self) -> Dict[str, str]:
         """Load ReAct prompts from files."""
@@ -371,8 +370,8 @@ class Agent:
         if success and navigate_to:
             try:
                 self.hand.goto(navigate_to)
-            except (NavigationError, BrowserError, OSError):
-                pass  # Best-effort post-restart navigation
+            except (NavigationError, BrowserError, OSError) as e:
+                logger.debug("Best-effort post-restart navigation failed: %s", e)
 
         return success
 
@@ -816,8 +815,8 @@ class Agent:
                 last_url = self._recent_urls[-1]
                 try:
                     self.hand.goto(last_url, wait_for_content=False)
-                except (NavigationError, BrowserError, OSError):
-                    pass  # Best-effort navigation after restart
+                except (NavigationError, BrowserError, OSError) as e:
+                    logger.debug("Best-effort navigation after restart failed: %s", e)
 
         # Track current URL for stuck detection
         current_url = self.hand.get_url()
@@ -1068,33 +1067,37 @@ class Agent:
         self._emit("on_step", step_num, self.config.max_steps, "think", "Reasoning...")
 
         # System prompt - autonomous browser agent with element ID system
-        system_prompt = """You are an autonomous browser agent. You can see and interact with web pages to accomplish goals.
+        system_prompt = """You are an autonomous browser agent. You interact with web pages to accomplish goals.
 
 ## How You See Pages
-You receive a list of numbered interactive elements on the current page. Reference elements by their [N] ID number.
+You receive numbered interactive elements on the current page. Reference them by [N] ID.
+You also receive a text summary of visible page content. READ BOTH CAREFULLY before acting.
 
 ## Available Actions
-- click: Click an element. {"action":"click","element":N}
-- type: Type into an input element. {"action":"type","element":N,"text":"query","submit":true}
-- scroll: Scroll the page. {"action":"scroll","args":{"direction":"down"}}
-- navigate: Go to a URL. {"action":"navigate","args":{"url":"https://..."}}
-- download: Download a file from a URL. {"action":"download","args":{"url":"https://..."}}
-- back: Go back. {"action":"back"}
-- done: Task complete. {"action":"done","args":{"reason":"description"}}
+- click: Click element by ID. {"action":"click","element":N}
+- type: Type into input. {"action":"type","element":N,"text":"query","submit":true}
+- navigate: Go to a known URL directly. {"action":"navigate","args":{"url":"https://..."}}
+- download: Download a file by URL. {"action":"download","args":{"url":"https://..."}}
+- scroll: Scroll to reveal more. {"action":"scroll","args":{"direction":"down"}}
+- back: Go to previous page. {"action":"back"}
+- done: Task complete. {"action":"done","args":{"reason":"what was accomplished"}}
 
-## How to Think
-1. Read the page content and interactive elements carefully
-2. Think about what action will move you closer to the goal
-3. Pick the specific element to interact with by its [N] ID
-4. If stuck, try scrolling to reveal more content, going back, or navigating to a search engine
+## When to Navigate vs Click
+- Use "navigate" when you know the exact URL (e.g., from a link's href or a known site).
+- Use "click" when interacting with a page element (buttons, links, tabs) by its [N] ID.
+
+## Examples
+Example 1 - Searching: {"thought":"I need to search for machine learning papers","action":"type","element":3,"text":"machine learning papers","submit":true}
+Example 2 - Clicking a link: {"thought":"Element [15] links to the download page I need","action":"click","element":15}
+Example 3 - Task complete: {"thought":"I found and downloaded 3 papers as requested","action":"done","args":{"reason":"Downloaded 3 papers from arxiv"}}
 
 ## Rules
-- Output ONLY valid JSON. No markdown, no explanation, no commentary.
-- Always include a "thought" field with your reasoning.
+- READ the page content and element list CAREFULLY before deciding your action.
+- Output ONLY valid JSON. No markdown, no explanation, no extra text.
+- Always include a "thought" field explaining your reasoning.
+- Check RECENT ACTIONS to avoid repeating failed actions. Try a different approach.
 - Never say "done" unless the goal is truly accomplished.
-- If a page has a search input, use it to find what you need.
-- If you don't see what you need, scroll down or try a different page.
-- You navigate. You interact. You accomplish the goal. That's it."""
+- If stuck, scroll down, go back, or navigate to a search engine."""
 
         try:
             response = self.llm.generate(
@@ -1550,8 +1553,8 @@ You receive a list of numbered interactive elements on the current page. Referen
                 try:
                     self.hand.page.get_by_text(text, exact=False).first.click()
                     return {"action": "click", "text": text}
-                except (BrowserError, OSError):
-                    pass
+                except (BrowserError, OSError) as e:
+                    logger.debug("Click by text '%s' failed, trying fallback: %s", text, e)
 
             # Priority 3: Extract text from thought (backward compat)
             if not text and thought:
@@ -1561,8 +1564,8 @@ You receive a list of numbered interactive elements on the current page. Referen
                     try:
                         self.hand.page.get_by_text(text, exact=False).first.click()
                         return {"action": "click", "text": text}
-                    except (BrowserError, OSError):
-                        pass
+                    except (BrowserError, OSError) as e:
+                        logger.debug("Click by quoted text '%s' failed: %s", text, e)
 
             # Priority 4: Click by CSS selector (backward compat)
             if selector:
@@ -1622,10 +1625,10 @@ You receive a list of numbered interactive elements on the current page. Referen
                 return u
 
             if normalize_url(url) == normalize_url(current_url):
-                print(f"  -> (skipped: already on {url[:50]})")
+                logger.debug("Navigate skipped: already on %s", url[:50])
                 return {"action": "navigate", "skipped": True, "url": url}
 
-            print(f"  -> {url[:70]}")
+            logger.debug("Navigating to %s", url[:70])
             self.hand.goto(url)
             self._record_visit(url)
             return {"action": "navigate", "url": url}
@@ -1647,22 +1650,22 @@ You receive a list of numbered interactive elements on the current page. Referen
             if url and not url.startswith(('http://', 'https://')):
                 base_url = self.hand.get_url()
                 url = urljoin(base_url, url)
-                print(f"  -> Resolved URL: {url[:70]}")
+                logger.debug("Resolved download URL: %s", url[:70])
 
             # Check if we've already downloaded this URL
             if url and self.persistent_memory.has_downloaded(url=url):
-                print(f"  SKIP: Already downloaded - try a different item!")
+                logger.info("SKIP: Already downloaded %s", url[:50])
                 self.session_memory.add_failure(f"Already downloaded {url[:50]}... Try a different item!")
                 return {"action": "download", "skipped": True, "reason": "already downloaded"}
 
             # Check if this URL previously failed
             if url and url in self._failed_download_urls:
-                print(f"  SKIP: URL previously failed - try a different mirror!")
+                logger.info("SKIP: URL previously failed %s", url[:50])
                 self.session_memory.add_failure(f"Download URL failed before - use a different link")
                 return {"action": "download", "skipped": True, "reason": "previously failed"}
 
             try:
-                print(f"  -> Starting download...")
+                logger.info("Starting download...")
                 download_start = time.time()
 
                 if url:
@@ -1673,13 +1676,13 @@ You receive a list of numbered interactive elements on the current page. Referen
                     raise InvalidActionArgsError("download", "Must provide either url or selector")
 
                 download_time = time.time() - download_start
-                print(f"  -> Download completed in {download_time:.1f}s")
+                logger.info("Download completed in %.1fs", download_time)
 
                 # Check if we already have this file (by hash)
                 if self.persistent_memory.has_downloaded(file_hash=result["hash"]):
                     # Delete the duplicate
                     Path(result["path"]).unlink()
-                    print(f"  SKIP: Duplicate content (same hash)")
+                    logger.info("SKIP: Duplicate content (same hash)")
                     return {"action": "download", "skipped": True, "reason": "duplicate content"}
 
                 # Use centralized content verification
@@ -1690,7 +1693,7 @@ You receive a list of numbered interactive elements on the current page. Referen
                     if verification.status != VerificationStatus.VALID:
                         # Delete invalid file
                         file_path.unlink()
-                        print(f"  INVALID: {verification.message}")
+                        logger.warning("INVALID download: %s", verification.message)
                         self.session_memory.add_failure(verification.message)
                         return {
                             "action": "download",
@@ -1725,7 +1728,7 @@ You receive a list of numbered interactive elements on the current page. Referen
                 if selector:
                     self.nav_context.record_valuable_selector(domain, selector)
 
-                print(f"  Downloaded: {result['filename']} ({result['size']} bytes)")
+                logger.info("Downloaded: %s (%d bytes)", result['filename'], result['size'])
 
                 return {
                     "action": "download",
@@ -1747,17 +1750,17 @@ You receive a list of numbered interactive elements on the current page. Referen
 
                 # Provide helpful hints for common download failures
                 if "Timeout" in error_str:
-                    print(f"  TIMEOUT: Download took too long - file may be very large or server is slow")
+                    logger.warning("Download timeout - file may be very large or server is slow")
                     self.session_memory.add_failure("Download timed out - try a different mirror or source")
                 elif "Download is starting" in error_str:
                     # This usually means the page didn't trigger a download
-                    print(f"  NO DOWNLOAD: Page didn't trigger a file download - may need to click a different button")
+                    logger.warning("No download triggered - may need to click a different button")
                     self.session_memory.add_failure("No download triggered - look for actual file download links")
                 elif "net::ERR" in error_str or "NetworkError" in error_str:
-                    print(f"  NETWORK ERROR: Failed to connect - try a different mirror")
+                    logger.warning("Network error on download - try a different mirror")
                     self.session_memory.add_failure("Network error - try alternative download source")
                 else:
-                    print(f"  DOWNLOAD FAILED: {error_str[:100]}")
+                    logger.warning("Download failed: %s", error_str[:100])
 
                 # Add hint about failed URLs for LLM
                 if len(self._failed_download_urls) > 0:

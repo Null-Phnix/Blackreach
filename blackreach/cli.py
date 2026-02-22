@@ -221,7 +221,15 @@ def run_first_time_setup():
 def cli(ctx):
     """Blackreach - Autonomous Browser Agent
 
-    Run without arguments for interactive mode.
+    Give it a goal, watch it browse. Blackreach uses AI to autonomously
+    navigate websites, search for content, and download files.
+
+    \b
+    Quick start:
+      blackreach                              Interactive mode
+      blackreach run "search for X on Y"      Run with a goal
+      blackreach setup                        First-time setup
+      blackreach doctor                       Check system health
     """
     # Check for first run
     if is_first_run() and ctx.invoked_subcommand is None:
@@ -245,8 +253,12 @@ def cli(ctx):
 def run(goal: str, provider: str, model: str, headless: bool, browser: str, steps: int, resume: int, verbose: bool, do_validate: bool):
     """Run the agent with a goal.
 
-    Example: blackreach run "go to wikipedia and search for AI"
-    Resume:  blackreach run --resume 42
+    \b
+    Examples:
+      blackreach run "search wikipedia for artificial intelligence"
+      blackreach run "download 3 papers about AI from arxiv"
+      blackreach run --headless "find images of cats on unsplash"
+      blackreach run --resume 42
     """
     global _active_agent
     from blackreach.agent import Agent, AgentConfig
@@ -276,8 +288,17 @@ def run(goal: str, provider: str, model: str, headless: bool, browser: str, step
 
     # Check API key for non-local providers
     if provider != "ollama" and not config_manager.has_api_key(provider):
+        env_var_names = {
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "google": "GOOGLE_API_KEY",
+            "xai": "XAI_API_KEY",
+        }
+        env_var = env_var_names.get(provider, f"{provider.upper()}_API_KEY")
         console.print(f"[red]Error: No API key configured for {provider}[/red]")
-        console.print(f"Run [cyan]blackreach config[/cyan] to set up API keys")
+        console.print(f"\nTo fix this, do one of the following:")
+        console.print(f"  1. Run [cyan]blackreach config[/cyan] and choose 'Set API key'")
+        console.print(f"  2. Set the environment variable: [cyan]export {env_var}=\"your-key-here\"[/cyan]")
         sys.exit(1)
 
     # Handle resume
@@ -328,7 +349,12 @@ def run(goal: str, provider: str, model: str, headless: bool, browser: str, step
     # Regular run - goal is required
     if not goal:
         console.print("[red]Error: Goal is required (or use --resume)[/red]")
-        console.print("Example: blackreach run \"find and download papers about AI\"")
+        console.print(f"\nUsage:")
+        console.print(f"  [cyan]blackreach run \"your goal here\"[/cyan]")
+        console.print(f"\nExamples:")
+        console.print(f"  blackreach run \"search wikipedia for artificial intelligence\"")
+        console.print(f"  blackreach run \"find and download papers about AI from arxiv\"")
+        console.print(f"  blackreach run --resume 42  [dim](resume a paused session)[/dim]")
         sys.exit(1)
 
     console.print(Panel(
@@ -1568,7 +1594,7 @@ def interactive_mode():
 
                     # Check API key
                     if provider != "ollama" and not config_manager.has_api_key(provider):
-                        ui.print_error(f"No API key configured for {provider}")
+                        ui.print_error(f"No API key configured for {provider}. Run /config to set it, or /provider to switch.")
                         continue
 
                     with ui.spinner(f"Resuming session #{session_id}..."):
@@ -1688,7 +1714,8 @@ def interactive_mode():
                 # Run the agent with the goal
                 if provider != "ollama" and not config_manager.has_api_key(provider):
                     ui.print_error(f"No API key configured for {provider}")
-                    ui.print_info("Use /config to set your API key, or /provider to switch")
+                    ui.print_info("Use /config to set your API key, or /provider to switch providers")
+                    ui.print_info(f"Or set the env var: export {provider.upper()}_API_KEY=\"your-key\"")
                     continue
 
                 # Run agent with progress display

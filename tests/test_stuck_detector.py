@@ -280,8 +280,8 @@ class TestStuckDetectorThresholds:
         """URL repeat threshold should be configurable."""
         detector = StuckDetector()
 
-        # Default threshold is 3
-        for i in range(2):
+        # Default threshold is 5
+        for i in range(4):
             detector.observe(
                 url="https://example.com/same",
                 content_hash=f"hash_{i}",
@@ -289,13 +289,13 @@ class TestStuckDetectorThresholds:
                 download_count=0
             )
 
-        # 2 visits should not trigger stuck
+        # 4 visits should not trigger stuck
         assert not detector.is_stuck()
 
-        # 3rd visit should trigger
+        # 5th visit should trigger
         detector.observe(
             url="https://example.com/same",
-            content_hash="hash_2",
+            content_hash="hash_4",
             action="click",
             download_count=0
         )

@@ -8,14 +8,17 @@ Handles:
 - Configuration validation
 """
 
+import logging
 import os
 import re
 import yaml
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field, asdict
 
 from blackreach.exceptions import InvalidConfigError
+
+logger = logging.getLogger(__name__)
 
 # Try to import keyring for secure credential storage
 # Falls back to plaintext storage if keyring is not available
@@ -126,7 +129,8 @@ def _keyring_get(provider: str) -> Optional[str]:
         return None
     try:
         return keyring.get_password(KEYRING_SERVICE, f"api_key_{provider}")
-    except Exception:  # Keyring backends raise varied exceptions
+    except Exception as e:  # Keyring backends raise varied exceptions
+        logger.debug("Keyring get failed for %s: %s", provider, e)
         return None
 
 
@@ -140,7 +144,8 @@ def _keyring_set(provider: str, key: str) -> bool:
     try:
         keyring.set_password(KEYRING_SERVICE, f"api_key_{provider}", key)
         return True
-    except Exception:  # Keyring backends raise varied exceptions
+    except Exception as e:  # Keyring backends raise varied exceptions
+        logger.debug("Keyring set failed for %s: %s", provider, e)
         return False
 
 
@@ -154,7 +159,8 @@ def _keyring_delete(provider: str) -> bool:
     try:
         keyring.delete_password(KEYRING_SERVICE, f"api_key_{provider}")
         return True
-    except Exception:  # Keyring backends raise varied exceptions
+    except Exception as e:  # Keyring backends raise varied exceptions
+        logger.debug("Keyring delete failed for %s: %s", provider, e)
         return False
 
 
@@ -197,7 +203,7 @@ class ConfigManager:
                     data = yaml.safe_load(f) or {}
                 self._config = self._dict_to_config(data)
             except (OSError, yaml.YAMLError) as e:
-                print(f"Warning: Could not load config: {e}")
+                logger.warning("Could not load config: %s", e)
                 self._config = Config()
         else:
             self._config = Config()
@@ -215,10 +221,40 @@ class ConfigManager:
             return
 
         for provider in ["openai", "anthropic", "google", "xai"]:
+            # Migrate keys from old format ("{provider}_api_key") to new format ("api_key_{provider}")
+            self._migrate_keyring_key(provider)
+
             key = _keyring_get(provider)
             if key:
                 provider_config = getattr(self._config, provider)
                 provider_config.api_key = key
+
+    def _migrate_keyring_key(self, provider: str) -> None:
+        """Migrate a keyring key from old format to new format if needed.
+
+        Old format: "{provider}_api_key"  (e.g. "openai_api_key")
+        New format: "api_key_{provider}"  (e.g. "api_key_openai")
+
+        Copies the key to the new format and deletes the old entry.
+        Only acts if the new key does not already exist.
+        """
+        if not KEYRING_AVAILABLE:
+            return
+        try:
+            new_key = keyring.get_password(KEYRING_SERVICE, f"api_key_{provider}")
+            if new_key:
+                return  # New format already has a key, no migration needed
+            old_key = keyring.get_password(KEYRING_SERVICE, f"{provider}_api_key")
+            if old_key:
+                # Copy to new format
+                keyring.set_password(KEYRING_SERVICE, f"api_key_{provider}", old_key)
+                # Remove old format entry
+                try:
+                    keyring.delete_password(KEYRING_SERVICE, f"{provider}_api_key")
+                except Exception:
+                    pass  # Old key deletion is best-effort
+        except Exception:
+            pass  # Migration is best-effort; don't break startup
 
     def _load_env_keys(self):
         """Load API keys from environment variables (fallback if not in keyring)."""
@@ -258,10 +294,10 @@ class ConfigManager:
         # This protects API keys from being read by other users on the system
         try:
             os.chmod(CONFIG_FILE, 0o600)
-        except OSError:
+        except OSError as e:
             # On some systems (e.g., Windows), chmod may not work as expected
             # Continue anyway - the file is still created
-            pass
+            logger.debug("Could not set config file permissions: %s", e)
 
     def _config_to_dict(self, config: Config) -> Dict[str, Any]:
         """Convert Config to dictionary for YAML.
@@ -275,11 +311,11 @@ class ConfigManager:
             # If key is in keyring, don't save to file
             if KEYRING_AVAILABLE:
                 try:
-                    keyring_key = keyring.get_password(KEYRING_SERVICE, f"{provider_name}_api_key")
+                    keyring_key = keyring.get_password(KEYRING_SERVICE, f"api_key_{provider_name}")
                     if keyring_key:
                         result["api_key"] = ""  # Don't store in plaintext
-                except Exception:  # Keyring backends raise varied exceptions
-                    pass
+                except Exception as e:  # Keyring backends raise varied exceptions
+                    logger.debug("Keyring check failed for %s: %s", provider_name, e)
             return result
 
         return {
@@ -346,15 +382,15 @@ class ConfigManager:
         # Try to store in keyring first for security
         if use_keyring and KEYRING_AVAILABLE:
             try:
-                keyring.set_password(KEYRING_SERVICE, f"{provider}_api_key", key)
+                keyring.set_password(KEYRING_SERVICE, f"api_key_{provider}", key)
                 # Clear from config file for security
                 config = self.load()
                 if hasattr(config, provider):
                     getattr(config, provider).api_key = ""  # Clear plaintext
                     self.save()
                 return
-            except Exception:  # Keyring backends raise varied exceptions
-                pass  # Fall back to config file
+            except Exception as e:  # Keyring backends raise varied exceptions
+                logger.debug("Keyring storage failed for %s, falling back to config file: %s", provider, e)
 
         # Fallback to config file storage (less secure)
         # P0-SEC: Warn user about plaintext storage
@@ -416,11 +452,11 @@ class ConfigManager:
         # Priority 2: Try keyring for secure storage
         if KEYRING_AVAILABLE:
             try:
-                key = keyring.get_password(KEYRING_SERVICE, f"{provider}_api_key")
+                key = keyring.get_password(KEYRING_SERVICE, f"api_key_{provider}")
                 if key:
                     return key
-            except Exception:  # Keyring backends raise varied exceptions
-                pass  # Keyring unavailable or error
+            except Exception as e:  # Keyring backends raise varied exceptions
+                logger.debug("Keyring lookup failed for %s: %s", provider, e)
 
         # Priority 3: Config file (fallback)
         if hasattr(config, provider):
@@ -442,9 +478,9 @@ class ConfigManager:
         # Remove from keyring
         if KEYRING_AVAILABLE:
             try:
-                keyring.delete_password(KEYRING_SERVICE, f"{provider}_api_key")
-            except Exception:  # Keyring backends raise varied exceptions
-                pass  # Key might not exist
+                keyring.delete_password(KEYRING_SERVICE, f"api_key_{provider}")
+            except Exception as e:  # Keyring backends raise varied exceptions
+                logger.debug("Keyring delete failed for %s: %s", provider, e)
 
         # Remove from config file
         config = self.load()

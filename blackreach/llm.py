@@ -11,7 +11,7 @@ import time
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
-from blackreach.exceptions import ProviderError, ProviderNotInstalledError, ParseError
+from blackreach.exceptions import ProviderError, ProviderNotInstalledError
 
 # P0-PERF: Pre-compiled regex for JSON extraction (used on every LLM response)
 _RE_JSON_OBJECT = re.compile(r'\{[\s\S]*\}')
