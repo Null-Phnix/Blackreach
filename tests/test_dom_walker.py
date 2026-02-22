@@ -146,8 +146,8 @@ class TestContextPresets:
         assert CONTEXT_PRESETS["medium"]["textSummaryLen"] == 1000
 
     def test_large_text_summary_len(self):
-        """Large preset has textSummaryLen of 1500."""
-        assert CONTEXT_PRESETS["large"]["textSummaryLen"] == 1500
+        """Large preset has textSummaryLen of 3000."""
+        assert CONTEXT_PRESETS["large"]["textSummaryLen"] == 3000
 
     def test_presets_has_exactly_three_keys(self):
         """CONTEXT_PRESETS contains exactly three size presets."""
@@ -291,7 +291,7 @@ class TestWalkDom:
         assert config["maxElements"] == 200
         assert config["maxTextLen"] == 60
         assert config["maxHrefLen"] == 120
-        assert config["textSummaryLen"] == 1500
+        assert config["textSummaryLen"] == 3000
 
     def test_small_context_config(self, mock_page, sample_dom_result):
         """walk_dom passes small context config correctly."""
@@ -324,7 +324,7 @@ class TestWalkDom:
         call_args = mock_page.evaluate.call_args
         config = call_args[0][1]
         assert config["maxElements"] == 200
-        assert config["textSummaryLen"] == 1500
+        assert config["textSummaryLen"] == 3000
 
     def test_unknown_context_size_defaults_to_large(self, mock_page, sample_dom_result):
         """walk_dom falls back to large preset for unknown context_size."""
@@ -335,7 +335,7 @@ class TestWalkDom:
         call_args = mock_page.evaluate.call_args
         config = call_args[0][1]
         assert config["maxElements"] == 200
-        assert config["textSummaryLen"] == 1500
+        assert config["textSummaryLen"] == 3000
 
     def test_max_elements_override(self, mock_page, sample_dom_result):
         """walk_dom max_elements parameter overrides context_size preset."""
@@ -1350,12 +1350,12 @@ class TestFormatTextSummary:
         assert result == "(No readable text content on this page)"
 
     def test_truncation_large_context(self):
-        """format_text_summary truncates at 1500 chars for large context."""
-        long_text = "x" * 2000
+        """format_text_summary truncates at 3000 chars for large context."""
+        long_text = "x" * 4000
         dom_result = {"text_summary": long_text}
         result = format_text_summary(dom_result, context_size="large")
-        # Should be 1500 chars + "..."
-        assert len(result) == 1503
+        # Should be 3000 chars + "..."
+        assert len(result) == 3003
         assert result.endswith("...")
 
     def test_truncation_medium_context(self):
@@ -1383,33 +1383,33 @@ class TestFormatTextSummary:
 
     def test_exact_length_not_truncated(self):
         """format_text_summary does not truncate text at exact limit length."""
-        text_1500 = "a" * 1500
-        dom_result = {"text_summary": text_1500}
+        text_3000 = "a" * 3000
+        dom_result = {"text_summary": text_3000}
         result = format_text_summary(dom_result, context_size="large")
-        assert result == text_1500
+        assert result == text_3000
         assert "..." not in result
 
     def test_one_char_over_truncated(self):
         """format_text_summary truncates text one char over the limit."""
-        text_1501 = "a" * 1501
-        dom_result = {"text_summary": text_1501}
+        text_3001 = "a" * 3001
+        dom_result = {"text_summary": text_3001}
         result = format_text_summary(dom_result, context_size="large")
-        assert result == "a" * 1500 + "..."
+        assert result == "a" * 3000 + "..."
 
     def test_unknown_context_defaults_to_large(self):
         """format_text_summary with unknown context_size defaults to large."""
-        long_text = "b" * 2000
+        long_text = "b" * 4000
         dom_result = {"text_summary": long_text}
         result = format_text_summary(dom_result, context_size="unknown")
-        assert len(result) == 1503  # 1500 + "..."
+        assert len(result) == 3003  # 3000 + "..."
 
     def test_preserves_content_before_truncation(self):
         """format_text_summary preserves text content up to the limit."""
-        text = "Hello world! " * 200  # Long text with known content
+        text = "Hello world! " * 400  # Long text with known content
         dom_result = {"text_summary": text}
         result = format_text_summary(dom_result, context_size="large")
-        # First 1500 chars should match
-        assert result[:1500] == text[:1500]
+        # First 3000 chars should match
+        assert result[:3000] == text[:3000]
 
     def test_boolean_text_summary(self):
         """format_text_summary handles boolean text_summary."""

@@ -1096,8 +1096,9 @@ Example 3 - Task complete: {"thought":"I found and downloaded 3 papers as reques
 - Output ONLY valid JSON. No markdown, no explanation, no extra text.
 - Always include a "thought" field explaining your reasoning.
 - Check RECENT ACTIONS to avoid repeating failed actions. Try a different approach.
-- Never say "done" unless the goal is truly accomplished.
-- If stuck, scroll down, go back, or navigate to a search engine."""
+- If you already have the answer in the page content, say "done" immediately.
+- If you found MOST of the requested information but can't find the rest after several tries, report what you found rather than looping forever.
+- If stuck, try a different approach (navigate to a specific section, use search, go back)."""
 
         try:
             response = self.llm.generate(

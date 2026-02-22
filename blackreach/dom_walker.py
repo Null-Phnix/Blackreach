@@ -310,7 +310,7 @@ DOM_WALK_JS = """
 CONTEXT_PRESETS = {
     "small": {"maxElements": 100, "textSummaryLen": 500},    # Ollama local models
     "medium": {"maxElements": 150, "textSummaryLen": 1000},  # GPT-4o-mini, Haiku
-    "large": {"maxElements": 200, "textSummaryLen": 1500},   # GPT-4o, Sonnet, Opus
+    "large": {"maxElements": 200, "textSummaryLen": 3000},   # GPT-4o, Sonnet, Opus
 }
 
 
