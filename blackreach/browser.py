@@ -1020,7 +1020,11 @@ class Hand:
 
         # Fall back to generic challenge detection for other services
         for attempt in range(max_wait):
-            html = self.page.content()
+            try:
+                html = self.page.content()
+            except PlaywrightError:
+                time.sleep(1)
+                continue
             result = self._detector.detect_challenge(html)
 
             if not result.detected:
