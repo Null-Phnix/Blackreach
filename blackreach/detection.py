@@ -908,3 +908,84 @@ class SiteDetector:
             raise RateLimitError("site", retry_after=retry_after)
         elif top.condition == "access_denied":
             raise AccessDeniedError(url, status_code=status_code)
+
+    # Search engine block patterns
+    SEARCH_BLOCK_PATTERNS = [
+        # Google bot detection
+        r'unusual\s*traffic',
+        r'automated\s*queries',
+        r'systems\s*have\s*detected',
+        r'not\s*a\s*robot',
+        r'sorry.*automated',
+        # DuckDuckGo block
+        r'if\s*this\s*error\s*persists',
+        r'blocked',
+    ]
+
+    # Known search engine domains
+    SEARCH_ENGINE_DOMAINS = {
+        "google.com": "google",
+        "bing.com": "bing",
+        "duckduckgo.com": "duckduckgo",
+    }
+
+    def detect_search_block(self, html: str, url: str = "", status_code: int = None) -> DetectionResult:
+        """
+        Detect if a search engine is blocking us (bot detection).
+
+        Checks for:
+        - HTTP 418 (DuckDuckGo's bot response)
+        - Google "unusual traffic" / "automated queries" text
+        - Minimal content (<100 chars of text) on search engine URLs
+        """
+        # Only applies to search engine URLs
+        url_lower = url.lower()
+        engine_name = None
+        for domain, name in self.SEARCH_ENGINE_DOMAINS.items():
+            if domain in url_lower:
+                engine_name = name
+                break
+
+        if not engine_name:
+            return DetectionResult(detected=False)
+
+        indicators = []
+        confidence = 0.0
+
+        # HTTP 418 — DuckDuckGo's "I'm a teapot" bot response
+        if status_code == 418:
+            indicators.append(f"HTTP 418 on {engine_name}")
+            confidence += 0.9
+
+        # DuckDuckGo 418 error page URL (status_code may not be available)
+        if '/static-pages/418' in url_lower or '/418.html' in url_lower:
+            indicators.append("DDG 418 error page URL")
+            confidence += 0.9
+
+        # Google consent/sorry redirect pages
+        if 'google.com/sorry' in url_lower or 'consent.google' in url_lower:
+            indicators.append("Google sorry/consent redirect")
+            confidence += 0.9
+
+        # Check for block patterns in HTML
+        for pattern in self.SEARCH_BLOCK_PATTERNS:
+            if re.search(pattern, html, re.IGNORECASE):
+                indicators.append(f"Pattern: {pattern}")
+                confidence += 0.3
+
+        # Minimal content check — real search results have substantial text
+        text_content = _RE_HTML_TAGS.sub('', html).strip()
+        if len(text_content) < 100:
+            indicators.append(f"Minimal content ({len(text_content)} chars)")
+            confidence += 0.4
+
+        confidence = min(confidence, 1.0)
+        detected = confidence >= 0.5
+
+        return DetectionResult(
+            detected=detected,
+            condition="search_block" if detected else None,
+            confidence=confidence,
+            details=engine_name,
+            indicators=indicators
+        )

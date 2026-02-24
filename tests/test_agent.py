@@ -34,7 +34,7 @@ class TestAgentConfig:
     def test_default_start_url(self):
         """AgentConfig has default start URL."""
         config = AgentConfig()
-        assert config.start_url == "https://www.google.com"
+        assert config.start_url == "https://www.bing.com"
 
     def test_default_memory_db(self):
         """AgentConfig has default memory database."""
@@ -873,8 +873,9 @@ class TestGetSmartStartUrl:
 
         url, reasoning, _ = agent._get_smart_start_url("go to google.com", quiet=True)
 
-        assert url == "https://google.com"
-        assert "domain" in reasoning.lower()
+        # google.com is blocked in headless mode — redirects to Bing
+        assert "bing.com" in url
+        assert "blocked" in reasoning.lower() or "bing" in reasoning.lower()
 
     def test_extracts_bare_org_domain(self, tmp_path):
         """_get_smart_start_url extracts bare .org domains."""

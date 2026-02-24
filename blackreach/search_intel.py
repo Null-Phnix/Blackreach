@@ -21,6 +21,37 @@ class SearchEngine(Enum):
     SITE_SPECIFIC = "site_specific"  # Site's own search
 
 
+# Ordered fallback chain: Bing first (works in headless), then DDG, then Google.
+# Google and DuckDuckGo aggressively block headless Chromium.
+SEARCH_ENGINE_CHAIN = [SearchEngine.BING, SearchEngine.DUCKDUCKGO, SearchEngine.GOOGLE]
+DEFAULT_SEARCH_ENGINE = SEARCH_ENGINE_CHAIN[0]
+
+
+def get_search_fallback_url(query: str, exclude: list = None) -> tuple:
+    """Return (url, engine) using first non-excluded engine in chain.
+
+    Args:
+        query: The search query text.
+        exclude: List of SearchEngine values to skip (e.g. blocked engines).
+
+    Returns:
+        Tuple of (search_url, SearchEngine).
+    """
+    exclude = exclude or []
+    encoded = url_quote(query)
+    for engine in SEARCH_ENGINE_CHAIN:
+        if engine in exclude:
+            continue
+        if engine == SearchEngine.BING:
+            return (f"https://www.bing.com/search?q={encoded}", engine)
+        elif engine == SearchEngine.DUCKDUCKGO:
+            return (f"https://duckduckgo.com/?q={encoded}", engine)
+        elif engine == SearchEngine.GOOGLE:
+            return (f"https://www.google.com/search?q={encoded}", engine)
+    # Ultimate fallback — all engines excluded, use Bing anyway
+    return (f"https://www.bing.com/search?q={encoded}", SearchEngine.BING)
+
+
 @dataclass
 class SearchQuery:
     """Represents a search query with metadata."""
@@ -177,12 +208,11 @@ class QueryFormulator:
 
     def _choose_engine(self, content_type: str, extracted: Dict) -> SearchEngine:
         """Choose the best search engine for this query."""
-        # ISBN searches work better on Google
+        # ISBN searches work better on Google, but Google blocks headless
         if "isbn" in extracted:
-            return SearchEngine.GOOGLE
+            return DEFAULT_SEARCH_ENGINE
 
-        # Most content types work well with Google
-        return SearchEngine.GOOGLE
+        return DEFAULT_SEARCH_ENGINE
 
     def _get_modifiers(self, content_type: str, extracted: Dict) -> List[str]:
         """Get search modifiers for content type."""
@@ -384,7 +414,7 @@ class SearchIntelligence:
         elif query.engine == SearchEngine.BING:
             return f"https://www.bing.com/search?q={encoded_query}"
         else:
-            return f"https://www.google.com/search?q={encoded_query}"
+            return f"https://www.bing.com/search?q={encoded_query}"
 
     def start_session(self, query: SearchQuery) -> SearchSession:
         """Start a new search session."""

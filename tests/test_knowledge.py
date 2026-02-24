@@ -314,7 +314,7 @@ class TestReasonAboutGoalEdgeCases:
         with patch('blackreach.knowledge.find_best_sources', return_value=[]):
             result = reason_about_goal("xyz123")
             assert result["best_source"] is None
-            assert "google.com" in result["start_url"]
+            assert "bing.com" in result["start_url"]
 
 
 class TestSubjectExtractionEdgeCases:

@@ -41,7 +41,7 @@ from blackreach.source_manager import get_source_manager
 from blackreach.goal_engine import GoalDecomposition, get_goal_engine
 from blackreach.nav_context import PageValue, get_nav_context
 from blackreach.site_handlers import get_site_hints
-from blackreach.search_intel import get_search_intel
+from blackreach.search_intel import get_search_intel, get_search_fallback_url, SearchEngine
 from blackreach.content_verify import VerificationStatus, get_verifier
 from blackreach.retry_strategy import get_retry_manager
 from blackreach.timeout_manager import get_timeout_manager
@@ -106,7 +106,7 @@ class AgentConfig:
     max_steps: int = 50
     headless: bool = False
     download_dir: Path = field(default_factory=lambda: Path("./downloads"))
-    start_url: str = "https://www.google.com"  # Google is more flexible for searches
+    start_url: str = "https://www.bing.com"  # Bing works reliably in headless mode
     memory_db: Path = field(default_factory=lambda: Path("./memory.db"))
     browser_type: str = "chromium"  # chromium, firefox, or webkit
 
@@ -239,6 +239,9 @@ class Agent:
         self._consecutive_challenges = 0  # Track persistent challenge pages
         self._failed_urls = set()  # Specific URLs where challenges didn't resolve
         self._current_source = None  # Track current content source for failover
+
+        # Search engine block tracking — engines that have been detected as blocked
+        self._blocked_engines: set = set()  # Set of SearchEngine values
 
         # Callback error rate limiting
         self._callback_errors: Dict[str, int] = {}  # Track errors per event type
@@ -603,10 +606,50 @@ class Agent:
         }
 
         log(f"Navigating to: {start_url}")
-        self.hand.goto(start_url)
+        try:
+            self.hand.goto(start_url)
+        except (NavigationError, BrowserError, OSError) as e:
+            # If a search engine URL failed, try the next engine in the chain
+            failed_engine = self._identify_search_engine(start_url)
+            if failed_engine:
+                # Try URL query param first, fall back to goal's search query
+                query = self._extract_search_query(start_url) or search_query
+                if query:
+                    self._blocked_engines.add(failed_engine)
+                    log(f"  [{failed_engine.value} navigation failed: {e}]")
+                    fallback_url, fallback_engine = get_search_fallback_url(
+                        query, exclude=[failed_engine]
+                    )
+                    log(f"  [Failing over to {fallback_engine.value}: {fallback_url[:60]}]")
+                    self.hand.goto(fallback_url)
+                    start_url = fallback_url
+                else:
+                    raise
+            else:
+                raise
         self._record_visit(start_url)
 
         return self._run_loop(goal, start_step=1, quiet=quiet)
+
+    @staticmethod
+    def _identify_search_engine(url: str) -> Optional[SearchEngine]:
+        """Identify which search engine a URL belongs to, or None."""
+        url_lower = url.lower()
+        if "google.com" in url_lower:
+            return SearchEngine.GOOGLE
+        if "bing.com" in url_lower:
+            return SearchEngine.BING
+        if "duckduckgo.com" in url_lower:
+            return SearchEngine.DUCKDUCKGO
+        return None
+
+    @staticmethod
+    def _extract_search_query(url: str) -> str:
+        """Extract the search query string from a search engine URL."""
+        from urllib.parse import parse_qs
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+        return params.get("q", params.get("query", [""]))[0]
 
     def _get_smart_start_url(self, goal: str, quiet: bool = False) -> tuple:
         """
@@ -631,6 +674,22 @@ class Agent:
             # Common domains that users might mention
             if any(tld in domain for tld in ['.com', '.org', '.net', '.edu', '.gov', '.io', '.co']):
                 url = f"https://{domain}"
+                # If the domain is a blocked search engine, redirect to Bing
+                # and extract a search query from the rest of the goal
+                engine = self._identify_search_engine(url)
+                if engine and engine != SearchEngine.BING:
+                    self._blocked_engines.add(engine)
+                    # Try to extract a search query from the goal text
+                    # e.g. "Go to google.com, search for 'OpenAI GPT-4'" → "OpenAI GPT-4"
+                    quoted = RE_QUOTED_TEXT.findall(goal)
+                    if quoted:
+                        query = quoted[0]
+                        fallback_url, _ = get_search_fallback_url(query)
+                        log(f"   {engine.value.title()} blocked in headless → using Bing")
+                        return (fallback_url, f"{engine.value.title()} blocked, using Bing search", query)
+                    else:
+                        log(f"   {engine.value.title()} blocked in headless → using Bing")
+                        return ("https://www.bing.com", f"{engine.value.title()} blocked, using Bing", "")
                 return (url, f"Using domain specified in goal", "")
 
         # Use the knowledge base to reason about the best source
@@ -675,10 +734,10 @@ class Agent:
                         start_url = alt_url
                         break
                 else:
-                    # Fallback to Google search
-                    encoded = url_quote(result["search_query"])
-                    start_url = f"https://www.google.com/search?q={encoded}"
-                    log(f"   Falling back to Google search")
+                    # Fallback to search engine chain
+                    fallback_url, fallback_engine = get_search_fallback_url(result["search_query"])
+                    start_url = fallback_url
+                    log(f"   Falling back to {fallback_engine.value} search")
 
         return (
             start_url,
@@ -958,6 +1017,29 @@ class Agent:
             # Reset challenge counter when page loads normally
             self._consecutive_challenges = 0
 
+        # Check if a search engine is blocking us (bot detection)
+        blocked_engine = self._identify_search_engine(url)
+        if blocked_engine:
+            search_block = self.detector.detect_search_block(html, url)
+            if search_block.detected:
+                # Try URL query param first, fall back to goal reasoning
+                query = self._extract_search_query(url)
+                if not query or len(query) > 200:
+                    # Garbage redirect URL — use the goal's original search query
+                    query = getattr(self, '_goal_reasoning', {}).get('search_query', '')
+                if query:
+                    self._blocked_engines.add(blocked_engine)
+                    log(f"  [SEARCH BLOCKED by {search_block.details} - failing over]")
+                    fallback_url, fallback_engine = get_search_fallback_url(
+                        query, exclude=[blocked_engine]
+                    )
+                    log(f"  [Switching to {fallback_engine.value}: {fallback_url[:60]}]")
+                    self.hand.goto(fallback_url)
+                    # Re-fetch page state after failover
+                    html = self.hand.get_html()
+                    url = self.hand.get_url()
+                    title = self.hand.get_title()
+
         # Check for download landing pages (only for download-oriented goals)
         goal_lower_check = goal.lower()
         is_download_goal = any(word in goal_lower_check for word in [
@@ -1034,6 +1116,15 @@ class Agent:
             self._stuck_counter = 0
 
         domain = self._get_domain()
+
+        # Inform the LLM about blocked search engines so it uses Bing instead
+        if self._blocked_engines:
+            names = [e.value.title() for e in self._blocked_engines]
+            extra_context += (
+                f"\nBLOCKED SEARCH ENGINES: {', '.join(names)} are blocked in headless mode."
+                f" All searches are automatically redirected to Bing. Do NOT try to navigate"
+                f" to {', '.join(names)} — use the current search results on Bing instead."
+            )
 
         last_failure = self.session_memory.last_failure
         if last_failure:
@@ -1270,8 +1361,7 @@ Example 3 - Task complete: {"thought":"I found and downloaded 3 papers as reques
                         search_url = result["start_url"]
                         log(f"  [OVERRIDE: Using {result['best_source'].name} - {search_url}]")
                     else:
-                        encoded = url_quote(search_query)
-                        search_url = f"https://www.google.com/search?q={encoded}"
+                        search_url, _engine = get_search_fallback_url(search_query)
                         log(f"  [OVERRIDE: Forcing search - {search_url[:50]}]")
                 else:
                     # After many refusals, try alternate sources from knowledge base
@@ -1281,8 +1371,7 @@ Example 3 - Task complete: {"thought":"I found and downloaded 3 papers as reques
                         search_url = alt.url
                         log(f"  [ALTERNATE: Trying {alt.name} - {search_url}]")
                     else:
-                        encoded = url_quote(search_query)
-                        search_url = f"https://www.google.com/search?q={encoded}+free+download"
+                        search_url, _engine = get_search_fallback_url(f"{search_query} free download")
                         log(f"  [FALLBACK SEARCH: {search_url[:50]}]")
 
                 self.hand.goto(search_url)
@@ -1357,8 +1446,7 @@ Example 3 - Task complete: {"thought":"I found and downloaded 3 papers as reques
                     search_url = result["start_url"]
                     log(f"  [FALLBACK: Using {result['best_source'].name}]")
                 else:
-                    encoded = url_quote(result["search_query"])
-                    search_url = f"https://www.google.com/search?q={encoded}"
+                    search_url, _engine = get_search_fallback_url(result["search_query"])
                 self.hand.goto(search_url)
                 self._record_visit(search_url)
                 return {"done": False, "fallback": True, "reason": "Forced search on parse failure"}
@@ -1618,6 +1706,24 @@ Example 3 - Task complete: {"thought":"I found and downloaded 3 papers as reques
             # Resolve relative URLs to absolute
             if url and not url.startswith(('http://', 'https://')):
                 url = urljoin(current_url, url)
+
+            # Redirect blocked search engines before wasting time on timeouts.
+            # Also handles bare search engine homepages (no query param) — these
+            # time out on Google in headless mode.
+            target_engine = self._identify_search_engine(url)
+            if target_engine and target_engine != SearchEngine.BING:
+                query = self._extract_search_query(url)
+                if query:
+                    fallback_url, fallback_engine = get_search_fallback_url(
+                        query, exclude=[target_engine]
+                    )
+                    self._blocked_engines.add(target_engine)
+                    logger.debug("Redirecting %s search to %s", target_engine.value, fallback_engine.value)
+                    url = fallback_url
+                else:
+                    # Bare homepage (e.g. google.com with no query) — redirect to Bing homepage
+                    self._blocked_engines.add(target_engine)
+                    url = "https://www.bing.com"
 
             # Skip only if navigating to the exact same URL (normalized)
             # Compare without trailing slash and fragment
