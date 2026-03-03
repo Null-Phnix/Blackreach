@@ -522,7 +522,6 @@ class Hand:
             return False
 
         try:
-            # Try to get basic page info - if this fails, browser is unhealthy
             _ = self._page.url
             _ = self._page.title()
             self._consecutive_errors = 0
@@ -563,20 +562,17 @@ class Hand:
         """
         current_url = None
 
-        # Try to save current URL for navigation after restart
         if self.is_awake:
             try:
                 current_url = self._page.url
             except Exception as e:
                 logger.debug("Could not save current URL during restart: %s", e)
 
-        # Close existing browser
         try:
             self.sleep()
         except Exception as e:
             logger.warning("Failed to close browser during restart: %s", e)
 
-        # Start fresh browser
         try:
             self.wake()
 
@@ -633,8 +629,7 @@ class Hand:
             "--no-pings",
         ]
 
-        # Get proxy configuration (priority: rotator > direct proxy > stealth config)
-        proxy_config = self._get_proxy_config()
+        proxy_config = self._get_proxy_config()  # Priority: rotator > direct proxy > stealth config
 
         if self.browser_type == "firefox":
             # Firefox-specific launch options
@@ -660,7 +655,6 @@ class Hand:
                 downloads_path=str(self.download_dir)
             )
 
-        # Create context with randomized fingerprint
         viewport = self.stealth.get_random_viewport() if self.stealth.config.randomize_viewport else {"width": 1280, "height": 800}
         user_agent = self.stealth.get_random_user_agent() if self.stealth.config.randomize_user_agent else None
 
@@ -1631,7 +1625,6 @@ class Hand:
         raw_filename = unquote(parsed.path.split('/')[-1]) or 'downloaded_file'
         filename = _sanitize_filename(raw_filename)
 
-        # Add extension if missing based on content type
         base_path = self.download_dir / filename
         save_path = _reserve_unique_path(self.download_dir, base_path)
 
@@ -1641,8 +1634,27 @@ class Hand:
                 'User-Agent': self.stealth.get_random_user_agent()
             })
             with urllib.request.urlopen(req, timeout=30) as response:
-                with open(save_path, 'wb') as f:
-                    f.write(response.read())
+                content_type = response.headers.get('Content-Type', '')
+                data = response.read()
+
+            # Add extension based on Content-Type if filename has none
+            if not save_path.suffix:
+                ext = ''
+                if 'pdf' in content_type:
+                    ext = '.pdf'
+                elif 'zip' in content_type:
+                    ext = '.zip'
+                elif 'jpeg' in content_type or 'jpg' in content_type:
+                    ext = '.jpg'
+                elif 'png' in content_type:
+                    ext = '.png'
+                elif 'html' in content_type:
+                    ext = '.html'
+                if ext:
+                    save_path = _reserve_unique_path(self.download_dir, save_path.with_suffix(ext))
+
+            with open(save_path, 'wb') as f:
+                f.write(data)
         except urllib.error.HTTPError as e:
             save_path.unlink(missing_ok=True)
             raise DownloadError(url, reason=e.reason, status_code=e.code)

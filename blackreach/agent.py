@@ -181,7 +181,6 @@ class Agent:
         # Session management (v2.8.0+)
         self.session_manager = get_session_manager(self.config.memory_db)
 
-        # Load prompts
         self.prompts = self._load_prompts()
 
         # Cache for parsed page data (avoids re-parsing between observe and act)
@@ -508,7 +507,6 @@ class Agent:
         log(f"From step: {self._current_step}")
         log(f"{'='*60}\n")
 
-        # Start or ensure browser is ready (auto-starts if not initialized)
         log("Starting browser...")
         if not self.ensure_browser():
             log("ERROR: Failed to start browser")
@@ -557,7 +555,6 @@ class Agent:
         log(f"GOAL: {goal}")
         log(f"{'='*60}\n")
 
-        # Show memory stats from previous runs
         stats = self.persistent_memory.get_stats()
         if stats["total_sessions"] > 0:
             log(f"Memory: {stats['total_downloads']} downloads, "
@@ -579,7 +576,6 @@ class Agent:
         self._logger = SessionLogger(self.session_id, goal)
         self.config.download_dir.mkdir(parents=True, exist_ok=True)
 
-        # Start or ensure browser is ready (auto-starts if not initialized)
         log("Starting browser...")
         if not self.ensure_browser():
             log("ERROR: Failed to start browser")
@@ -595,10 +591,7 @@ class Agent:
                 "error": "Failed to start browser"
             }
 
-        # Use deep reasoning to determine the best starting point
         start_url, reasoning, search_query = self._get_smart_start_url(goal, quiet=quiet)
-
-        # Store reasoning for later use in prompts
         self._goal_reasoning = {
             "start_url": start_url,
             "reasoning": reasoning,
@@ -679,8 +672,6 @@ class Agent:
                 engine = self._identify_search_engine(url)
                 if engine and engine != SearchEngine.BING:
                     self._blocked_engines.add(engine)
-                    # Try to extract a search query from the goal text
-                    # e.g. "Go to google.com, search for 'OpenAI GPT-4'" → "OpenAI GPT-4"
                     quoted = RE_QUOTED_TEXT.findall(goal)
                     if quoted:
                         query = quoted[0]
@@ -692,17 +683,11 @@ class Agent:
                         return ("https://www.bing.com", f"{engine.value.title()} blocked, using Bing", "")
                 return (url, f"Using domain specified in goal", "")
 
-        # Use the knowledge base to reason about the best source
         result = reason_about_goal(goal)
-
-        # Use search intelligence for optimized query formulation
         content_type = result['content_types'][0] if result['content_types'] else ""
         search_query = self.search_intel.create_search(goal, content_type)
-
-        # Start a search session for learning
         self._current_search_session = self.search_intel.start_session(search_query)
 
-        # Log the reasoning
         log(f"\n🧠 REASONING:")
         log(f"   Content type: {', '.join(result['content_types'])}")
         log(f"   Subject: \"{result['subject']}\"")
@@ -713,7 +698,6 @@ class Agent:
             alts = [s.name for s in result["alternate_sources"][:2]]
             log(f"   Backups: {', '.join(alts)}")
 
-        # Check if primary URL is reachable, try mirrors if not
         start_url = result["start_url"]
         best_source = result.get("best_source")
 
@@ -764,6 +748,7 @@ class Agent:
 
         success = False
         paused = False
+        final_result_text = ""
 
         try:
             # Main ReAct loop
@@ -786,6 +771,7 @@ class Agent:
                 if result.get("done"):
                     log(f"\n✓ COMPLETE: {result.get('reason', 'Goal achieved')}")
                     success = True
+                    final_result_text = result.get("result") or ""
                     break
 
                 time.sleep(STEP_PAUSE_SECONDS)
@@ -798,7 +784,6 @@ class Agent:
             # IMPORTANT: Immediately release any stuck keyboard keys
             if self.hand:
                 self.hand._release_all_keys()
-            # Save state for potential resume
             self.persistent_memory.save_session_state(
                 session_id=self.session_id,
                 goal=goal,
@@ -813,12 +798,10 @@ class Agent:
             paused = True
 
         finally:
-            # Clean up
             log("\nClosing browser...")
             if self.hand:
                 self.hand.sleep()
 
-            # End or update the session in persistent memory
             if not paused:
                 self.persistent_memory.end_session(
                     self.session_id,
@@ -830,8 +813,6 @@ class Agent:
                 if success:
                     self.persistent_memory.delete_session_state(self.session_id)
             log(f"Session #{self.session_id} ended (success={success}, paused={paused})")
-
-            # Log session end
             if hasattr(self, '_logger'):
                 self._logger.session_end(
                     success=success,
@@ -844,6 +825,7 @@ class Agent:
             "goal": goal,
             "success": success,
             "paused": paused,
+            "result": final_result_text,
             "downloads": self.session_memory.downloaded_files,
             "pages_visited": len(self.session_memory.visited_urls),
             "steps_taken": len(self.session_memory.actions_taken),
@@ -926,7 +908,6 @@ class Agent:
                     self.stuck_detector.record_recovery_attempt(strategy)
 
             elif strategy == RecoveryStrategy.TRY_ALTERNATE_SOURCE:
-                # Find alternate source - handled by existing failover logic below
                 self.stuck_detector.record_recovery_attempt(strategy)
                 self._consecutive_challenges = 2  # Trigger failover logic
 
@@ -938,7 +919,6 @@ class Agent:
                 self.stuck_detector.soft_reset()
                 html = self.hand.get_html()
 
-        # Check for challenge/interstitial pages (reuse instance for performance)
         challenge = self.detector.detect_challenge(html)
         if challenge.detected:
             log(f"  [Challenge page detected: {challenge.details} - waiting...]")
@@ -955,7 +935,6 @@ class Agent:
             if not challenge_resolved:
                 self._consecutive_challenges += 1
                 current_url = self.hand.get_url()
-                # Extract base URL (scheme + domain) for comparison
                 parsed = urlparse(current_url)
                 base_url = f"{parsed.scheme}://{parsed.netloc}"
                 self._failed_urls.add(base_url)  # Track base URL (domain) not full path
@@ -969,10 +948,8 @@ class Agent:
                     failed_domain = urlparse(base_url).netloc
                     self.source_manager.record_failure(failed_domain, "challenge_blocked")
 
-                    # Use source manager for intelligent failover
                     goal = self._current_goal
                     if goal:
-                        # Try getting a failover from source manager first
                         failover = self.source_manager.get_failover(failed_domain, content_type="ebook")
                         if failover:
                             source, next_url = failover
@@ -981,13 +958,10 @@ class Agent:
                             self._consecutive_challenges = 0
                             html = self.hand.get_html()
                         else:
-                            # Fall back to original logic
                             sources = find_best_sources(goal, max_sources=8)
                             found_working = False
                             for source in sources:
-                                # Get all URLs for this source (primary + mirrors)
                                 all_urls = get_all_urls_for_source(source)
-                                # Filter out URLs we've already tried - compare base URLs
                                 available_urls = []
                                 for u in all_urls:
                                     u_parsed = urlparse(u)
@@ -997,13 +971,10 @@ class Agent:
 
                                 if not available_urls:
                                     continue  # All URLs for this source have failed
-
-                                # Try the first available URL
                                 next_url = available_urls[0]
                                 log(f"  [SWITCHING TO: {source.name} at {next_url}]")
                                 self.hand.goto(next_url)
                                 self._consecutive_challenges = 0
-                                # Re-fetch page state
                                 html = self.hand.get_html()
                                 found_working = True
                                 break
@@ -1014,10 +985,8 @@ class Agent:
             url = self.hand.get_url()
             title = self.hand.get_title()
         else:
-            # Reset challenge counter when page loads normally
             self._consecutive_challenges = 0
 
-        # Check if a search engine is blocking us (bot detection)
         blocked_engine = self._identify_search_engine(url)
         if blocked_engine:
             search_block = self.detector.detect_search_block(html, url)
@@ -1035,12 +1004,10 @@ class Agent:
                     )
                     log(f"  [Switching to {fallback_engine.value}: {fallback_url[:60]}]")
                     self.hand.goto(fallback_url)
-                    # Re-fetch page state after failover
                     html = self.hand.get_html()
                     url = self.hand.get_url()
                     title = self.hand.get_title()
 
-        # Check for download landing pages (only for download-oriented goals)
         goal_lower_check = goal.lower()
         is_download_goal = any(word in goal_lower_check for word in [
             'download', 'fetch', 'save', 'epub', 'pdf', 'wallpaper',
@@ -1171,7 +1138,7 @@ You also receive a text summary of visible page content. READ BOTH CAREFULLY bef
 - download: Download a file by URL. {"action":"download","args":{"url":"https://..."}}
 - scroll: Scroll to reveal more. {"action":"scroll","args":{"direction":"down"}}
 - back: Go to previous page. {"action":"back"}
-- done: Task complete. {"action":"done","args":{"reason":"what was accomplished"}}
+- done: Task complete. {"action":"done","args":{"reason":"brief summary","result":"full output text here - include ALL gathered content, summaries, lists, findings etc."}}
 
 ## When to Navigate vs Click
 - Use "navigate" when you know the exact URL (e.g., from a link's href or a known site).
@@ -1180,7 +1147,8 @@ You also receive a text summary of visible page content. READ BOTH CAREFULLY bef
 ## Examples
 Example 1 - Searching: {"thought":"I need to search for machine learning papers","action":"type","element":3,"text":"machine learning papers","submit":true}
 Example 2 - Clicking a link: {"thought":"Element [15] links to the download page I need","action":"click","element":15}
-Example 3 - Task complete: {"thought":"I found and downloaded 3 papers as requested","action":"done","args":{"reason":"Downloaded 3 papers from arxiv"}}
+Example 3 - Task complete: {"thought":"I found and downloaded 3 papers as requested","action":"done","args":{"reason":"Downloaded 3 papers from arxiv","result":"Downloaded: 1) Attention Is All You Need (1706.03762) 2) BERT (1810.04805) 3) GPT-3 (2005.14165)"}}
+Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can now summarize","action":"done","args":{"reason":"Summarized top 3 AI stories","result":"**Story 1: Meta AI Glasses**\nDiscussion focuses on privacy concerns...\n\n**Story 2: Voice Agent**\nEngineers debate latency tradeoffs..."}}
 
 ## Rules
 - READ the page content and element list CAREFULLY before deciding your action.
@@ -1412,7 +1380,7 @@ Example 3 - Task complete: {"thought":"I found and downloaded 3 papers as reques
             else:
                 if hasattr(self, '_logger'):
                     self._logger.act(step_num, "done", {"reason": reason}, success=True)
-                return {"done": True, "reason": reason}
+                return {"done": True, "reason": reason, "result": args.get("result", "")}
 
         # Auto-completion check for download goals
         download_count = len(self.session_memory.downloaded_files)

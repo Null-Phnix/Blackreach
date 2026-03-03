@@ -218,7 +218,7 @@ class LRUCache(Generic[T]):
                 if not entry.is_expired()
             }
             self.config.persist_path.write_text(json.dumps(data))
-        except Exception as e:
+        except (OSError, TypeError, ValueError) as e:
             logger.debug("Failed to save cache to disk: %s", e)
 
     def _load_from_disk(self):
@@ -239,7 +239,7 @@ class LRUCache(Generic[T]):
                 )
                 if not entry.is_expired():
                     self._cache[key] = entry
-        except Exception as e:
+        except (OSError, ValueError, KeyError) as e:
             logger.debug("Failed to load cache from disk: %s", e)
 
 

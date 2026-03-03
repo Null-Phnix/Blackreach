@@ -231,7 +231,6 @@ def cli(ctx):
       blackreach setup                        First-time setup
       blackreach doctor                       Check system health
     """
-    # Check for first run
     if is_first_run() and ctx.invoked_subcommand is None:
         run_first_time_setup()
         return
@@ -266,7 +265,6 @@ def run(goal: str, provider: str, model: str, headless: bool, browser: str, step
 
     config = config_manager.load()
 
-    # Use provided values or defaults
     provider = provider or config.default_provider
     model = model or getattr(config, provider).default_model
     headless = headless if headless is not None else config.headless
@@ -301,7 +299,6 @@ def run(goal: str, provider: str, model: str, headless: bool, browser: str, step
         console.print(f"  2. Set the environment variable: [cyan]export {env_var}=\"your-key-here\"[/cyan]")
         sys.exit(1)
 
-    # Handle resume
     if resume:
         console.print(Panel(
             f"[bold]Resuming Session:[/bold] #{resume}\n"
@@ -328,8 +325,6 @@ def run(goal: str, provider: str, model: str, headless: bool, browser: str, step
             agent = Agent(llm_config=llm_config, agent_config=agent_config)
             _active_agent = agent
             result = agent.resume(resume)
-
-            # Show results
             _show_results(result)
 
         except SessionNotFoundError as e:
@@ -383,8 +378,6 @@ def run(goal: str, provider: str, model: str, headless: bool, browser: str, step
         agent = Agent(llm_config=llm_config, agent_config=agent_config)
         _active_agent = agent
         result = agent.run(goal)
-
-        # Show results
         _show_results(result)
 
     except KeyboardInterrupt:
@@ -404,6 +397,17 @@ def _show_results(result: dict):
         status = "[bold blue]Paused[/bold blue]"
 
     console.print("\n")
+
+    # Show result text if the agent produced one (research/summarization tasks)
+    result_text = result.get('result') or result.get('output') or result.get('summary')
+    if result_text and isinstance(result_text, str) and result_text.strip():
+        console.print(Panel(
+            result_text.strip(),
+            title="[bold cyan]Result[/bold cyan]",
+            border_style="cyan"
+        ))
+        console.print("\n")
+
     console.print(Panel(
         f"[bold]Status:[/bold] {status}\n"
         f"[bold]Downloads:[/bold] {len(result.get('downloads', []))}\n"
@@ -466,8 +470,6 @@ def config():
     console.print("\n[bold]Configuration Setup[/bold]\n")
 
     cfg = config_manager.load()
-
-    # Show current config
     table = Table(title="Current Configuration")
     table.add_column("Setting", style="cyan")
     table.add_column("Value", style="green")
@@ -581,7 +583,6 @@ def status():
     provider = config.default_provider
     model = getattr(config, provider).default_model
 
-    # Get memory stats
     try:
         from blackreach.memory import PersistentMemory
         mem = PersistentMemory(Path("./memory.db"))
@@ -610,7 +611,6 @@ def setup(reset: bool):
     """Run the setup wizard."""
     if reset:
         if Confirm.ask("[yellow]This will reset all settings. Continue?[/yellow]", default=False):
-            # Remove config file
             if CONFIG_FILE.exists():
                 CONFIG_FILE.unlink()
             console.print("[green]Settings reset.[/green]\n")
@@ -649,7 +649,6 @@ def update(force: bool):
     console.print(f"[dim]Project root: {project_root}[/dim]")
     console.print(f"[cyan]Current version:[/cyan] {__version__}\n")
 
-    # Check if git repo and pull latest
     git_dir = project_root / ".git"
     if git_dir.exists():
         console.print("[yellow]Pulling latest changes...[/yellow]")
@@ -693,7 +692,6 @@ def update(force: bool):
         console.print(f"[red]Install failed: {e}[/red]")
         return
 
-    # Show success and instructions
     console.print("\n[bold green]Update complete![/bold green]")
     console.print("\n[yellow]To use the new version, run:[/yellow]")
     console.print("  [cyan]hash -r[/cyan]  (clear shell cache)")
@@ -709,8 +707,6 @@ def validate(fix: bool):
 
     config = config_manager.load()
     result = validate_config(config)
-
-    # Show current config summary
     table = Table(title="Current Configuration")
     table.add_column("Setting", style="cyan")
     table.add_column("Value")
@@ -971,29 +967,23 @@ def doctor():
 
     checks = []
 
-    # Check Python version
     import platform
     py_version = platform.python_version()
     py_ok = tuple(map(int, py_version.split('.')[:2])) >= (3, 10)
     checks.append(("Python >= 3.10", py_ok, py_version))
 
-    # Check Playwright
     pw_installed = shutil.which("playwright") is not None
     checks.append(("Playwright CLI", pw_installed, "installed" if pw_installed else "not found"))
 
-    # Check Playwright browsers
     browser_ok = check_playwright_browsers() if pw_installed else False
     checks.append(("Chromium browser", browser_ok, "installed" if browser_ok else "not installed"))
 
-    # Check Ollama
     ollama_ok = check_ollama_running()
     checks.append(("Ollama running", ollama_ok, "running" if ollama_ok else "not running"))
 
-    # Check config
     config_ok = CONFIG_FILE.exists()
     checks.append(("Config file", config_ok, str(CONFIG_FILE) if config_ok else "not created"))
 
-    # Display results
     table = Table(title="System Status")
     table.add_column("Check", style="cyan")
     table.add_column("Status")
@@ -1344,7 +1334,6 @@ def logs(limit: int, session_id: int):
     console.print("[bold]Session Logs[/bold]\n")
 
     if session_id:
-        # Find and show specific session log
         if LOG_DIR.exists():
             matching = list(LOG_DIR.glob(f"session_{session_id}_*.jsonl"))
             if matching:
@@ -1396,8 +1385,7 @@ def logs(limit: int, session_id: int):
     table.add_column("Status")
 
     for log_file in log_files:
-        # Parse session ID from filename (session_ID_TIMESTAMP.jsonl)
-        parts = log_file.stem.split("_")
+        parts = log_file.stem.split("_")  # session_ID_TIMESTAMP.jsonl
         sid = parts[1] if len(parts) > 1 else "?"
         timestamp = parts[2] if len(parts) > 2 else ""
 
@@ -1411,13 +1399,11 @@ def logs(limit: int, session_id: int):
         else:
             date_str = "-"
 
-        # Read log to get summary
         entries = read_log(log_file)
         event_count = len(entries)
 
-        # Check for success/failure
-        has_error = any(e.get("level") == "ERROR" for e in entries)
         has_end = any(e.get("event") == "session_end" for e in entries)
+        has_error = any(e.get("level") == "ERROR" for e in entries)
 
         if has_end:
             end_entry = next((e for e in entries if e.get("event") == "session_end"), {})
@@ -1442,15 +1428,12 @@ def interactive_mode():
     from blackreach.llm import LLMConfig
     from blackreach import ui
 
-    # Print banner
     ui.print_banner()
 
-    # Load config
     cfg = config_manager.load()
     provider = cfg.default_provider
     model = getattr(cfg, provider).default_model
 
-    # Get memory stats
     try:
         from blackreach.memory import PersistentMemory
         mem = PersistentMemory(Path("./memory.db"))
@@ -1459,10 +1442,7 @@ def interactive_mode():
     except Exception:  # Best-effort stats display
         stats = {"total_sessions": 0, "total_downloads": 0}
 
-    # Welcome message
     ui.print_welcome(provider, model)
-
-    # Create interactive prompt with history
     prompt = ui.InteractivePrompt()
 
     # Main loop
