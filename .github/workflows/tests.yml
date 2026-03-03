@@ -8,11 +8,9 @@ on:
 
 jobs:
   test:
-    name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
 
     strategy:
-      fail-fast: false
       matrix:
         python-version: ["3.11", "3.13"]
 
@@ -24,18 +22,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
 
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgbm-dev
+        run: sudo apt-get update && sudo apt-get install -y libgbm-dev
 
-      - name: Install pytest-timeout
-        run: pip install pytest-timeout
+      # If you use requirements.txt, uncomment this and comment out the next pip install step
+      # - name: Install Python dependencies
+      #   run: pip install -r requirements.txt
 
-      - name: Install package with dev extras
-        run: pip install -e ".[dev]"
+      - name: Install package with dev extras and cryptography
+        run: pip install -e ".[dev]" cryptography
 
       - name: Install Playwright browser
         run: playwright install chromium
