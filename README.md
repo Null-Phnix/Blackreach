@@ -24,8 +24,6 @@ blackreach run "find and download papers about machine learning from arxiv"
 
 ## How It Works
 
-[!Demo Video] (assests/demo.gif) 
-
 Blackreach uses a **DOM walker** approach to let the LLM interact with web pages:
 
 1. **Observe**: The DOM walker (`dom_walker.py`) runs JavaScript in the live browser to find all interactive elements (links, buttons, inputs, etc.) and assigns each a numeric `[N]` ID.
