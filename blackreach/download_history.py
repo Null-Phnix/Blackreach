@@ -13,10 +13,13 @@ from typing import Dict, List, Optional, Set, Tuple
 from datetime import datetime
 from pathlib import Path
 from enum import Enum
+import logging
 import sqlite3
 import json
 import hashlib
 import threading
+
+logger = logging.getLogger(__name__)
 
 
 class DownloadSource(Enum):
@@ -438,7 +441,8 @@ class DownloadHistory:
                     metadata=entry.get("metadata", {})
                 )
                 count += 1
-            except Exception:
+            except (KeyError, ValueError, sqlite3.DatabaseError) as e:
+                logger.debug("Skipping invalid history entry during import: %s", e)
                 continue
 
         return count

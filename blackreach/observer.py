@@ -108,7 +108,7 @@ class Eyes:
         # Falls back to html.parser if lxml is not installed
         try:
             soup = BeautifulSoup(html, 'lxml')
-        except Exception as e:
+        except ValueError as e:
             logger.debug("lxml parser unavailable, falling back to html.parser: %s", e)
             soup = BeautifulSoup(html, 'html.parser')
 
@@ -156,7 +156,7 @@ class Eyes:
         # P0-PERF: Use lxml for faster parsing
         try:
             soup = BeautifulSoup(html, 'lxml')
-        except Exception as e:
+        except ValueError as e:
             logger.debug("lxml parser unavailable in debug_html, falling back to html.parser: %s", e)
             soup = BeautifulSoup(html, 'html.parser')
 
