@@ -59,7 +59,7 @@ class Config:
         default_model="gpt-4o-mini"
     ))
     anthropic: ProviderConfig = field(default_factory=lambda: ProviderConfig(
-        default_model="claude-3-5-sonnet-20241022"
+        default_model="claude-sonnet-4-6"
     ))
     google: ProviderConfig = field(default_factory=lambda: ProviderConfig(
         default_model="gemini-2.5-flash"
@@ -98,15 +98,19 @@ AVAILABLE_MODELS = {
         "gpt-3.5-turbo",
     ],
     "anthropic": [
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
+        "claude-haiku-4-5-20251001",
         "claude-3-5-sonnet-20241022",
         "claude-3-5-haiku-20241022",
-        "claude-3-opus-20240229",
     ],
     "google": [
+        "gemini-3.1-pro-preview",
+        "gemini-3-pro-preview",
+        "gemini-3-flash-preview",
         "gemini-2.5-pro",
         "gemini-2.5-flash",
         "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
     ],
     "xai": [
         "grok-4-1-fast-reasoning",

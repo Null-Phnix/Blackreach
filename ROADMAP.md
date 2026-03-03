@@ -1,7 +1,7 @@
-# Blackreach Roadmap: Alpha → Beta
+# Blackreach Roadmap: Beta → 1.0
 
-**Current Version:** 0.3.0 (Beta)
-**Status:** Beta Complete
+**Current Version:** 5.0.0-beta.1
+**Status:** Beta — Launch Ready
 
 ---
 
@@ -134,7 +134,7 @@ A Beta release means:
 | 5. Reliability | ✅ 100% | General-purpose agent |
 | 6. Config | 🔶 70% | Basic config done |
 
-**Overall Progress: ~95% Beta Complete**
+**Overall Progress: 100% Beta Complete — v5.0.0-beta.1 launched**
 
 ---
 
@@ -150,27 +150,39 @@ A Beta release means:
 | exceptions.py | 56 |
 | detection.py | 38 |
 | resilience.py | 28 |
-| **Total** | **297** |
+| + additional modules | 2571+ |
+| **Total** | **2868+** |
 
 ---
 
-## Session Log
+## Post-Launch / Community
 
-| Session | Date | Tasks Completed | Notes |
-|---------|------|-----------------|-------|
-| 1 | 2026-01-22 | Package A (Tests + Errors) | 284 tests, Milestones 1 & 3 |
-| 2 | 2026-01-22 | Package B + C | Session resume, reliability, docs |
+These milestones target the period after the v5.0.0-beta.1 public release.
 
----
+### Milestone 7: PyPI Release (v1.0.0)
+- [ ] 7.1 Finalize pyproject.toml classifiers and metadata
+- [ ] 7.2 Build and publish to PyPI (`pip install blackreach`)
+- [ ] 7.3 Add `blackreach[all]` extras bundle
+- [ ] 7.4 Create GitHub Release with CHANGELOG excerpt
 
-## Next Steps (Post-Beta)
+### Milestone 8: Community Infrastructure
+- [x] 8.1 CONTRIBUTING.md with dev setup guide
+- [x] 8.2 GitHub Actions CI (Python 3.11 + 3.13, ubuntu-latest)
+- [x] 8.3 Bug report and feature request issue templates
+- [x] 8.4 Pull request template
+- [x] 8.5 CHANGELOG.md following Keep a Changelog format
+- [ ] 8.6 Community Discord or Discussions tab
+- [ ] 8.7 Code of Conduct enforcement process
 
-1. **v1.0 Release**: Package for PyPI
-2. **Advanced Features**:
-   - Per-site configuration
-   - Parallel downloads
-   - Browser extension
-3. **Community**:
-   - CONTRIBUTING.md
-   - GitHub Actions CI
-   - Issue templates
+### Milestone 9: Advanced Features
+- [ ] 9.1 Per-site configuration profiles in `~/.blackreach/sites/`
+- [ ] 9.2 Parallel download pipelines (multiple files concurrently)
+- [ ] 9.3 Scheduled runs (`blackreach schedule "..." --cron "0 9 * * *"`)
+- [ ] 9.4 Browser extension companion for manual assist
+- [ ] 9.5 REST API server mode (`blackreach serve`)
+
+### Milestone 10: Ecosystem
+- [ ] 10.1 Plugin system for custom site handlers
+- [ ] 10.2 MCP server integration for Claude Desktop
+- [ ] 10.3 Docker image for headless deployments
+- [ ] 10.4 Benchmark suite comparing providers on standard task set

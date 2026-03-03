@@ -335,7 +335,7 @@ def get_site_characteristics(url: str) -> SiteCharacteristics:
             content_wait_timeout=8000,
             description="Unknown site - using default timeouts"
         )
-    except Exception:
+    except ValueError:
         return SiteCharacteristics(
             site_type=SiteType.UNKNOWN,
             description="Could not parse URL"
