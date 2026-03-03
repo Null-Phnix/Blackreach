@@ -2,6 +2,8 @@
 
 **Autonomous Browser Agent** - Give it a goal, watch it browse.
 
+![Blackreach Demo](assets/demo.gif)
+
 Blackreach is a CLI tool that uses AI to autonomously browse the web and accomplish tasks. It can navigate websites, search for content, download files (PDFs, images, datasets, etc.), and more.
 
 ```bash
