@@ -31,6 +31,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgbm-dev
 
+      - name: Install pytest-timeout
+        run: pip install pytest-timeout
+
       - name: Install package with dev extras
         run: pip install -e ".[dev]"
 
