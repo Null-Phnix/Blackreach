@@ -1,5 +1,9 @@
 # Blackreach
 
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![Version](https://img.shields.io/badge/version-5.0.0--beta.1-orange.svg)](https://github.com/Null-Phnix/Blackreach)
+
 **Autonomous Browser Agent** - Give it a goal, watch it browse.
 
 ![Blackreach Demo](assets/demo.gif)
@@ -56,7 +60,7 @@ pip install "blackreach[all]"
 ### From Source
 
 ```bash
-git clone https://github.com/phnix/blackreach
+git clone https://github.com/Null-Phnix/Blackreach
 cd blackreach
 pip install -e .
 ```
@@ -142,7 +146,7 @@ In interactive mode, use these slash commands:
 | **Ollama** | Local | qwen2.5:7b, llama3.2:3b, mistral:7b |
 | **xAI** | Cloud | grok-2, grok-2-mini |
 | **OpenAI** | Cloud | gpt-4o, gpt-4o-mini |
-| **Anthropic** | Cloud | claude-3.5-sonnet, claude-3-opus |
+| **Anthropic** | Cloud | claude-sonnet-4-6, claude-haiku-4-5 |
 | **Google** | Cloud | gemini-2.5-pro, gemini-2.5-flash |
 
 ### Using Ollama (Local, Free, Private)

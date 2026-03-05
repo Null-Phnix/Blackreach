@@ -64,10 +64,10 @@ dev = [
 blackreach = "blackreach.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/phnix/blackreach"
-Documentation = "https://github.com/phnix/blackreach#readme"
-Repository = "https://github.com/phnix/blackreach"
-Issues = "https://github.com/phnix/blackreach/issues"
+Homepage = "https://github.com/Null-Phnix/Blackreach"
+Documentation = "https://github.com/Null-Phnix/Blackreach#readme"
+Repository = "https://github.com/Null-Phnix/Blackreach"
+Issues = "https://github.com/Null-Phnix/Blackreach/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
