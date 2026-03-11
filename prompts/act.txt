@@ -1,0 +1,37 @@
+Based on your reasoning: {thought}
+
+OUTPUT ONLY VALID JSON. No text before or after. No markdown code blocks.
+
+ACTIONS (pick exactly one):
+
+1. CLICK an element by its [N] ID:
+{{"action": "click", "element": 15}}
+
+2. TYPE into an input element by its [N] ID (use submit:true to press Enter):
+{{"action": "type", "element": 3, "text": "search query", "submit": true}}
+
+3. NAVIGATE directly to a URL (use for known URLs, not page elements):
+{{"action": "navigate", "args": {{"url": "https://example.com"}}}}
+
+4. DOWNLOAD a file by URL:
+{{"action": "download", "args": {{"url": "https://example.com/file.pdf"}}}}
+
+5. SCROLL the page:
+{{"action": "scroll", "args": {{"direction": "down"}}}}
+
+6. GO BACK:
+{{"action": "back"}}
+
+7. TASK COMPLETE:
+{{"action": "done", "args": {{"reason": "Downloaded 5 files successfully"}}}}
+
+INTERACTIVE ELEMENTS ON PAGE:
+{elements}
+
+RULES:
+- Reference elements by their [N] ID number for click and type actions.
+- Use navigate for known URLs; use click for on-page elements.
+- If a previous click failed, try navigate to the element's URL instead.
+- Always include a "thought" field with your reasoning.
+
+JSON:

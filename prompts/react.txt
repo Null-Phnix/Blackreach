@@ -1,0 +1,47 @@
+== GOAL ==
+{goal}
+
+== CURRENT PAGE ==
+Title: {title}
+URL: {url}
+Downloads so far: {download_count}
+{extra_context}
+
+== PAGE TEXT CONTENT ==
+{text_summary}
+
+== INTERACTIVE ELEMENTS (reference by [N] ID) ==
+{elements}
+
+== RECENT ACTIONS (check these to avoid repeating failures) ==
+{action_history}
+
+== AVAILABLE ACTIONS ==
+- click: Click an element by its [N] ID
+  {{"thought":"...","action":"click","element":N}}
+
+- type: Type text into an input, optionally press Enter
+  {{"thought":"...","action":"type","element":N,"text":"query","submit":true}}
+
+- scroll: Scroll the page to reveal more content
+  {{"thought":"...","action":"scroll","args":{{"direction":"down"}}}}
+
+- navigate: Go directly to a known URL
+  {{"thought":"...","action":"navigate","args":{{"url":"https://..."}}}}
+
+- download: Download a file from a URL
+  {{"thought":"...","action":"download","args":{{"url":"https://..."}}}}
+
+- back: Go back to the previous page
+  {{"thought":"...","action":"back"}}
+
+- done: Mark the goal as complete
+  {{"thought":"...","action":"done","args":{{"reason":"what was accomplished"}}}}
+
+== INSTRUCTIONS ==
+1. Read the page content and element list above carefully.
+2. Check RECENT ACTIONS: do NOT repeat an action that already failed.
+3. Reference specific element [N] IDs when clicking or typing.
+4. Output ONLY a single JSON object. No markdown, no commentary.
+
+{{"thought":"your reasoning","action":"ACTION_NAME","element":N,"args":{{...}}}}
