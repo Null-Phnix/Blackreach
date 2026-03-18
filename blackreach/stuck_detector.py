@@ -98,7 +98,7 @@ class StuckDetector:
 
     # Detection thresholds
     URL_REPEAT_THRESHOLD = 5        # Same URL visited N times = stuck
-    CONTENT_REPEAT_THRESHOLD = 3    # Same content seen N times = stuck
+    CONTENT_REPEAT_THRESHOLD = 4    # Same content seen N times = stuck
     ACTION_REPEAT_THRESHOLD = 5     # Same action on same element repeated N times = stuck
     NO_PROGRESS_STEPS = 10          # No downloads for N steps = concern
     HISTORY_SIZE = 50               # Number of observations to keep
@@ -347,19 +347,44 @@ class StuckDetector:
         """
         Suggest a recovery strategy based on the stuck state.
 
-        Returns (strategy, explanation)
+        Returns (strategy, explanation).
+
+        Escalation logic: after repeated failed recoveries, forces more
+        aggressive strategies (alternate source, then give up) instead of
+        cycling through the same ineffective ones.
         """
         state = self.check()
 
         if not state.is_stuck:
             return (RecoveryStrategy.WAIT_AND_RETRY, "Not stuck, continue normally")
 
+        # Escalation: if total recovery attempts are high, force aggressive action
+        total_attempts = sum(self._recovery_attempts.values())
+        if total_attempts >= 12:
+            return (RecoveryStrategy.GIVE_UP, f"Escalating: {total_attempts} failed recoveries, giving up on this approach")
+        if total_attempts >= 8:
+            return (RecoveryStrategy.TRY_ALTERNATE_SOURCE, f"Escalating: {total_attempts} failed recoveries, switching source")
+
         # Track recovery attempts to avoid repeating failed strategies
+        # Only consider strategies that the agent actually handles
+        HANDLED_STRATEGIES = {
+            RecoveryStrategy.GO_BACK,
+            RecoveryStrategy.TRY_ALTERNATE_SOURCE,
+            RecoveryStrategy.SCROLL_AND_EXPLORE,
+            RecoveryStrategy.WAIT_AND_RETRY,
+            RecoveryStrategy.GIVE_UP,
+        }
+
         def get_best_strategy(strategies: List[RecoveryStrategy]) -> RecoveryStrategy:
-            """Get the strategy with fewest attempts."""
+            """Get the handled strategy with fewest attempts."""
+            # Filter to only strategies the agent can actually execute
+            actionable = [s for s in strategies if s in HANDLED_STRATEGIES]
+            if not actionable:
+                return RecoveryStrategy.TRY_ALTERNATE_SOURCE
+
             min_attempts = float('inf')
-            best = strategies[0]
-            for s in strategies:
+            best = actionable[0]
+            for s in actionable:
                 attempts = self._recovery_attempts.get(s, 0)
                 if attempts < min_attempts:
                     min_attempts = attempts
@@ -370,7 +395,7 @@ class StuckDetector:
             strategies = [
                 RecoveryStrategy.GO_BACK,
                 RecoveryStrategy.TRY_ALTERNATE_SOURCE,
-                RecoveryStrategy.REFORMULATE_SEARCH
+                RecoveryStrategy.SCROLL_AND_EXPLORE
             ]
             strategy = get_best_strategy(strategies)
             return (strategy, f"URL loop detected: {state.details}")
@@ -378,8 +403,8 @@ class StuckDetector:
         elif state.reason == StuckReason.CONTENT_LOOP:
             strategies = [
                 RecoveryStrategy.TRY_ALTERNATE_SOURCE,
-                RecoveryStrategy.REFORMULATE_SEARCH,
-                RecoveryStrategy.GO_BACK
+                RecoveryStrategy.GO_BACK,
+                RecoveryStrategy.SCROLL_AND_EXPLORE
             ]
             strategy = get_best_strategy(strategies)
             return (strategy, f"Content loop: {state.details}")
@@ -396,8 +421,8 @@ class StuckDetector:
         elif state.reason == StuckReason.NO_PROGRESS:
             strategies = [
                 RecoveryStrategy.TRY_ALTERNATE_SOURCE,
-                RecoveryStrategy.REFORMULATE_SEARCH,
-                RecoveryStrategy.SCROLL_AND_EXPLORE
+                RecoveryStrategy.SCROLL_AND_EXPLORE,
+                RecoveryStrategy.GO_BACK
             ]
             strategy = get_best_strategy(strategies)
             return (strategy, f"No progress: {state.details}")
@@ -406,7 +431,6 @@ class StuckDetector:
             strategies = [
                 RecoveryStrategy.TRY_ALTERNATE_SOURCE,
                 RecoveryStrategy.WAIT_AND_RETRY,
-                RecoveryStrategy.SWITCH_BROWSER
             ]
             strategy = get_best_strategy(strategies)
             return (strategy, f"Blocked by challenge: {state.details}")
@@ -444,13 +468,26 @@ class StuckDetector:
         # Keep breadcrumbs for continued backtracking
         # Keep observations for learning
 
-    def soft_reset(self) -> None:
-        """Partial reset - reduce counts instead of clearing."""
-        # Halve all counts instead of clearing
-        for url in self._url_counts:
-            self._url_counts[url] = self._url_counts[url] // 2
-        for content_hash in self._content_counts:
-            self._content_counts[content_hash] = self._content_counts[content_hash] // 2
+    def soft_reset(self, recovered_url: str = None) -> None:
+        """Partial reset after a recovery action.
+
+        Only reduces counts for the specific URL/content that was recovered
+        from, not all of them. This prevents the detector from losing track
+        of how long the agent has been fundamentally stuck.
+        """
+        if recovered_url:
+            normalized = self._normalize_url(recovered_url)
+            if normalized in self._url_counts:
+                self._url_counts[normalized] = max(0, self._url_counts[normalized] - 2)
+        else:
+            # If no specific URL, reduce the highest counts only
+            if self._url_counts:
+                worst_url = max(self._url_counts, key=self._url_counts.get)
+                self._url_counts[worst_url] = max(0, self._url_counts[worst_url] - 2)
+            if self._content_counts:
+                worst_hash = max(self._content_counts, key=self._content_counts.get)
+                self._content_counts[worst_hash] = max(0, self._content_counts[worst_hash] - 2)
+
         # Keep recent actions, trim older ones
         if len(self._action_sequence) > 10:
             self._action_sequence = self._action_sequence[-10:]
@@ -499,7 +536,11 @@ def compute_content_hash(html: str) -> str:
     text = _RE_HTML_TAGS.sub(' ', cleaned)
     text = ' '.join(text.split())  # Normalize whitespace
 
-    # Hash based on content length and key terms
+    # Hash based on content length, multiple content samples, and link count
     # Using blake2b (faster than MD5) with 8-byte digest (16 hex chars)
-    content_sig = f"{len(text)}:{text[:500]}:{text[-500:]}"
+    # Sample from start, middle, and end to catch pages where results load below the fold
+    mid = len(text) // 2
+    mid_sample = text[mid:mid+500] if mid > 0 else ""
+    link_count = html.lower().count('<a ')
+    content_sig = f"{len(text)}:{link_count}:{text[:500]}:{mid_sample}:{text[-500:]}"
     return hashlib.blake2b(content_sig.encode(), digest_size=8).hexdigest()

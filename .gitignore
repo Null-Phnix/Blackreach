@@ -37,6 +37,10 @@ memory.db
 downloads/
 *.log
 
+# StarSearch backend (optional, not distributed)
+blackreach/browser_starsearch.py
+blackreach/browser_playwright.py.bak
+
 # OS
 .DS_Store
 Thumbs.db

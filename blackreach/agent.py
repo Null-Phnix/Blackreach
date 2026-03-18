@@ -898,7 +898,7 @@ class Agent:
                     log(f"  [BACKTRACKING to: {backtrack_url[:50]}]")
                     self.hand.goto(backtrack_url)
                     self.stuck_detector.record_recovery_attempt(strategy)
-                    self.stuck_detector.soft_reset()
+                    self.stuck_detector.soft_reset(recovered_url=url)
                     # Re-fetch page state
                     html = self.hand.get_html()
                     url = self.hand.get_url()
@@ -916,8 +916,31 @@ class Agent:
                 self.hand.scroll("down", 800)
                 time.sleep(1)
                 self.stuck_detector.record_recovery_attempt(strategy)
-                self.stuck_detector.soft_reset()
+                self.stuck_detector.soft_reset(recovered_url=url)
                 html = self.hand.get_html()
+
+            elif strategy == RecoveryStrategy.WAIT_AND_RETRY:
+                log(f"  [WAITING 3s then refreshing]")
+                time.sleep(3)
+                self.hand.refresh()
+                time.sleep(2)
+                self.stuck_detector.record_recovery_attempt(strategy)
+                html = self.hand.get_html()
+                url = self.hand.get_url()
+                title = self.hand.get_title()
+
+            elif strategy == RecoveryStrategy.GIVE_UP:
+                log(f"  [GIVING UP on current approach - resetting to start]")
+                self.stuck_detector.record_recovery_attempt(strategy)
+                self.stuck_detector.reset()
+                self._recent_urls = []
+                try:
+                    self.hand.goto(self.config.start_url)
+                except Exception:
+                    pass
+                html = self.hand.get_html()
+                url = self.hand.get_url()
+                title = self.hand.get_title()
 
         challenge = self.detector.detect_challenge(html)
         if challenge.detected:
@@ -1365,11 +1388,16 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
             download_count = len(self.session_memory.downloaded_files)
             goal_lower = goal.lower()
 
-            # Check if goal requires downloads
-            needs_download = any(word in goal_lower for word in [
-                'download', 'fetch', 'save', 'epub', 'pdf',
-                'wallpaper', 'picture', 'photo',
-            ])
+            # Check if goal requires actual file downloads (not just listing info)
+            download_words = ['download', 'fetch', 'save', 'epub', 'pdf',
+                'wallpaper', 'picture', 'photo']
+            # If goal is about listing/finding/searching info, it's not a download task
+            # even if "download" appears (e.g. "list download counts")
+            info_words = ['list', 'find', 'search', 'get the', 'show',
+                'downloaded', 'download count', 'most download']
+            has_download = any(w in goal_lower for w in download_words)
+            is_info_task = any(w in goal_lower for w in info_words)
+            needs_download = has_download and not is_info_task
 
             # Don't allow "done" if goal needs downloads but we have 0
             if needs_download and download_count == 0:
