@@ -43,3 +43,10 @@ Thumbs.db
 
 # Auto Claude data directory
 .auto-claude/
+
+# Debug/test artifacts
+debug_output/
+test_downloads/
+deep_work_logs/
+portfolio/
+.coverage
