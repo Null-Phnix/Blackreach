@@ -146,8 +146,8 @@ class TestContextPresets:
         assert CONTEXT_PRESETS["medium"]["textSummaryLen"] == 1000
 
     def test_large_text_summary_len(self):
-        """Large preset has textSummaryLen of 3000."""
-        assert CONTEXT_PRESETS["large"]["textSummaryLen"] == 3000
+        """Large preset has textSummaryLen of 6000."""
+        assert CONTEXT_PRESETS["large"]["textSummaryLen"] == 6000
 
     def test_presets_has_exactly_three_keys(self):
         """CONTEXT_PRESETS contains exactly three size presets."""
