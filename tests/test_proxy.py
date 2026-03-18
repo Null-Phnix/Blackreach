@@ -346,7 +346,7 @@ class TestHandProxyIntegration:
         hand = Hand(proxy="http://proxy.example.com:8080", headless=True)
         assert hand.get_current_proxy() is None
 
-    @patch('blackreach.browser.sync_playwright')
+    @patch('blackreach.browser_playwright.sync_playwright')
     def test_get_proxy_config_priority(self, mock_playwright):
         """Proxy config priority: rotator > direct > stealth."""
         # Setup mock
