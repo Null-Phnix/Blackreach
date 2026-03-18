@@ -43,7 +43,7 @@ def get_backend() -> str:
     return _backend
 
 
-# Re-export _is_ssrf_safe from whichever backend is active
+# Re-export helpers from whichever backend is active
 try:
     if _backend == "starsearch":
         from blackreach.browser_starsearch import _is_ssrf_safe
@@ -53,11 +53,14 @@ except ImportError:
     def _is_ssrf_safe(url: str) -> bool:
         return True
 
+# _sanitize_filename is always from the Playwright backend (shared utility)
+from blackreach.browser_playwright import _sanitize_filename, _reserve_unique_path
+
 
 # Backwards compatibility
 Browser = Hand
 
 __all__ = [
     "Hand", "Browser", "ProxyConfig", "ProxyType", "ProxyRotator",
-    "get_backend", "_is_ssrf_safe",
+    "get_backend", "_is_ssrf_safe", "_sanitize_filename",
 ]
