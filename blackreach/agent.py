@@ -44,7 +44,6 @@ from blackreach.search_intel import get_search_intel, get_search_fallback_url, S
 from blackreach.content_verify import VerificationStatus, get_verifier
 from blackreach.timeout_manager import get_timeout_manager
 from blackreach.rate_limiter import get_rate_limiter
-from blackreach.session_manager import get_session_manager
 
 from blackreach.adaptive_browser import scan_url, BrowserMode, BrowserRouter
 from blackreach.domain_skills import get_skill_manager
@@ -180,8 +179,7 @@ class Agent:
         # Rate limiting
         self.rate_limiter = get_rate_limiter()
 
-        # Session management (v2.8.0+)
-        self.session_manager = get_session_manager(self.config.memory_db)
+        # Session management (v2.8.0+) - delegated to persistent_memory
 
         # Adaptive browser routing (v5.0+ adaptive intelligence)
         self._router = BrowserRouter() if self.config.use_adaptive else None
