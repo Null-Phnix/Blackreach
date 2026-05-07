@@ -106,9 +106,11 @@ class AgentConfig:
     max_steps: int = 50
     headless: bool = False
     download_dir: Path = field(default_factory=lambda: Path("./downloads"))
-    start_url: str = "https://www.bing.com"  # Bing works reliably in headless mode
+    start_url: str = "https://www.bing.com"
     memory_db: Path = field(default_factory=lambda: Path("./memory.db"))
-    browser_type: str = "chromium"  # chromium, firefox, or webkit
+    browser_type: str = "chromium"
+    use_cdp: bool = False
+    keep_browser_alive: bool = False
 
 
 class Agent:
@@ -337,7 +339,8 @@ class Agent:
             stealth_config=StealthConfig(),
             retry_config=RetryConfig(),
             download_dir=self.config.download_dir,
-            browser_type=self.config.browser_type
+            browser_type=self.config.browser_type,
+            use_cdp=self.config.use_cdp,
         )
 
     def ensure_browser(self) -> bool:
@@ -798,9 +801,10 @@ class Agent:
             paused = True
 
         finally:
-            log("\nClosing browser...")
+            keep = getattr(self.config, "use_cdp", False) or getattr(self.config, "keep_browser_alive", False)
+            log("\nClosing browser..." if not keep else "\nLeaving browser live for reuse...")
             if self.hand:
-                self.hand.sleep()
+                self.hand.sleep(keep_alive=keep)
 
             if not paused:
                 self.persistent_memory.end_session(

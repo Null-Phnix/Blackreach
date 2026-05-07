@@ -1369,6 +1369,18 @@ class Hand:
 
         return {"action": "click", "selector": str(selector)}
 
+    def click_at_xy(self, x: int, y: int, human: bool = None) -> dict:
+        """Click at screen coordinates (bypasses selector fragility)."""
+        human = human if human is not None else self.stealth.config.human_mouse
+        if human:
+            self._human_delay(*HUMAN_CLICK_PRE_DELAY)
+        self.page.mouse.click(x, y)
+        if human:
+            self._human_delay(*HUMAN_CLICK_POST_DELAY)
+        else:
+            time.sleep(0.3)
+        return {"action": "click_at_xy", "x": x, "y": y}
+
     def type(self, selector: str, text: str, human: bool = None, clear: bool = True, submit: bool = False) -> dict:
         """Type text into an element with fallback selectors."""
         human = human if human is not None else self.stealth.config.human_mouse
