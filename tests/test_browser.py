@@ -81,29 +81,12 @@ class TestHandInit:
 class TestHandProperties:
     """Tests for Hand property accessors."""
 
-    def test_page_raises_when_not_ready(self):
-        """page property raises BrowserNotReadyError when not started."""
+    @pytest.mark.parametrize("prop", ["page", "selector", "popups", "waits"])
+    def test_property_raises_when_not_ready(self, prop):
+        """Properties raise BrowserNotReadyError when hand not started."""
         hand = Hand()
         with pytest.raises(BrowserNotReadyError):
-            _ = hand.page
-
-    def test_selector_raises_when_not_ready(self):
-        """selector property raises BrowserNotReadyError when not started."""
-        hand = Hand()
-        with pytest.raises(BrowserNotReadyError):
-            _ = hand.selector
-
-    def test_popups_raises_when_not_ready(self):
-        """popups property raises BrowserNotReadyError when not started."""
-        hand = Hand()
-        with pytest.raises(BrowserNotReadyError):
-            _ = hand.popups
-
-    def test_waits_raises_when_not_ready(self):
-        """waits property raises BrowserNotReadyError when not started."""
-        hand = Hand()
-        with pytest.raises(BrowserNotReadyError):
-            _ = hand.waits
+            _ = getattr(hand, prop)
 
 
 class TestHandHelperMethods:
@@ -390,22 +373,13 @@ class TestHandStateTracking:
 
 
 class TestHandHelperProperties:
-    """Tests for helper property initialization."""
+    """Tests for Hand helper property initialization."""
 
-    def test_selector_starts_none(self):
-        """_selector starts as None."""
+    @pytest.mark.parametrize("attr", ["_selector", "_popups", "_waits"])
+    def test_helper_starts_none(self, attr):
+        """Helper properties start as None."""
         hand = Hand()
-        assert hand._selector is None
-
-    def test_popups_starts_none(self):
-        """_popups starts as None."""
-        hand = Hand()
-        assert hand._popups is None
-
-    def test_waits_starts_none(self):
-        """_waits starts as None."""
-        hand = Hand()
-        assert hand._waits is None
+        assert getattr(hand, attr) is None
 
 
 class TestMultipleHandInstances:

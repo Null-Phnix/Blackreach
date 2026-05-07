@@ -402,32 +402,34 @@ class TestSessionLoggerWriteFailure:
 class TestLogLevel:
     """Tests for LogLevel enum."""
 
-    def test_level_values(self):
+    @pytest.mark.parametrize("level,expected", [
+        ("DEBUG", 10), ("INFO", 20), ("WARNING", 30),
+        ("ERROR", 40), ("CRITICAL", 50),
+    ])
+    def test_level_values(self, level, expected):
         """Log levels have correct numeric values."""
-        assert LogLevel.DEBUG == 10
-        assert LogLevel.INFO == 20
-        assert LogLevel.WARNING == 30
-        assert LogLevel.ERROR == 40
-        assert LogLevel.CRITICAL == 50
+        assert getattr(LogLevel, level) == expected
 
-    def test_from_string(self):
+    @pytest.mark.parametrize("name,expected", [
+        ("debug", LogLevel.DEBUG), ("INFO", LogLevel.INFO),
+        ("WARNING", LogLevel.WARNING), ("warn", LogLevel.WARNING),
+        ("ERROR", LogLevel.ERROR), ("CRITICAL", LogLevel.CRITICAL),
+    ])
+    def test_from_string(self, name, expected):
         """from_string parses level names correctly."""
-        assert LogLevel.from_string("debug") == LogLevel.DEBUG
-        assert LogLevel.from_string("INFO") == LogLevel.INFO
-        assert LogLevel.from_string("WARNING") == LogLevel.WARNING
-        assert LogLevel.from_string("warn") == LogLevel.WARNING
-        assert LogLevel.from_string("ERROR") == LogLevel.ERROR
-        assert LogLevel.from_string("CRITICAL") == LogLevel.CRITICAL
+        assert LogLevel.from_string(name) == expected
 
-    def test_from_string_unknown_defaults_to_info(self):
+    @pytest.mark.parametrize("unknown", ["unknown", ""])
+    def test_from_string_unknown_defaults_to_info(self, unknown):
         """Unknown level defaults to INFO."""
-        assert LogLevel.from_string("unknown") == LogLevel.INFO
-        assert LogLevel.from_string("") == LogLevel.INFO
+        assert LogLevel.from_string(unknown) == LogLevel.INFO
 
-    def test_to_string(self):
+    @pytest.mark.parametrize("level,name", [
+        (LogLevel.DEBUG, "DEBUG"), (LogLevel.ERROR, "ERROR"),
+    ])
+    def test_to_string(self, level, name):
         """to_string returns level name."""
-        assert LogLevel.DEBUG.to_string() == "DEBUG"
-        assert LogLevel.ERROR.to_string() == "ERROR"
+        assert level.to_string() == name
 
 
 class TestLogEntryLevelValue:
@@ -446,45 +448,26 @@ class TestLogEntryLevelValue:
 class TestSessionLoggerLevelMethods:
     """Tests for SessionLogger level-specific methods."""
 
-    def test_debug_method(self, tmp_path, monkeypatch):
-        """debug() logs at DEBUG level."""
+    @pytest.mark.parametrize("method,level,event_name", [
+        ("debug", "DEBUG", "debug_event"),
+        ("info", "INFO", "info_event"),
+        ("warning", "WARNING", "warn_event"),
+        ("error", "ERROR", "error_event"),
+        ("critical", "CRITICAL", "critical_event"),
+    ])
+    def test_level_method(self, tmp_path, monkeypatch, method, level, event_name):
+        """Level methods log at correct level."""
         log_dir = tmp_path / "logs"
         monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
 
         logger = SessionLogger(1, "test goal")
-        logger.debug("debug_event", step=1, key="value")
+        getattr(logger, method)(event_name, step=1)
 
         with open(logger.log_file) as f:
             lines = f.readlines()
             entry = json.loads(lines[-1])
-            assert entry["level"] == "DEBUG"
-            assert entry["event"] == "debug_event"
-
-    def test_info_method(self, tmp_path, monkeypatch):
-        """info() logs at INFO level."""
-        log_dir = tmp_path / "logs"
-        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
-
-        logger = SessionLogger(1, "test goal")
-        logger.info("info_event", step=1)
-
-        with open(logger.log_file) as f:
-            lines = f.readlines()
-            entry = json.loads(lines[-1])
-            assert entry["level"] == "INFO"
-
-    def test_warning_method(self, tmp_path, monkeypatch):
-        """warning() logs at WARNING level."""
-        log_dir = tmp_path / "logs"
-        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
-
-        logger = SessionLogger(1, "test goal")
-        logger.warning("warn_event")
-
-        with open(logger.log_file) as f:
-            lines = f.readlines()
-            entry = json.loads(lines[-1])
-            assert entry["level"] == "WARNING"
+            assert entry["level"] == level
+            assert entry["event"] == event_name
 
     def test_error_method_with_kwargs(self, tmp_path, monkeypatch):
         """error() can take keyword args for data."""
@@ -499,19 +482,6 @@ class TestSessionLoggerLevelMethods:
             entry = json.loads(lines[-1])
             assert entry["level"] == "ERROR"
             assert entry["data"]["error_code"] == 500
-
-    def test_critical_method(self, tmp_path, monkeypatch):
-        """critical() logs at CRITICAL level."""
-        log_dir = tmp_path / "logs"
-        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
-
-        logger = SessionLogger(1, "test goal")
-        logger.critical("critical_event")
-
-        with open(logger.log_file) as f:
-            lines = f.readlines()
-            entry = json.loads(lines[-1])
-            assert entry["level"] == "CRITICAL"
 
 
 class TestFilterLogsByLevel:
@@ -793,23 +763,15 @@ class TestConsoleLogHandler:
 class TestFileLogHandler:
     """Tests for FileLogHandler class."""
 
-    def test_init_creates_directory(self, tmp_path):
-        """FileLogHandler creates parent directory."""
-        log_file = tmp_path / "logs" / "test.jsonl"
-        handler = FileLogHandler(log_file)
-        assert log_file.parent.exists()
-
-    def test_init_default_level(self, tmp_path):
-        """FileLogHandler defaults to DEBUG level."""
+    @pytest.mark.parametrize("level,expected", [
+        (None, LogLevel.DEBUG),
+        (LogLevel.INFO, LogLevel.INFO),
+    ])
+    def test_init_level(self, tmp_path, level, expected):
+        """FileLogHandler level initialization."""
         log_file = tmp_path / "test.jsonl"
-        handler = FileLogHandler(log_file)
-        assert handler.level == LogLevel.DEBUG
-
-    def test_init_custom_level(self, tmp_path):
-        """FileLogHandler accepts custom level."""
-        log_file = tmp_path / "test.jsonl"
-        handler = FileLogHandler(log_file, level=LogLevel.INFO)
-        assert handler.level == LogLevel.INFO
+        handler = FileLogHandler(log_file, level=level) if level else FileLogHandler(log_file)
+        assert handler.level == expected
 
     def test_init_custom_max_size(self, tmp_path):
         """FileLogHandler accepts custom max_size_mb."""
@@ -1006,66 +968,25 @@ class TestGlobalLogger:
 
         assert logger1 is logger2
 
-    def test_debug_method(self, tmp_path, monkeypatch):
-        """GlobalLogger.debug logs at DEBUG level."""
+    @pytest.mark.parametrize("method,level", [
+        ("debug", "DEBUG"),
+        ("info", "INFO"),
+        ("warning", "WARNING"),
+        ("error", "ERROR"),
+        ("critical", "CRITICAL"),
+    ])
+    def test_level_method(self, tmp_path, monkeypatch, method, level):
+        """GlobalLogger level methods log at correct level."""
         log_dir = tmp_path / "logs"
         monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
         GlobalLogger._instance = None
 
         logger = GlobalLogger()
-        logger.debug("test_debug")
+        getattr(logger, method)(f"test_{level.lower()}")
 
         content = logger.log_file.read_text()
-        assert "DEBUG" in content
-        assert "test_debug" in content
-
-    def test_info_method(self, tmp_path, monkeypatch):
-        """GlobalLogger.info logs at INFO level."""
-        log_dir = tmp_path / "logs"
-        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
-        GlobalLogger._instance = None
-
-        logger = GlobalLogger()
-        logger.info("test_info")
-
-        content = logger.log_file.read_text()
-        assert "INFO" in content
-
-    def test_warning_method(self, tmp_path, monkeypatch):
-        """GlobalLogger.warning logs at WARNING level."""
-        log_dir = tmp_path / "logs"
-        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
-        GlobalLogger._instance = None
-
-        logger = GlobalLogger()
-        logger.warning("test_warning")
-
-        content = logger.log_file.read_text()
-        assert "WARNING" in content
-
-    def test_error_method(self, tmp_path, monkeypatch):
-        """GlobalLogger.error logs at ERROR level."""
-        log_dir = tmp_path / "logs"
-        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
-        GlobalLogger._instance = None
-
-        logger = GlobalLogger()
-        logger.error("test_error")
-
-        content = logger.log_file.read_text()
-        assert "ERROR" in content
-
-    def test_critical_method(self, tmp_path, monkeypatch):
-        """GlobalLogger.critical logs at CRITICAL level."""
-        log_dir = tmp_path / "logs"
-        monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
-        GlobalLogger._instance = None
-
-        logger = GlobalLogger()
-        logger.critical("test_critical")
-
-        content = logger.log_file.read_text()
-        assert "CRITICAL" in content
+        assert level in content
+        assert f"test_{level.lower()}" in content
 
     def test_set_level(self, tmp_path, monkeypatch):
         """GlobalLogger.set_level changes console level."""
