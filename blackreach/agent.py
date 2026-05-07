@@ -22,7 +22,8 @@ from urllib.parse import urlparse, urljoin
 
 from blackreach.browser import Hand
 from blackreach.detection import SiteDetector
-from blackreach.dom_walker import walk_dom, format_text_summary, debug_html
+from blackreach.dom_walker import walk_dom, format_elements, format_text_summary, debug_html
+from blackreach.observer import Eyes
 from blackreach.llm import LLM, LLMConfig
 from blackreach.stealth import StealthConfig
 from blackreach.resilience import RetryConfig
@@ -144,6 +145,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
 
         # Browser, observer, and detector (reuse instances for performance)
         self.hand: Optional[Hand] = None
+        self.eyes = Eyes()  # Backwards compat shim — _step() uses dom_walker directly
         self.detector = SiteDetector()
 
         # Action tracking - learns from action outcomes
@@ -1165,7 +1167,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
         context_size = getattr(self.llm.config, 'context_size', 'large')
         dom_result = walk_dom(self.hand.page, context_size=context_size)
 
-        elements = format_dom_elements(dom_result, context_size=context_size)
+        elements = format_elements(dom_result, context_size=context_size)
         text_summary = format_text_summary(dom_result, context_size=context_size)
 
         # If DOM walker found nothing, try render recovery then re-walk
@@ -1184,7 +1186,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
 
                 html = self.hand.get_html()
                 dom_result = walk_dom(self.hand.page, context_size=context_size)
-                elements = format_dom_elements(dom_result, context_size=context_size)
+                elements = format_elements(dom_result, context_size=context_size)
                 text_summary = format_text_summary(dom_result, context_size=context_size)
 
                 if dom_result.get("elements"):

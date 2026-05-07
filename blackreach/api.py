@@ -223,7 +223,13 @@ class BlackreachAPI:
 
         agent.hand.goto(url)
         html = agent.hand.get_html()
-        parsed = agent.eyes.see(html)
+        from blackreach.dom_walker import walk_dom
+        dom = walk_dom(agent.hand.page)
+        parsed = {
+            "text_preview": dom.get("text_preview", ""),
+            "links": dom.get("links", []),
+            "images": dom.get("images", [])
+        }
 
         return {
             "url": url,

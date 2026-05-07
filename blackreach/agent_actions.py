@@ -17,6 +17,10 @@ from blackreach.exceptions import (
     InvalidActionArgsError, UnknownActionError, LLMError, NetworkError,
 )
 
+STEP_PAUSE_SECONDS = 0.5
+MIN_FULL_IMAGE_SIZE = 200000
+MIN_EBOOK_SIZE = 50000
+
 logger = logging.getLogger(__name__)
 
 RE_URL = re.compile(r'https?://\S+')

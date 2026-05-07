@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 RE_URL = re.compile(r'https?://\S+')
+RE_ARXIV_ID = re.compile(r'arxiv\.org/(?:abs|pdf)/(\d+\.\d+)')
 
 
 class AgentFormatMixin:
