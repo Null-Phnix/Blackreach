@@ -42,7 +42,6 @@ from blackreach.nav_context import PageValue, get_nav_context
 from blackreach.site_handlers import get_site_hints
 from blackreach.search_intel import get_search_intel, get_search_fallback_url, SearchEngine
 from blackreach.content_verify import VerificationStatus, get_verifier
-from blackreach.retry_strategy import get_retry_manager
 from blackreach.timeout_manager import get_timeout_manager
 from blackreach.rate_limiter import get_rate_limiter
 from blackreach.session_manager import get_session_manager
@@ -174,7 +173,6 @@ class Agent:
         self.content_verifier = get_verifier()
 
         # Retry strategies
-        self.retry_manager = get_retry_manager()
 
         # Timeout management
         self.timeout_manager = get_timeout_manager()

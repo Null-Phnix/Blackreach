@@ -101,11 +101,6 @@ _LAZY_IMPORTS = {
     "extract_epub_metadata": ("blackreach.metadata_extract", None),
     "get_metadata_extractor": ("blackreach.metadata_extract", None),
 
-    # Retry strategy
-    "RetryManager": ("blackreach.retry_strategy", None),
-    "RetryDecision": ("blackreach.retry_strategy", None),
-    "get_retry_manager": ("blackreach.retry_strategy", None),
-
     # Timeout manager
     "TimeoutManager": ("blackreach.timeout_manager", None),
     "get_timeout_manager": ("blackreach.timeout_manager", None),
@@ -262,7 +257,6 @@ if TYPE_CHECKING:
         ExtractionResult, MetadataType, compute_checksum, extract_pdf_metadata,
         extract_epub_metadata, get_metadata_extractor
     )
-    from blackreach.retry_strategy import RetryManager, RetryDecision, get_retry_manager
     from blackreach.timeout_manager import TimeoutManager, get_timeout_manager
     from blackreach.rate_limiter import RateLimiter, get_rate_limiter
     from blackreach.session_manager import SessionManager, SessionStatus, get_session_manager
