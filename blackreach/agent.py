@@ -22,8 +22,7 @@ from urllib.parse import urlparse, urljoin, quote as url_quote
 
 from blackreach.browser import Hand
 from blackreach.detection import SiteDetector
-from blackreach.observer import Eyes  # Deprecated: replaced by dom_walker, kept for debug_html()
-from blackreach.dom_walker import walk_dom, format_elements as format_dom_elements, format_text_summary
+from blackreach.dom_walker import walk_dom, format_elements as format_dom_elements, format_text_summary, debug_html
 from blackreach.llm import LLM, LLMConfig
 from blackreach.stealth import StealthConfig
 from blackreach.resilience import RetryConfig
@@ -145,7 +144,6 @@ class Agent:
 
         # Browser, observer, and detector (reuse instances for performance)
         self.hand: Optional[Hand] = None
-        self.eyes = Eyes()
         self.detector = SiteDetector()
 
         # Action tracking - learns from action outcomes
@@ -1174,7 +1172,7 @@ class Agent:
 
         # If DOM walker found nothing, try render recovery then re-walk
         if not dom_result.get("elements"):
-            debug_info = self.eyes.debug_html(html)
+            debug_info = debug_html(html)
             log(f"  [No elements found - render recovery...]")
 
             for attempt in range(2):

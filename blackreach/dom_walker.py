@@ -487,3 +487,54 @@ def format_text_summary(dom_result: Dict, context_size: str = "large") -> str:
         text += "..."
 
     return text
+
+
+def debug_html(html: str) -> dict:
+    """Debug helper to understand what's in the HTML.
+
+    Returns statistics about the HTML structure — used as a fallback
+    when the DOM walker finds no interactive elements (e.g. SPA or
+    challenge pages).
+    """
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+
+    raw_links = len(soup.find_all("a", href=True))
+    raw_buttons = len(soup.find_all(["button", "input"]))
+    raw_inputs = len(soup.find_all(["input", "textarea", "select"]))
+    raw_divs = len(soup.find_all("div"))
+    raw_text = len(soup.get_text(strip=True))
+
+    html_lc = html.lower()
+    has_react = "react" in html_lc or "data-reactroot" in html
+    has_vue = "vue" in html_lc or "data-v-" in html
+    has_angular = "ng-" in html or "angular" in html_lc
+
+    empty_root = False
+    empty_app = False
+    root = soup.find("div", id="root")
+    app = soup.find("div", id="app")
+    if root and not root.get_text(strip=True):
+        empty_root = True
+    if app and not app.get_text(strip=True):
+        empty_app = True
+
+    has_challenge = any(p in html_lc for p in [
+        "ddos-guard", "cloudflare", "checking your browser", "please wait"
+    ])
+
+    return {
+        "html_length": len(html),
+        "text_length": raw_text,
+        "raw_links": raw_links,
+        "raw_buttons": raw_buttons,
+        "raw_inputs": raw_inputs,
+        "raw_divs": raw_divs,
+        "is_spa": has_react or has_vue or has_angular,
+        "spa_framework": (
+            "React" if has_react else ("Vue" if has_vue else ("Angular" if has_angular else None))
+        ),
+        "empty_root": empty_root or empty_app,
+        "is_challenge_page": has_challenge,
+        "has_meaningful_content": raw_text > 200 and (raw_links > 3 or raw_inputs > 0),
+    }
