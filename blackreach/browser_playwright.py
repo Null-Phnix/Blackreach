@@ -6,6 +6,12 @@ Now with stealth and resilience features.
 """
 
 from playwright.sync_api import sync_playwright, Browser, Page, Playwright, BrowserContext, Route, Download, Error as PlaywrightError
+
+try:
+    from blackreach.browser_cdp import CDPBrowerDaemon, _cdp_responding, CDP_HTTP
+    CDP_AVAILABLE = True
+except Exception:
+    CDP_AVAILABLE = False
 from typing import Optional, List, Union, Callable, Dict, Any
 from pathlib import Path
 from dataclasses import dataclass
@@ -449,6 +455,8 @@ class Hand:
         browser_type: str = "chromium",  # chromium, firefox, or webkit
         proxy: Optional[Union[str, ProxyConfig]] = None,
         proxy_rotator: Optional[ProxyRotator] = None,
+        use_cdp: bool = False,          # <-- NEW: connect to persistent Chrome via CDP
+        cdp_endpoint: Optional[str] = None,
     ):
         """
         Initialize the Hand browser controller.
@@ -458,11 +466,16 @@ class Hand:
             stealth_config: Configuration for stealth/anti-detection features
             retry_config: Configuration for retry behavior
             download_dir: Directory for downloaded files
-            browser_type: Browser engine to use (chromium, firefox, webkit)
+            browser_type: Browser engine to use (chromium, firefox, or webkit)
             proxy: Single proxy to use (URL string or ProxyConfig)
             proxy_rotator: ProxyRotator for proxy pool rotation
+            use_cdp: Connect to an existing Chrome via CDP instead of launching fresh
+            cdp_endpoint: CDP websocket URL (http:// or ws://). If None, auto-starts one.
         """
         self.headless = headless
+        self.use_cdp = use_cdp
+        self.cdp_endpoint = cdp_endpoint
+        self._cdp_daemon: Optional[CDPBrowerDaemon] = None
         self.browser_type = browser_type.lower()
         self.stealth = Stealth(stealth_config or StealthConfig())
         self.retry_config = retry_config or RetryConfig()
@@ -590,9 +603,40 @@ class Hand:
 
     def wake(self) -> None:
         """Start the browser with stealth configuration."""
-        self._playwright = sync_playwright().start()
-
         self.download_dir.mkdir(parents=True, exist_ok=True)
+
+        # ---- CDP mode: connect to persistent Chrome (browser-harness style) ----
+        if self.use_cdp and CDP_AVAILABLE and self.browser_type == "chromium":
+            self._playwright = sync_playwright().start()
+            from blackreach.browser_cdp import ensure_daemon
+
+            if self.cdp_endpoint:
+                ws_url = self.cdp_endpoint
+            else:
+                ws_url = ensure_daemon(headless=self.headless)
+
+            self._browser = self._playwright.chromium.connect_over_cdp(ws_url)
+            # CDP browsers come with default context — grab the first page or make one
+            contexts = self._browser.contexts
+            if contexts:
+                self._context = contexts[0]
+            else:
+                self._context = self._browser.new_context()
+            pages = self._context.pages
+            if pages:
+                self._page = pages[0]
+            else:
+                self._page = self._context.new_page()
+
+            self._page.on("download", self._handle_download)
+            # In CDP mode we skip stealth scripts — Chrome is your real browser
+            self._selector = SmartSelector(self._page)
+            self._popups = PopupHandler(self._page)
+            self._waits = WaitConditions(self._page)
+            return
+
+        # ---- Legacy mode: launch fresh browser (slow) ----
+        self._playwright = sync_playwright().start()
 
         # Browser launch args for stealth - comprehensive anti-detection
         launch_args = [
@@ -792,17 +836,22 @@ class Hand:
         except Exception as e:
             logger.debug("Failed to release modifier keys: %s", e)
 
-    def sleep(self) -> None:
-        """Close the browser safely, releasing any stuck keys."""
+    def sleep(self, keep_alive: bool = False) -> None:
+        """Close the browser safely, releasing any stuck keys.
+
+        Args:
+            keep_alive: If True, only closes the page/context but leaves
+                       Chrome running (used in CDP persistent mode).
+        """
         # IMPORTANT: Release all modifier keys before closing
         # This prevents the host keyboard from getting stuck
         self._release_all_keys()
 
         if self._context:
             self._context.close()
-        if self._browser:
+        if self._browser and not keep_alive:
             self._browser.close()
-        if self._playwright:
+        if self._playwright and not keep_alive:
             self._playwright.stop()
         self._playwright = None
         self._browser = None
@@ -1320,7 +1369,7 @@ class Hand:
 
         return {"action": "click", "selector": str(selector)}
 
-    def type(self, selector: str, text: str, human: bool = None, clear: bool = True) -> dict:
+    def type(self, selector: str, text: str, human: bool = None, clear: bool = True, submit: bool = False) -> dict:
         """Type text into an element with fallback selectors."""
         human = human if human is not None else self.stealth.config.human_mouse
 
@@ -1398,7 +1447,58 @@ class Hand:
             # Always release modifier keys after typing operations
             self._release_all_keys()
 
-        return {"action": "type", "selector": used_selector, "text": text}
+        # Handle submit=True - critical for search forms (especially Semantic Scholar)
+        if submit:
+            self._human_delay(0.3, 0.6)
+            try:
+                # Press Enter (most reliable for search boxes)
+                self.page.keyboard.press("Enter")
+                self._human_delay(0.8, 1.2)
+                logger.info("Submitted form via Enter key (submit=True)")
+            except Exception as e:
+                logger.warning("Submit via Enter failed, trying fallback click: %s", e)
+                # Fallback: look for nearby search button
+                try:
+                    search_btn = self.page.locator("button[type='submit'], button:has-text('Search'), [aria-label*='Search']").first
+                    if search_btn.is_visible():
+                        search_btn.click()
+                        self._human_delay(0.5, 1.0)
+                except:
+                    pass
+
+        return {"action": "type", "selector": used_selector, "text": text, "submitted": submit}
+
+    def search(self, query: str, selector: str = "input, textarea", max_attempts: int = 3) -> dict:
+        """High-level search method. Types query and reliably submits it.
+        This is the most robust way to perform searches on Bing, Google, Semantic Scholar, arXiv, etc."""
+        logger.info("Performing robust search for: %s", query[:60])
+
+        for attempt in range(max_attempts):
+            try:
+                # Try typing with submit
+                result = self.type(selector, query, submit=True, human=False)
+                self._human_delay(1.5, 2.5)
+
+                # Verify if we navigated away from search page
+                if any(term in self.page.url.lower() for term in ['search', 'results', 'q=', '/search']):
+                    logger.info("Search successful on attempt %d. URL: %s", attempt+1, self.page.url)
+                    return {"action": "search", "query": query, "success": True, "url": self.page.url}
+
+                # Fallback: press Enter explicitly
+                self.page.keyboard.press("Enter")
+                self._human_delay(2.0, 3.0)
+
+                if any(term in self.page.url.lower() for term in ['search', 'results', 'q=', '/search']):
+                    logger.info("Search successful via explicit Enter (attempt %d)", attempt+1)
+                    return {"action": "search", "query": query, "success": True, "url": self.page.url}
+
+            except Exception as e:
+                logger.warning("Search attempt %d failed: %s", attempt+1, e)
+                self._human_delay(1.0, 1.5)
+                continue
+
+        logger.error("All search attempts failed for query: %s", query)
+        return {"action": "search", "query": query, "success": False}
 
     def press(self, key: str) -> dict:
         """Press a key (e.g., 'Enter', 'Escape')."""

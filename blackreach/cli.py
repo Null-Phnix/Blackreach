@@ -24,6 +24,7 @@ import shutil
 import signal
 import atexit
 import time
+import os
 
 from blackreach import __version__
 from blackreach.config import config_manager, AVAILABLE_MODELS, CONFIG_FILE, validate_config, validate_for_run
@@ -244,12 +245,13 @@ def cli(ctx):
 @click.option('--provider', '-p', help='LLM provider (ollama, openai, anthropic, google, xai)')
 @click.option('--model', '-m', help='Model to use')
 @click.option('--headless/--no-headless', default=None, help='Run browser headless')
-@click.option('--browser', '-b', type=click.Choice(['chromium', 'firefox', 'webkit']), help='Browser to use (helps bypass DDoS protection)')
+@click.option('--browser', '-b', type=click.Choice(['chromium', 'firefox', 'webkit']), help='Browser to use')
 @click.option('--steps', '-s', type=int, help='Maximum steps')
 @click.option('--resume', '-r', type=int, help='Resume a paused session by ID')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose logging')
 @click.option('--validate', 'do_validate', is_flag=True, help='Validate config before running')
-def run(goal: str, provider: str, model: str, headless: bool, browser: str, steps: int, resume: int, verbose: bool, do_validate: bool):
+@click.option('--cdp', is_flag=True, help='Use persistent Chrome via CDP (fast reconnects)')
+def run(goal: str, provider: str, model: str, headless: bool, browser: str, steps: int, resume: int, verbose: bool, do_validate: bool, cdp: bool):
     """Run the agent with a goal.
 
     \b
@@ -319,7 +321,9 @@ def run(goal: str, provider: str, model: str, headless: bool, browser: str, step
                 max_steps=max_steps,
                 headless=headless,
                 download_dir=Path(config.download_dir),
-                browser_type=browser_type
+                browser_type=browser_type,
+                use_cdp=cdp,
+                keep_browser_alive=cdp,
             )
 
             agent = Agent(llm_config=llm_config, agent_config=agent_config)
@@ -372,7 +376,9 @@ def run(goal: str, provider: str, model: str, headless: bool, browser: str, step
             max_steps=max_steps,
             headless=headless,
             download_dir=Path(config.download_dir),
-            browser_type=browser_type
+            browser_type=browser_type,
+            use_cdp=cdp,
+            keep_browser_alive=cdp,
         )
 
         agent = Agent(llm_config=llm_config, agent_config=agent_config)
@@ -388,6 +394,154 @@ def run(goal: str, provider: str, model: str, headless: bool, browser: str, step
     except Exception as e:
         console.print(f"[red]Unexpected error: {e}[/red]")
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Daemon commands
+# ---------------------------------------------------------------------------
+@cli.group(name="daemon")
+def daemon_group():
+    """Manage the persistent Chrome daemon (CDP mode)."""
+    pass
+
+
+@daemon_group.command(name="start")
+@click.option('--headless', is_flag=True, help='Start Chrome headless')
+@click.option('--port', '-p', type=int, default=9222, help='CDP port (default: 9222)')
+def daemon_start(headless: bool, port: int):
+    """Start the persistent Chrome daemon."""
+    from blackreach.browser_cdp import _find_chromium, _port_open, _cdp_responding
+    import json, urllib.request
+
+    if _cdp_responding(timeout=2.0):
+        # Already running — just print
+        ws_url = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2).read())["webSocketDebuggerUrl"]
+        console.print(f"[bold green]✓ Chrome daemon already running[/bold green]")
+        console.print(f"  Port: [cyan]{port}[/cyan]")
+        console.print(f"  WS:   [dim]{ws_url}[/dim]")
+        return
+
+    chrome = _find_chromium()
+    data_dir = Path.home() / ".config/blackreach-chrome"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    pid_file = data_dir / f"chrome.pid.{port}"
+
+    args = [
+        chrome,
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={data_dir}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--disable-background-networking",
+        "--disable-breakpad",
+        "--disable-default-apps",
+        "--disable-sync",
+        "--metrics-recording-only",
+        "--enable-automation",
+        "--password-store=basic",
+        "--use-mock-keychain",
+        "--force-color-profile=srgb",
+    ]
+    if headless:
+        args.append("--headless=new")
+
+    # Start detached — survives parent exit
+    env = os.environ.copy()
+    env.pop("LD_PRELOAD", None)
+    proc = subprocess.Popen(
+        args,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        close_fds=True,
+        env=env,
+    )
+
+    # Wait for CDP to come up
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        if _cdp_responding(timeout=1.0):
+            break
+        time.sleep(0.3)
+    else:
+        proc.terminate()
+        console.print("[red]Chrome did not expose CDP within 30s[/red]")
+        sys.exit(1)
+
+    # Save PID for later kill
+    pid_file.write_text(str(proc.pid))
+
+    ws_url = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2).read())["webSocketDebuggerUrl"]
+    console.print(f"[bold green]✓ Chrome daemon started[/bold green]")
+    console.print(f"  Port: [cyan]{port}[/cyan]")
+    console.print(f"  WS:   [dim]{ws_url}[/dim]")
+    console.print(f"\n[dim]Use [cyan]blackreach run --cdp \"your goal\"[/cyan] to connect[/dim]")
+
+
+@daemon_group.command(name="stop")
+@click.option('--port', '-p', type=int, default=9222, help='CDP port (default: 9222)')
+def daemon_stop(port: int):
+    """Stop the persistent Chrome daemon."""
+    data_dir = Path.home() / ".config/blackreach-chrome"
+    pid_file = data_dir / f"chrome.pid.{port}"
+
+    killed = False
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, signal.SIGTERM)
+            killed = True
+            for _ in range(20):  # wait up to 2s
+                try:
+                    os.kill(pid, 0)
+                    time.sleep(0.1)
+                except ProcessLookupError:
+                    break
+            pid_file.unlink(missing_ok=True)
+        except (ProcessLookupError, ValueError):
+            pid_file.unlink(missing_ok=True)
+
+    # Fallback: kill by port
+    import shutil
+    lsof = shutil.which("lsof")
+    if lsof:
+        try:
+            out = subprocess.check_output([lsof, "-ti", f":{port}"], text=True, stderr=subprocess.DEVNULL)
+            for p in out.strip().split("\n"):
+                try:
+                    os.kill(int(p), signal.SIGKILL)
+                    killed = True
+                except (ProcessLookupError, ValueError):
+                    pass
+        except subprocess.CalledProcessError:
+            pass
+
+    if killed:
+        console.print(f"[bold green]✓ Chrome daemon stopped[/bold green]")
+    else:
+        console.print(f"[yellow]No daemon found on port {port}[/yellow]")
+
+
+@daemon_group.command(name="status")
+@click.option('--port', '-p', type=int, default=9222, help='CDP port (default: 9222)')
+def daemon_status_cmd(port: int):
+    """Check Chrome daemon status."""
+    from blackreach.browser_cdp import _cdp_responding
+    import json, urllib.request
+
+    if _cdp_responding(timeout=2.0):
+        ws_url = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2).read())["webSocketDebuggerUrl"]
+        console.print(f"[bold green]● Chrome daemon running[/bold green]")
+        console.print(f"  Port:  [cyan]{port}[/cyan]")
+        console.print(f"  WS:    [dim]{ws_url}[/dim]")
+        console.print(f"\n[dim]Use [cyan]blackreach run --cdp \"your goal\"[/cyan] to connect[/dim]")
+    else:
+        console.print(f"[red]● Chrome daemon not running[/red]")
+        console.print(f"  Port:  [dim]{port}[/dim]")
+        console.print(f"\n[dim]Start with: [cyan]blackreach daemon start[/cyan][/dim]")
 
 
 def _show_results(result: dict):
