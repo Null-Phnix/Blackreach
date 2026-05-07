@@ -544,6 +544,75 @@ def daemon_status_cmd(port: int):
         console.print(f"\n[dim]Start with: [cyan]blackreach daemon start[/cyan][/dim]")
 
 
+# ---------------------------------------------------------------------------
+# Scancode command — preview adaptive routing decisions
+# ---------------------------------------------------------------------------
+@cli.command(name="scancode")
+@click.argument('url')
+@click.option('--refresh', is_flag=True, help='Force fresh scan (bypass cache)')
+@click.option('--verbose', '-v', is_flag=True, help='Show full details')
+def scancode_cmd(url: str, refresh: bool, verbose: bool):
+    """Scan a URL and preview routing decision.
+
+    Shows the browser confidence score, selected mode, and estimated cost
+    without actually navigating. Useful for testing the adaptive router.
+
+    \\b
+    Examples:
+        blackreach scancode https://wikipedia.org/wiki/Python
+        blackreach scancode https://wikipedia.org/wiki/Python --verbose
+        blackreach scancode https://wikipedia.org/wiki/Python --refresh
+    """
+    from blackreach.adaptive_browser import get_router, BrowserMode
+
+    plan = get_router().plan_for(url, force_refresh=refresh)
+
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.text import Text
+
+    mode_colours = {
+        BrowserMode.LIGHTWEIGHT: "green",
+        BrowserMode.HEADLESS: "yellow",
+        BrowserMode.FULL_STEALTH: "red",
+    }
+    colour = mode_colours.get(plan.mode, "white")
+
+    console.print(Panel(
+        f"[bold {colour}]{plan.mode.value.upper()}[/bold {colour}]   "
+        f"confidence={plan.confidence:.2f}   "
+        f"est_cost={plan.estimated_cost_ms}ms",
+        title="[bold]Routing Decision[/bold]",
+        subtitle=f"[dim]{url[:80]}[/dim]",
+        border_style=colour,
+    ))
+
+    if verbose:
+        table = Table(title="Analysis Details")
+        table.add_column("Attribute", style="cyan", no_wrap=True)
+        table.add_column("Value", style="white")
+
+        table.add_row("Mode", plan.mode.value)
+        table.add_row("Confidence", f"{plan.confidence:.2f}")
+        table.add_row("Estimated Cost", f"{plan.estimated_cost_ms}ms")
+        table.add_row("JS Required", str(plan.js_required))
+        table.add_row("Captcha Expected", str(plan.captcha_expected))
+        table.add_row("Proxy Recommended", str(plan.proxy_recommended))
+
+        if plan.reasons:
+            table.add_row("Reasons", "\n".join(plan.reasons[:5]))
+        if plan.suggested_headers:
+            hdrs = "\n".join(f"{k}: {v[:50]}" for k, v in plan.suggested_headers.items())
+            table.add_row("Suggested Headers", hdrs)
+
+        console.print(table)
+    else:
+        reasons = plan.reasons[:3]
+        if reasons:
+            console.print(f"[dim]Reasons: {', '.join(reasons)}[/dim]")
+        console.print(f"\n[dim]Use --verbose for full details[/dim]")
+
+
 def _show_results(result: dict):
     """Display agent run results."""
     status = "[bold green]Success[/bold green]" if result.get('success') else "[bold yellow]Incomplete[/bold yellow]"

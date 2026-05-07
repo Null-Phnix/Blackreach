@@ -48,6 +48,9 @@ from blackreach.timeout_manager import get_timeout_manager
 from blackreach.rate_limiter import get_rate_limiter
 from blackreach.session_manager import get_session_manager
 
+from blackreach.adaptive_browser import scan_url, BrowserMode, BrowserRouter
+from blackreach.domain_skills import get_skill_manager
+
 logger = logging.getLogger(__name__)
 
 
@@ -110,6 +113,7 @@ class AgentConfig:
     memory_db: Path = field(default_factory=lambda: Path("./memory.db"))
     browser_type: str = "chromium"
     use_cdp: bool = False
+    use_adaptive: bool = True
     keep_browser_alive: bool = False
 
 
@@ -183,6 +187,12 @@ class Agent:
         # Session management (v2.8.0+)
         self.session_manager = get_session_manager(self.config.memory_db)
 
+        # Adaptive browser routing (v5.0+ adaptive intelligence)
+        self._router = BrowserRouter() if self.config.use_adaptive else None
+
+        # Domain-specific learned skills (v5.0+ self-improvement)
+        self._skill_manager = get_skill_manager() if self.config.use_adaptive else None
+
         self.prompts = self._load_prompts()
 
         # Cache for parsed page data (avoids re-parsing between observe and act)
@@ -228,25 +238,131 @@ class Agent:
         self._paused = False
         self._current_step = 0
         self._current_goal = ""
-
-        # Refusal handling
+    # Refusal handling
         self._refusal_count = 0
         self._max_refusals = 3  # After this many, try alternate search
 
-        # Download retry tracking
+    # Download retry tracking
         self._failed_download_urls = set()  # URLs that failed to download
 
-        # Challenge/DDoS protection tracking
+    # Challenge/DDoS protection tracking
         self._consecutive_challenges = 0  # Track persistent challenge pages
         self._failed_urls = set()  # Specific URLs where challenges didn't resolve
         self._current_source = None  # Track current content source for failover
 
-        # Search engine block tracking — engines that have been detected as blocked
+    # Search engine block tracking — engines that have been detected as blocked
         self._blocked_engines: set = set()  # Set of SearchEngine values
 
-        # Callback error rate limiting
+    # Callback error rate limiting
         self._callback_errors: Dict[str, int] = {}  # Track errors per event type
         self._max_callback_errors_per_event = 3  # Stop logging after this many
+
+
+    # ------------------------------------------------------------------
+    # Adaptive routing (v5.0+) — scan before navigating
+    # ------------------------------------------------------------------
+
+    def _navigate_with_scan(self, url: str, log=None) -> bool:
+        """Navigates and returns True on success. Adapts to bot-protection."""
+        if not self.config.use_adaptive or self._router is None:
+            # Fallback: normal browser goto
+            self.hand.goto(url)
+            return True
+
+        plan = self._router.plan_for(url)
+
+        if log:
+            log(f"  [ROUTE] {plan.mode.value} score={plan.confidence:.2f} ({','.join(plan.reasons[:3])})")
+
+        if plan.mode == BrowserMode.LIGHTWEIGHT:
+            # Fast path: use bulk HTTP fetcher instead of browser
+            try:
+                from blackreach.bulk_fetcher import BulkFetcher
+                import base64
+                with BulkFetcher() as fetcher:
+                    result = fetcher.fetch(url)
+                if result.ok and result.html:
+                    # Inject HTML into the current page via Playwright set_content
+                    # so the DOM walker still operates on real elements.
+                    title = result.extract_title() or url
+                    try:
+                        self.hand.page.set_content(result.html)
+                        self.hand.page.evaluate(
+                            f"document.title = '{title.replace(chr(39), chr(92)+chr(39))}'"
+                        )
+                    except Exception:
+                        # Fallback if set_content not available (starsearch)
+                        data_url = "data:text/html;base64," + base64.b64encode(result.html.encode('utf-8')).decode()
+                        self.hand.goto(data_url)
+                    self._record_visit(url, title=title, success=True)
+                    if log:
+                        log(f"  [LIGHTWEIGHT] fetched in {result.elapsed_ms:.0f}ms")
+                    return True
+                else:
+                    # Fallback to browser
+                    if log:
+                        log(f"  [LIGHTWEIGHT] failed: {result.error or result.status}, falling back to browser")
+                    self.hand.goto(url)
+                    return True
+            except Exception as e:
+                if log:
+                    log(f"  [LIGHTWEIGHT] error: {e}, falling back to browser")
+                self.hand.goto(url)
+                return True
+
+        elif plan.mode == BrowserMode.HEADLESS:
+            # Normal headless with extra headers
+            extra = plan.suggested_headers
+            if extra:
+                # Inject headers via page.goto options if supported
+                try:
+                    self.hand.goto(url, extra_http_headers=extra)
+                except TypeError:
+                    self.hand.goto(url)
+            else:
+                self.hand.goto(url)
+            return True
+
+        else:  # FULL_STEALTH
+            self.hand.goto(url)
+            return True
+
+    # ------------------------------------------------------------------
+    # Domain skills (v5.0+) — learned selectors per site
+    # ------------------------------------------------------------------
+
+    def _try_skill_click(self, domain: str, action_hint: str) -> Optional[Dict[str, Any]]:
+        """Try a learned skill selector before generic click."""
+        if not self._skill_manager:
+            return None
+        sel = self._skill_manager.get_selector(domain, action_hint)
+        if not sel:
+            return None
+        try:
+            self.hand.click(sel)
+            self._skill_manager.record_success(domain, action_hint, {"selector": sel},
+                                               notes=f"element_id path")
+            return {"action": "click", "skill": action_hint, "selector": sel}
+        except Exception as e:
+            self._skill_manager.record_failure(domain, action_hint, str(e))
+            return None
+
+    def _record_skill(self, domain: str, action: str, element_id: Optional[int],
+                      selector: Optional[str], success: bool, error: str = ""):
+        """Record a successful/failed pattern to domain skills."""
+        if not self._skill_manager or not domain:
+            return
+        sel_name = selector or (f"element_{element_id}" if element_id is not None else "unknown")
+        if success:
+            self._skill_manager.record_success(
+                domain, action,
+                selectors={sel_name: selector or f"[data-br-id='{element_id}']"},
+                notes=f"Worked on {domain}"
+            )
+        else:
+            self._skill_manager.record_failure(
+                domain, action, error or "click failed"
+            )
 
     def _emit(self, event: str, *args, **kwargs) -> None:
         """Emit a callback event if handler is set.
@@ -319,11 +435,16 @@ class Agent:
     def _get_domain(self, url: str = None) -> str:
         """Extract domain from URL or current page."""
         if url:
-            return urlparse(url).netloc
+            if isinstance(url, str):
+                return urlparse(url).netloc
+            return ""
         if self.hand and self.hand.is_awake:
             try:
-                return urlparse(self.hand.get_url()).netloc
-            except (BrowserError, OSError):  # Best-effort URL extraction
+                raw = self.hand.get_url()
+                if isinstance(raw, str):
+                    return urlparse(raw).netloc
+                return ""
+            except (BrowserError, OSError, TypeError):
                 return ""
         return ""
 
@@ -603,7 +724,7 @@ class Agent:
 
         log(f"Navigating to: {start_url}")
         try:
-            self.hand.goto(start_url)
+            self._navigate_with_scan(start_url, log=log)
         except (NavigationError, BrowserError, OSError) as e:
             # If a search engine URL failed, try the next engine in the chain
             failed_engine = self._identify_search_engine(start_url)
@@ -617,8 +738,7 @@ class Agent:
                         query, exclude=[failed_engine]
                     )
                     log(f"  [Failing over to {fallback_engine.value}: {fallback_url[:60]}]")
-                    self.hand.goto(fallback_url)
-                    start_url = fallback_url
+                    self._navigate_with_scan(fallback_url, log=log)
                 else:
                     raise
             else:
@@ -1627,6 +1747,16 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
             selector = args.get("selector", "")
             text = args.get("text", "")
             thought = args.get("_thought", "")
+            domain = self._get_domain()
+            skill_hint = text or (",".join(RE_QUOTED_TEXT.findall(thought))[:30] if thought else "click")
+
+            # Skill-0: Try learned domain skill *before* generic discovery
+            if domain and self._skill_manager:
+                skill_result = self._try_skill_click(domain, skill_hint)
+                if skill_result:
+                    self._record_skill(domain, "click", element_id, selector,
+                                      success=True)
+                    return skill_result
 
             # Priority 1: Click by element ID (new DOM walker system)
             if element_id is not None:
@@ -1634,6 +1764,8 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                 loc = self.hand.page.locator(br_selector)
                 if loc.count() > 0:
                     loc.first.click(timeout=10000)
+                    self._record_skill(domain, "click", element_id, br_selector,
+                                      success=True)
                     return {"action": "click", "element": element_id}
 
             # Priority 2: Click by explicit text
@@ -1641,8 +1773,12 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                 text = text.strip('[]"\'')
                 try:
                     self.hand.page.get_by_text(text, exact=False).first.click()
+                    self._record_skill(domain, "click", element_id, selector,
+                                      success=True)
                     return {"action": "click", "text": text}
                 except (BrowserError, OSError) as e:
+                    self._record_skill(domain, "click", element_id, None,
+                                      success=False, error=str(e))
                     logger.debug("Click by text '%s' failed, trying fallback: %s", text, e)
 
             # Priority 3: Extract text from thought (backward compat)
@@ -1652,15 +1788,28 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                     text = quoted[0].strip('[]"\'')
                     try:
                         self.hand.page.get_by_text(text, exact=False).first.click()
+                        self._record_skill(domain, "click", element_id, None,
+                                          success=True)
                         return {"action": "click", "text": text}
                     except (BrowserError, OSError) as e:
+                        self._record_skill(domain, "click", element_id, None,
+                                          success=False, error=str(e))
                         logger.debug("Click by quoted text '%s' failed: %s", text, e)
 
             # Priority 4: Click by CSS selector (backward compat)
             if selector:
-                self.hand.click(selector)
-                return {"action": "click", "selector": selector}
+                try:
+                    self.hand.click(selector)
+                    self._record_skill(domain, "click", element_id, selector,
+                                      success=True)
+                    return {"action": "click", "selector": selector}
+                except Exception as e:
+                    self._record_skill(domain, "click", element_id, selector,
+                                      success=False, error=str(e))
+                    raise
 
+            self._record_skill(domain, "click", element_id, None,
+                              success=False, error="no valid target")
             raise InvalidActionArgsError("click", "Must provide element ID, text, or selector")
 
         elif action == "type":
@@ -1736,7 +1885,7 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                 return {"action": "navigate", "skipped": True, "url": url}
 
             logger.debug("Navigating to %s", url[:70])
-            self.hand.goto(url)
+            self._navigate_with_scan(url)
             self._record_visit(url)
             return {"action": "navigate", "url": url}
 

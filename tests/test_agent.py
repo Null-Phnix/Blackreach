@@ -2029,6 +2029,7 @@ class TestExecuteActionClick:
 
         mock_hand = MagicMock()
         mock_hand.click.return_value = None
+        mock_hand.get_url.return_value = "https://example.com"
         agent.hand = mock_hand
 
         result = agent._execute_action("click", {"selector": "#submit-btn"})
