@@ -1267,6 +1267,13 @@ class Hand:
         except PlaywrightError:
             return False
 
+    def _safe_evaluate(self, script: str, *args):
+        """Run page.evaluate() swallowing PlaywrightError."""
+        try:
+            return self.page.evaluate(script, *args)
+        except PlaywrightError:
+            return None
+
     def force_render(self) -> bool:
         """
         Force page to fully render by triggering various browser events.
@@ -1275,23 +1282,16 @@ class Hand:
         Returns True if content was eventually found.
         """
         # Trigger resize event (some sites render on resize)
-        try:
-            self.page.evaluate("window.dispatchEvent(new Event('resize'))")
-        except PlaywrightError:
-            pass
+        self._safe_evaluate("window.dispatchEvent(new Event('resize'))")
 
         # Scroll to trigger lazy loading
-        try:
-            self.page.evaluate("""
-                () => {
-                    // Scroll to bottom and back
-                    window.scrollTo(0, document.body.scrollHeight);
-                    setTimeout(() => window.scrollTo(0, 0), 500);
-                }
-            """)
-            time.sleep(1)
-        except PlaywrightError:
-            pass
+        self._safe_evaluate("""
+            () => {
+                window.scrollTo(0, document.body.scrollHeight);
+                setTimeout(() => window.scrollTo(0, 0), 500);
+            }
+        """)
+        time.sleep(1)
 
         # Trigger mouse move (some sites wait for user activity)
         try:
@@ -1301,10 +1301,7 @@ class Hand:
             pass
 
         # Click on body to trigger focus events
-        try:
-            self.page.evaluate("document.body.click()")
-        except PlaywrightError:
-            pass
+        self._safe_evaluate("document.body.click()")
 
         # Wait a moment for any triggered renders
         time.sleep(2)
