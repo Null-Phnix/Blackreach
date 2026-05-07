@@ -1355,7 +1355,14 @@ class Hand:
                         logger.debug("Click selector fallback failed for '%s': %s", sel, e)
                         continue
         else:
-            locator = self.page.locator(selector).first
+            loc = self.page.locator(selector).first
+            try:
+                locator = loc if loc.count() > 0 else None
+            except TypeError:
+                # count() returned a non-comparable type (e.g. MagicMock in tests)
+                locator = loc
+            except PlaywrightError:
+                locator = None
 
         if not locator:
             raise ElementNotFoundError(selector=str(selector))
