@@ -22,7 +22,7 @@ try:
     _ss.close()
     del _ss, _test_session, _StarSearchCheck
 
-    from blackreach.browser_starsearch import (
+    from blackreach.extras.browser_starsearch import (
         Hand, ProxyConfig, ProxyType, ProxyRotator,
         BrowserNotReadyError, ElementNotFoundError, DownloadError,
         InvalidActionArgsError, UnknownActionError,
@@ -46,7 +46,7 @@ def get_backend() -> str:
 # Re-export helpers from whichever backend is active
 try:
     if _backend == "starsearch":
-        from blackreach.browser_starsearch import _is_ssrf_safe
+        from blackreach.extras.browser_starsearch import _is_ssrf_safe
     else:
         from blackreach.browser_playwright import _is_ssrf_safe
 except ImportError:
