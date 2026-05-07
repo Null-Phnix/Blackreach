@@ -1330,6 +1330,13 @@ class Hand:
         self._human_delay(0.5, 1.0)
         return {"action": "refresh", "title": self.page.title()}
 
+    def _click_post_delay(self, human: bool, delay: tuple = HUMAN_CLICK_POST_DELAY, static: float = 0.3) -> None:
+        """Post-click delay: human-like or static fallback."""
+        if human:
+            self._human_delay(*delay)
+        else:
+            time.sleep(static)
+
     # === Interaction ===
 
     def click(self, selector: Union[str, List[str]], human: bool = None) -> dict:
@@ -1361,12 +1368,7 @@ class Hand:
             self._human_delay(*HUMAN_CLICK_PRE_DELAY)
 
         locator.click()
-
-        if human:
-            self._human_delay(*HUMAN_CLICK_POST_DELAY)
-        else:
-            time.sleep(0.3)
-
+        self._click_post_delay(human)
         return {"action": "click", "selector": str(selector)}
 
     def click_at_xy(self, x: int, y: int, human: bool = None) -> dict:
@@ -1375,10 +1377,7 @@ class Hand:
         if human:
             self._human_delay(*HUMAN_CLICK_PRE_DELAY)
         self.page.mouse.click(x, y)
-        if human:
-            self._human_delay(*HUMAN_CLICK_POST_DELAY)
-        else:
-            time.sleep(0.3)
+        self._click_post_delay(human)
         return {"action": "click_at_xy", "x": x, "y": y}
 
     def type(self, selector: str, text: str, human: bool = None, clear: bool = True, submit: bool = False) -> dict:
