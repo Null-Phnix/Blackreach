@@ -1682,17 +1682,7 @@ class Hand:
 
         download.save_as(str(save_path))
 
-        file_hash = self._compute_hash(save_path)
-        file_size = save_path.stat().st_size
-
-        return {
-            "action": "download",
-            "filename": save_path.name,
-            "path": str(save_path),
-            "size": file_size,
-            "hash": file_hash,
-            "url": download.url
-        }
+        return self._build_download_result(save_path, download.url)
 
     def download_link(self, href: str, timeout: int = DOWNLOAD_TIMEOUT_MS) -> dict:
         """
@@ -1774,17 +1764,7 @@ class Hand:
             save_path.unlink(missing_ok=True)
             raise DownloadError(url, reason=str(e))
 
-        file_hash = self._compute_hash(save_path)
-        file_size = save_path.stat().st_size
-
-        return {
-            "action": "download",
-            "filename": save_path.name,
-            "path": str(save_path),
-            "size": file_size,
-            "hash": file_hash,
-            "url": url
-        }
+        return self._build_download_result(save_path, url)
 
     def click_and_download(self, selector: str, timeout: int = DOWNLOAD_TIMEOUT_MS) -> dict:
         """
@@ -1814,16 +1794,21 @@ class Hand:
             save_path = self.download_dir / safe_filename
             download.save_as(str(save_path))
 
-            return {
-                "filename": save_path.name,
-                "path": str(save_path),
-                "size": save_path.stat().st_size,
-                "hash": self._compute_hash(save_path),
-                "url": download.url
-            }
+            return self._build_download_result(save_path, download.url)
         except (PlaywrightError, OSError) as e:
             logger.warning("Download failed or timed out: %s", e)
             return None
+
+    def _build_download_result(self, save_path: Path, url: str) -> dict:
+        """Build standardized download result dict."""
+        return {
+            "action": "download",
+            "filename": save_path.name,
+            "path": str(save_path),
+            "size": save_path.stat().st_size,
+            "hash": self._compute_hash(save_path),
+            "url": url,
+        }
 
     def _compute_hash(self, path: Path) -> str:
         """Compute SHA256 hash of a file."""
@@ -1869,37 +1854,26 @@ class Hand:
         action = command.get("action")
         human = command.get("human", True)
 
-        if action == "goto":
-            return self.goto(command["url"])
-        elif action == "click":
-            return self.click(command["selector"], human=human)
-        elif action == "type":
-            return self.type(command["selector"], command["text"], human=human)
-        elif action == "press":
-            return self.press(command["key"])
-        elif action == "scroll":
-            return self.scroll(command.get("direction", "down"), command.get("amount", 500), human=human)
-        elif action == "back":
-            return self.back()
-        elif action == "forward":
-            return self.forward()
-        elif action == "refresh":
-            return self.refresh()
-        elif action == "hover":
-            return self.hover(command["selector"])
-        elif action == "screenshot":
-            return self.screenshot(command.get("path", "screenshot.png"))
-        elif action == "wait":
+        _dispatch = {
+            "goto": lambda: self.goto(command["url"]),
+            "click": lambda: self.click(command["selector"], human=human),
+            "type": lambda: self.type(command["selector"], command["text"], human=human),
+            "press": lambda: self.press(command["key"]),
+            "scroll": lambda: self.scroll(command.get("direction", "down"), command.get("amount", 500), human=human),
+            "back": self.back,
+            "forward": self.forward,
+            "refresh": self.refresh,
+            "hover": lambda: self.hover(command["selector"]),
+            "screenshot": lambda: self.screenshot(command.get("path", "screenshot.png")),
+            "wait": lambda: {"action": "wait", "seconds": command.get("seconds", 1)},
+            "smart_click": lambda: self.smart_click(command["text"], command.get("tag", "*")),
+            "smart_type": lambda: self.smart_type(command["text"], command.get("into"), command.get("placeholder"), command.get("label")),
+            "dismiss_popups": self.dismiss_popups,
+            "wait_and_click": lambda: self.wait_and_click(command["selector"], command.get("timeout", 10000)),
+        }
+        if action == "wait":
             time.sleep(command.get("seconds", 1))
-            return {"action": "wait", "seconds": command.get("seconds", 1)}
-        elif action == "smart_click":
-            return self.smart_click(command["text"], command.get("tag", "*"))
-        elif action == "smart_type":
-            return self.smart_type(command["text"], command.get("into"), command.get("placeholder"), command.get("label"))
-        elif action == "dismiss_popups":
-            return self.dismiss_popups()
-        elif action == "wait_and_click":
-            return self.wait_and_click(command["selector"], command.get("timeout", 10000))
-        else:
-            raise UnknownActionError(action)
+        if action in _dispatch:
+            return _dispatch[action]()
+        raise UnknownActionError(action)
 
