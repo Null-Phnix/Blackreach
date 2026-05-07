@@ -642,65 +642,38 @@ class TestConsoleLogHandler:
         handler = ConsoleLogHandler(console=custom_console)
         assert handler.console is custom_console
 
-    def test_init_custom_level(self):
-        """ConsoleLogHandler accepts custom level."""
-        handler = ConsoleLogHandler(level=LogLevel.DEBUG)
-        assert handler.level == LogLevel.DEBUG
+    @pytest.mark.parametrize("setting,value", [
+        ("level", LogLevel.DEBUG),
+        ("show_timestamp", True),
+        ("show_source", True),
+    ])
+    def test_init_custom_settings(self, setting, value):
+        """ConsoleLogHandler accepts custom settings."""
+        handler = ConsoleLogHandler(**{setting: value})
+        assert getattr(handler, setting) == value
 
-    def test_init_show_timestamp(self):
-        """ConsoleLogHandler accepts show_timestamp setting."""
-        handler = ConsoleLogHandler(show_timestamp=True)
-        assert handler.show_timestamp is True
-
-    def test_init_show_source(self):
-        """ConsoleLogHandler accepts show_source setting."""
-        handler = ConsoleLogHandler(show_source=True)
-        assert handler.show_source is True
-
-    def test_emit_filters_below_level(self):
-        """emit() does not output entries below handler level."""
+    @pytest.mark.parametrize("handler_level,entry_level,should_emit", [
+        (LogLevel.WARNING, "INFO", False),
+        (LogLevel.INFO, "INFO", True),
+        (LogLevel.INFO, "ERROR", True),
+    ])
+    def test_emit_filtering(self, handler_level, entry_level, should_emit):
+        """emit() respects handler level filter."""
         from unittest.mock import Mock
         mock_console = Mock()
-        handler = ConsoleLogHandler(console=mock_console, level=LogLevel.WARNING)
+        handler = ConsoleLogHandler(console=mock_console, level=handler_level)
 
         entry = LogEntry(
             timestamp=datetime.now().isoformat(),
-            level="INFO",
-            event="info_event"
+            level=entry_level,
+            event="test_event"
         )
         handler.emit(entry)
 
-        mock_console.print.assert_not_called()
-
-    def test_emit_outputs_at_level(self):
-        """emit() outputs entries at handler level."""
-        from unittest.mock import Mock
-        mock_console = Mock()
-        handler = ConsoleLogHandler(console=mock_console, level=LogLevel.INFO)
-
-        entry = LogEntry(
-            timestamp=datetime.now().isoformat(),
-            level="INFO",
-            event="info_event"
-        )
-        handler.emit(entry)
-
-        mock_console.print.assert_called_once()
-
-    def test_emit_outputs_above_level(self):
-        """emit() outputs entries above handler level."""
-        from unittest.mock import Mock
-        mock_console = Mock()
-        handler = ConsoleLogHandler(console=mock_console, level=LogLevel.INFO)
-
-        entry = LogEntry(
-            timestamp=datetime.now().isoformat(),
-            level="ERROR",
-            event="error_event"
-        )
-        handler.emit(entry)
-
-        mock_console.print.assert_called_once()
+        if should_emit:
+            mock_console.print.assert_called_once()
+        else:
+            mock_console.print.assert_not_called()
 
     def test_format_data_act_event(self):
         """_format_data formats act events correctly."""
