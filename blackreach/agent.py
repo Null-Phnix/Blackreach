@@ -18,11 +18,11 @@ import time
 from pathlib import Path
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
-from urllib.parse import urlparse, urljoin, quote as url_quote
+from urllib.parse import urlparse, urljoin
 
 from blackreach.browser import Hand
 from blackreach.detection import SiteDetector
-from blackreach.dom_walker import walk_dom, format_elements as format_dom_elements, format_text_summary, debug_html
+from blackreach.dom_walker import walk_dom, format_text_summary, debug_html
 from blackreach.llm import LLM, LLMConfig
 from blackreach.stealth import StealthConfig
 from blackreach.resilience import RetryConfig
@@ -45,7 +45,7 @@ from blackreach.content_verify import VerificationStatus, get_verifier
 from blackreach.timeout_manager import get_timeout_manager
 from blackreach.rate_limiter import get_rate_limiter
 
-from blackreach.adaptive_browser import scan_url, BrowserMode, BrowserRouter
+from blackreach.adaptive_browser import BrowserMode, BrowserRouter
 from blackreach.domain_skills import get_skill_manager
 
 logger = logging.getLogger(__name__)
