@@ -196,6 +196,16 @@ class AgentProgress:
         failures = result.get('failures', 0)
 
         if success and steps > 0:
+            # Show result text if the agent produced one (research/summarization tasks)
+            result_text = result.get('result') or result.get('output') or result.get('summary')
+            if result_text and isinstance(result_text, str) and result_text.strip():
+                console.print(Panel(
+                    result_text.strip(),
+                    title="[bold cyan]Result[/bold cyan]",
+                    border_style="cyan"
+                ))
+                console.print()
+
             # Build summary content
             lines = [f"[{theme.success}]✓ Goal completed[/]", ""]
 
