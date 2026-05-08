@@ -889,6 +889,14 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
                 # Run one iteration
                 result = self._step(goal, step, quiet=quiet)
 
+                if result.get("error"):
+                    err = result.get("error", "")
+                    log(f"  ⚠️  {err[:80]}{'...' if len(err) > 80 else ''}")
+                    # If step-level error is non-recoverable, accumulate and abort if persistent
+                    if not result.get("recoverable", True):
+                        log(f"  [FATAL: {err[:60]} — aborting loop]")
+                        break
+
                 if result.get("done"):
                     log(f"\n✓ COMPLETE: {result.get('reason', 'Goal achieved')}")
                     success = True
@@ -1511,15 +1519,19 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
             goal_lower = goal.lower()
 
             # Check if goal requires actual file downloads (not just listing info)
+            # ALSO: negative goals like "don't download anything" are NOT download tasks
             download_words = ['download', 'fetch', 'save', 'epub', 'pdf',
                 'wallpaper', 'picture', 'photo']
-            # If goal is about listing/finding/searching info, it's not a download task
-            # even if "download" appears (e.g. "list download counts")
+            negation_words = ["don't", "dont", "never", "not", "no ", "without"]
             info_words = ['list', 'find', 'search', 'get the', 'show',
                 'downloaded', 'download count', 'most download']
+
             has_download = any(w in goal_lower for w in download_words)
+            # Strip contractions to catch "don't" before word matching
+            goal_normalized = goal_lower.replace("'", "")
+            is_negated = any(w in f" {goal_normalized} " for w in negation_words)
             is_info_task = any(w in goal_lower for w in info_words)
-            needs_download = has_download and not is_info_task
+            needs_download = has_download and not is_negated and not is_info_task
 
             # Don't allow "done" if goal needs downloads but we have 0
             if needs_download and download_count == 0:
@@ -1571,17 +1583,19 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
 
             return {"done": False, "error": "Parse failed"}
 
+        # Track target for action tracking
+        element_id_for_tracking = args.get("_element_id")
+        target = args.get("selector", args.get("url", args.get("text", "")))
+        if element_id_for_tracking is not None:
+            target = f"element:{element_id_for_tracking}"
+
+        # Pass thought to execute_action for text extraction when args are missing
+        args["_thought"] = thought
+        error_msg = ""
+        result = None
+
         try:
-            # Determine target for action tracking
-            element_id_for_tracking = args.get("_element_id")
-            target = args.get("selector", args.get("url", args.get("text", "")))
-            if element_id_for_tracking is not None:
-                target = f"element:{element_id_for_tracking}"
-
-            # Pass thought to execute_action for text extraction when args are missing
-            args["_thought"] = thought
             result = self._execute_action(action, args)
-
             self._last_action = action
 
             self.action_tracker.record(
@@ -1592,11 +1606,8 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                 context=self.hand.get_title() if self.hand else ""
             )
 
-            self.session_memory.add_action({
-                "action": action,
-                "args": {k: v for k, v in args.items() if not k.startswith("_")},
-                "thought": thought
-            })
+            self._consecutive_failures = 0
+            self._emit("on_action", action, result)
 
             selector = args.get("selector", "")
             if selector:
@@ -1607,43 +1618,14 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                     success=True
                 )
 
-            self._consecutive_failures = 0
-            self._emit("on_action", action, result)
-
-            # Record to action history for LLM context
-            history_entry = f"[Step {step_num}] {action}"
-            if element_id_for_tracking is not None:
-                history_entry += f" element {element_id_for_tracking}"
-            if args.get("text"):
-                history_entry += f' "{args["text"][:30]}"'
-            outcome = result.get("url", result.get("filename", result.get("reason", "ok")))
-            if isinstance(outcome, str) and len(outcome) > 50:
-                outcome = outcome[:47] + "..."
-            history_entry += f" -> {outcome}"
-            self._action_history.append(history_entry)
-            if len(self._action_history) > self._max_action_history:
-                self._action_history.pop(0)
-
             if hasattr(self, '_logger'):
                 self._logger.act(step_num, action, result, success=True)
 
-            return result
-
-        except Exception as e:  # Top-level agent loop - must catch all
+        except Exception as e:
             error_msg = str(e)
             self._record_failure(url, action, error_msg)
             self._consecutive_failures += 1
 
-            # Record failure to action history
-            history_entry = f"[Step {step_num}] {action}"
-            if element_id_for_tracking is not None:
-                history_entry += f" element {element_id_for_tracking}"
-            history_entry += f" -> ERROR: {str(e)[:40]}"
-            self._action_history.append(history_entry)
-            if len(self._action_history) > self._max_action_history:
-                self._action_history.pop(0)
-
-            # Use error recovery system to categorize and handle
             recovery_result = self.error_recovery.handle(e, context={
                 "url": url,
                 "action": action,
@@ -1651,7 +1633,6 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                 "args": args,
             })
 
-            # Apply recovery delay at agent level (not inside ThreadPoolExecutor)
             if recovery_result.wait_seconds > 0:
                 time.sleep(recovery_result.wait_seconds)
 
@@ -1668,14 +1649,6 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                 error=error_msg
             )
 
-            # Track repeated failures of the same action type
-            current_action_key = f"{action}:{args.get('selector', '')}:{args.get('text', '')}"
-            if current_action_key == self._last_failed_action:
-                self._repeated_failure_count += 1
-            else:
-                self._last_failed_action = current_action_key
-                self._repeated_failure_count = 1
-
             selector = args.get("selector", "")
             if selector:
                 self.persistent_memory.record_pattern(
@@ -1690,34 +1663,65 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
             if hasattr(self, '_logger'):
                 self._logger.error(error_msg, step=step_num, action=action)
 
-            # Apply recovery strategy suggestions
             if recovery_result.should_skip:
                 log(f"  [SKIPPING: {recovery_result.message}]")
-                return {"done": False, "skipped": True, "reason": recovery_result.message}
-
-            if recovery_result.new_context.get("switch_source"):
+                result = {"done": False, "skipped": True, "reason": recovery_result.message}
+            elif recovery_result.new_context.get("switch_source"):
                 log(f"  [RECOVERY: Switching source due to {error_info.category.value}]")
-                self._consecutive_challenges = 2  # Trigger source failover
-
-            if recovery_result.new_context.get("use_alternative"):
+                self._consecutive_challenges = 2
+                result = {"done": False, "error": error_msg, "recoverable": error_info.recoverable}
+            elif recovery_result.new_context.get("use_alternative"):
                 log(f"  [RECOVERY: Trying alternative approach]")
-                # Get alternative selectors from action tracker
                 alternatives = self.action_tracker.get_alternative_actions(action, target, domain)
                 if alternatives:
                     log(f"  [ALTERNATIVES: {', '.join(alternatives[:3])}]")
+                result = {"done": False, "error": error_msg, "recoverable": error_info.recoverable}
+            else:
+                result = {"done": False, "error": error_msg, "recoverable": error_info.recoverable}
 
-            # If repeating the same failed action too many times, add hint for LLM
-            if self._repeated_failure_count >= 3:
-                log(f"  [REPEATED FAILURE x{self._repeated_failure_count} - same action keeps failing]")
-                self.session_memory.add_failure(
-                    f"Action '{action}' failed {self._repeated_failure_count} times - try a DIFFERENT approach"
-                )
-                self._repeated_failure_count = 0  # Reset to avoid spam
+        # ALWAYS record this step so steps_taken is accurate on failure.
+        self.session_memory.add_action({
+            "action": action,
+            "args": {k: v for k, v in args.items() if not k.startswith("_")},
+            "thought": thought,
+            "success": not result.get("error"),
+            "error": result.get("error", "")
+        })
 
-            # If too many consecutive failures, reset counter
-            if self._consecutive_failures >= self._max_consecutive_failures:
-                log(f"  [TOO MANY FAILURES - trying different approach]")
-                self._consecutive_failures = 0
+        history_entry = f"[Step {step_num}] {action}"
+        if element_id_for_tracking is not None:
+            history_entry += f" element {element_id_for_tracking}"
+        if args.get("text"):
+            history_entry += f' "{args["text"][:30]}"'
+        outcome = result.get("url", result.get("filename", result.get("reason", "ok")))
+        if isinstance(outcome, str) and len(outcome) > 50:
+            outcome = outcome[:47] + "..."
+        if result.get("error"):
+            history_entry += f" -> ERROR: {result['error'][:40]}"
+        else:
+            history_entry += f" -> {outcome}"
+        self._action_history.append(history_entry)
+        if len(self._action_history) > self._max_action_history:
+            self._action_history.pop(0)
 
-            return {"done": False, "error": error_msg, "action": action, "recoverable": error_info.recoverable}
+        # Track repeated failures of the same action type
+        current_action_key = f"{action}:{args.get('selector', '')}:{args.get('text', '')}"
+        if current_action_key == self._last_failed_action:
+            self._repeated_failure_count += 1
+        else:
+            self._last_failed_action = current_action_key
+            self._repeated_failure_count = 1
+
+        if self._repeated_failure_count >= 3:
+            log(f"  [REPEATED FAILURE x{self._repeated_failure_count} - same action keeps failing]")
+            self.session_memory.add_failure(
+                f"Action '{action}' failed {self._repeated_failure_count} times - try a DIFFERENT approach"
+            )
+            self._repeated_failure_count = 0
+
+        if self._consecutive_failures >= self._max_consecutive_failures:
+            log(f"  [TOO MANY FAILURES - trying different approach]")
+            self._consecutive_failures = 0
+
+        return result
 
