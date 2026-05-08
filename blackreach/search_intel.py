@@ -21,9 +21,9 @@ class SearchEngine(Enum):
     SITE_SPECIFIC = "site_specific"  # Site's own search
 
 
-# Ordered fallback chain: Bing first (works in headless), then DDG, then Google.
-# Google and DuckDuckGo aggressively block headless Chromium.
-SEARCH_ENGINE_CHAIN = [SearchEngine.BING, SearchEngine.DUCKDUCKGO, SearchEngine.GOOGLE]
+# Ordered fallback chain: DuckDuckGo first (privacy-friendly, blocks headless less than Google),
+# then Bing, then Google.
+SEARCH_ENGINE_CHAIN = [SearchEngine.DUCKDUCKGO, SearchEngine.BING, SearchEngine.GOOGLE]
 DEFAULT_SEARCH_ENGINE = SEARCH_ENGINE_CHAIN[0]
 
 
@@ -48,8 +48,8 @@ def get_search_fallback_url(query: str, exclude: list = None) -> tuple:
             return (f"https://duckduckgo.com/?q={encoded}", engine)
         elif engine == SearchEngine.GOOGLE:
             return (f"https://www.google.com/search?q={encoded}", engine)
-    # Ultimate fallback — all engines excluded, use Bing anyway
-    return (f"https://www.bing.com/search?q={encoded}", SearchEngine.BING)
+    # Ultimate fallback — all engines excluded, use DuckDuckGo anyway
+    return (f"https://duckduckgo.com/?q={encoded}", SearchEngine.DUCKDUCKGO)
 
 
 @dataclass

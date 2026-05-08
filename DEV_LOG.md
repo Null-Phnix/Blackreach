@@ -402,3 +402,76 @@ After fixing the hang, I ran both test suites and found:
 ---
 
 *Last updated: 2026-05-07 by agent*
+
+---
+
+## 2026-05-08 — Session: Missing SearchEngine import in agent_actions.py mixin
+
+### What I noticed / The bug
+
+Josii pasted a Blackreach session log showing 10 failures across 24 steps. The repeating error was `NameError: name 'SearchEngine' is not defined`, triggered whenever the LLM attempted to navigate directly to a search results URL (e.g. Google, DuckDuckGo). The agent kept looping: type query → click wrong element → try navigate fallback → crash → repeat.
+
+### Root cause
+
+`agent_actions.py` was extracted from `agent.py` as a mixin during the god-class refactor (~May 2026). The `navigate` action handler still referenced `SearchEngine` and `get_search_fallback_url` for search-engine redirection logic, but those imports stayed behind in `agent.py` (line 44). Since `agent_actions.py` runs in its own module namespace, `SearchEngine` was an unbound name.
+
+The crash only surfaced when:
+1. The LLM decided to navigate directly to a search engine URL (e.g. `https://www.google.com/search?q=...`) instead of typing into a search box.
+2. The `_identify_search_engine()` static method returned a non-None engine.
+3. The comparison `target_engine != SearchEngine.BING` hit the unbound name.
+
+### Fix
+
+One-line import addition to `blackreach/agent_actions.py`:
+
+```python
+from blackreach.search_intel import get_search_fallback_url, SearchEngine
+```
+
+Verified: `python -c "from blackreach.agent_actions import AgentActionsMixin"` succeeds, and grep confirms both names are now referenced only from imported bindings.
+
+### Pitfalls / Gotchas
+
+- Mixin splits are *supposed* to be safe because they only move methods, but **static/global name references inside those methods break silently** unless you audit every name in the moved code block.
+- This bug didn't show up in unit tests because:
+  1. Tests mock `_execute_action` or use synthetic action dicts that don't trigger the real `navigate` path.
+  2. The fast test suite avoids integration tests that actually hit search engines.
+  3. No test case exercises the `_identify_search_engine` → `SearchEngine` code path from the mixin context.
+- The agent was already on Bing homepage, so the bug only triggered when the LLM got frustrated and tried to "navigate to Google directly" — a fallback the code *should* have handled gracefully.
+
+---
+
+*Last updated: 2026-05-08 by agent*
+
+---
+
+## 2026-05-08 — Session: Agent result text missing in interactive REPL
+
+### What I noticed / The bug
+
+After fixing the SearchEngine import, the agent successfully completed the "summarize the hantavirus outbreak" task in 13 steps. But Josii reported: "it didnt actually summarize like i said it should pop up a box and have the summary." The success banner showed ✓ Goal completed, stats, and downloads — but zero summary text.
+
+### Root cause
+
+`AgentProgress.complete()` in `blackreach/ui.py` (the interactive REPL progress display) never rendered the `result` field from the agent's return dict. It showed:
+- ✓ Goal completed
+- 🌐 Pages / 📊 Steps / ⚠ Retries stats
+- Downloaded files list
+
+But it completely skipped `result.get('result')` — the actual text output the LLM produced in its `done` action args.
+
+The non-interactive path (`blackreach run`) already handled this correctly via `_show_results()` in `cli.py`, which extracts `result_text = result.get('result') or result.get('output') or result.get('summary')` and renders it in a Panel. The interactive REPL just never got that logic.
+
+### Fix
+
+Added the same result-text extraction + Panel rendering to `AgentProgress.complete()` in `ui.py`, using a cyan "Result" panel placed above the green "Success" banner. Same fallback chain: `result` → `output` → `summary`.
+
+### Pitfalls / Gotchas
+
+- Interactive and non-interactive CLI paths have *parallel* result-display code, not shared. `_show_results()` and `AgentProgress.complete()` are separate implementations. Any fix to one must be mirrored to the other or the REPL path silently regresses.
+- The agent *was* producing the summary text internally (the LLM's `done` action included `result="..."`), but the UI just swallowed it. This is a display bug, not a reasoning bug.
+- Verifying this requires actually running the interactive REPL and checking the output, not just unit tests. `AgentProgress.complete()` has no test coverage for result-text display.
+
+---
+
+*Last updated: 2026-05-08 by agent*

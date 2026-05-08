@@ -36,7 +36,7 @@ class BrowseRequest(BaseModel):
     goal: str = Field(..., min_length=1, description="The goal for the agent to accomplish")
     start_url: str = Field("", description="Optional starting URL")
     max_steps: int = Field(50, ge=1, le=200, description="Maximum steps before giving up")
-    headless: bool = Field(True, description="Run browser headless")
+    headless: bool = Field(False, description="Run browser headless")
     verbose: bool = Field(False, description="Verbose logging")
 
 

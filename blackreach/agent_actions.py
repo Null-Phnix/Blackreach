@@ -16,7 +16,7 @@ from blackreach.exceptions import (
     BrowserError, NavigationError, DownloadError,
     InvalidActionArgsError, UnknownActionError, LLMError, NetworkError,
 )
-from blackreach.search_intel import get_search_fallback_url, SearchEngine
+from blackreach.search_intel import get_search_fallback_url, SearchEngine, DEFAULT_SEARCH_ENGINE
 
 STEP_PAUSE_SECONDS = 0.5
 MIN_FULL_IMAGE_SIZE = 200000
@@ -172,7 +172,7 @@ class AgentActionsMixin:
             # Also handles bare search engine homepages (no query param) — these
             # time out on Google in headless mode.
             target_engine = self._identify_search_engine(url)
-            if target_engine and target_engine != SearchEngine.BING:
+            if target_engine and target_engine != DEFAULT_SEARCH_ENGINE:
                 query = self._extract_search_query(url)
                 if query:
                     fallback_url, fallback_engine = get_search_fallback_url(
@@ -182,9 +182,9 @@ class AgentActionsMixin:
                     logger.debug("Redirecting %s search to %s", target_engine.value, fallback_engine.value)
                     url = fallback_url
                 else:
-                    # Bare homepage (e.g. google.com with no query) — redirect to Bing homepage
+                    # Bare homepage (e.g. google.com with no query) — redirect to default search homepage
                     self._blocked_engines.add(target_engine)
-                    url = "https://www.bing.com"
+                    url = "https://duckduckgo.com"
 
             # Skip only if navigating to the exact same URL (normalized)
             # Compare without trailing slash and fragment

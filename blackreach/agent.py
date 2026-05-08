@@ -41,7 +41,7 @@ from blackreach.source_manager import get_source_manager
 from blackreach.goal_engine import GoalDecomposition, get_goal_engine
 from blackreach.nav_context import PageValue, get_nav_context
 from blackreach.site_handlers import get_site_hints
-from blackreach.search_intel import get_search_intel, get_search_fallback_url, SearchEngine
+from blackreach.search_intel import get_search_intel, get_search_fallback_url, SearchEngine, DEFAULT_SEARCH_ENGINE
 from blackreach.content_verify import VerificationStatus, get_verifier
 from blackreach.timeout_manager import get_timeout_manager
 from blackreach.rate_limiter import get_rate_limiter
@@ -109,7 +109,7 @@ class AgentConfig:
     max_steps: int = 50
     headless: bool = False
     download_dir: Path = field(default_factory=lambda: Path("./downloads"))
-    start_url: str = "https://www.bing.com"
+    start_url: str = "https://duckduckgo.com"
     memory_db: Path = field(default_factory=lambda: Path("./memory.db"))
     browser_type: str = "chromium"
     use_cdp: bool = False
@@ -788,20 +788,20 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
             # Common domains that users might mention
             if any(tld in domain for tld in ['.com', '.org', '.net', '.edu', '.gov', '.io', '.co']):
                 url = f"https://{domain}"
-                # If the domain is a blocked search engine, redirect to Bing
+                # If the domain is a blocked search engine, redirect to default (DuckDuckGo)
                 # and extract a search query from the rest of the goal
                 engine = self._identify_search_engine(url)
-                if engine and engine != SearchEngine.BING:
+                if engine and engine != DEFAULT_SEARCH_ENGINE:
                     self._blocked_engines.add(engine)
                     quoted = RE_QUOTED_TEXT.findall(goal)
                     if quoted:
                         query = quoted[0]
                         fallback_url, _ = get_search_fallback_url(query)
-                        log(f"   {engine.value.title()} blocked in headless → using Bing")
-                        return (fallback_url, f"{engine.value.title()} blocked, using Bing search", query)
+                        log(f"   {engine.value.title()} blocked → using DuckDuckGo")
+                        return (fallback_url, f"{engine.value.title()} blocked, using DuckDuckGo search", query)
                     else:
-                        log(f"   {engine.value.title()} blocked in headless → using Bing")
-                        return ("https://www.bing.com", f"{engine.value.title()} blocked, using Bing", "")
+                        log(f"   {engine.value.title()} blocked → using DuckDuckGo")
+                        return ("https://duckduckgo.com", f"{engine.value.title()} blocked, using DuckDuckGo", "")
                 return (url, f"Using domain specified in goal", "")
 
         result = reason_about_goal(goal)

@@ -52,7 +52,7 @@ class DownloadResult:
 class ApiConfig:
     """Configuration for the API."""
     download_dir: Path = field(default_factory=lambda: Path("./downloads"))
-    headless: bool = True
+    headless: bool = False
     max_steps: int = 50
     browser_type: str = "chromium"
     verbose: bool = False
