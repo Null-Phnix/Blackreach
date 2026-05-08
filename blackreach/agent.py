@@ -751,8 +751,6 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
         url_lower = url.lower()
         if "google.com" in url_lower:
             return SearchEngine.GOOGLE
-        if "bing.com" in url_lower:
-            return SearchEngine.BING
         if "duckduckgo.com" in url_lower:
             return SearchEngine.DUCKDUCKGO
         return None
@@ -1237,13 +1235,14 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
 
         domain = self._get_domain()
 
-        # Inform the LLM about blocked search engines so it uses Bing instead
+        # Inform the LLM about blocked search engines so it uses DuckDuckGo instead
         if self._blocked_engines:
             names = [e.value.title() for e in self._blocked_engines]
+            default_name = DEFAULT_SEARCH_ENGINE.value.title()
             extra_context += (
-                f"\nBLOCKED SEARCH ENGINES: {', '.join(names)} are blocked in headless mode."
-                f" All searches are automatically redirected to Bing. Do NOT try to navigate"
-                f" to {', '.join(names)} — use the current search results on Bing instead."
+                f"\nBLOCKED SEARCH ENGINES: {', '.join(names)} are blocked."
+                f" All searches are automatically redirected to {default_name}. Do NOT try to navigate"
+                f" to {', '.join(names)} — use the current search results on {default_name} instead."
             )
 
         last_failure = self.session_memory.last_failure

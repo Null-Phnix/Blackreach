@@ -17,13 +17,11 @@ class SearchEngine(Enum):
     """Known search engines with their specifics."""
     GOOGLE = "google"
     DUCKDUCKGO = "duckduckgo"
-    BING = "bing"
     SITE_SPECIFIC = "site_specific"  # Site's own search
 
 
-# Ordered fallback chain: DuckDuckGo first (privacy-friendly, blocks headless less than Google),
-# then Bing, then Google.
-SEARCH_ENGINE_CHAIN = [SearchEngine.DUCKDUCKGO, SearchEngine.BING, SearchEngine.GOOGLE]
+# Ordered fallback chain: DuckDuckGo first, then Google.
+SEARCH_ENGINE_CHAIN = [SearchEngine.DUCKDUCKGO, SearchEngine.GOOGLE]
 DEFAULT_SEARCH_ENGINE = SEARCH_ENGINE_CHAIN[0]
 
 
@@ -42,9 +40,7 @@ def get_search_fallback_url(query: str, exclude: list = None) -> tuple:
     for engine in SEARCH_ENGINE_CHAIN:
         if engine in exclude:
             continue
-        if engine == SearchEngine.BING:
-            return (f"https://www.bing.com/search?q={encoded}", engine)
-        elif engine == SearchEngine.DUCKDUCKGO:
+        if engine == SearchEngine.DUCKDUCKGO:
             return (f"https://duckduckgo.com/?q={encoded}", engine)
         elif engine == SearchEngine.GOOGLE:
             return (f"https://www.google.com/search?q={encoded}", engine)
@@ -411,10 +407,8 @@ class SearchIntelligence:
             return f"https://www.google.com/search?q={encoded_query}"
         elif query.engine == SearchEngine.DUCKDUCKGO:
             return f"https://duckduckgo.com/?q={encoded_query}"
-        elif query.engine == SearchEngine.BING:
-            return f"https://www.bing.com/search?q={encoded_query}"
         else:
-            return f"https://www.bing.com/search?q={encoded_query}"
+            return f"https://duckduckgo.com/?q={encoded_query}"
 
     def start_session(self, query: SearchQuery) -> SearchSession:
         """Start a new search session."""

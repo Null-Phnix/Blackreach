@@ -208,9 +208,9 @@ class TestAgentSmartStartUrl:
             quiet=True
         )
 
-        # google.com is blocked in headless mode — redirects to Bing
-        assert "bing.com" in url
-        assert "blocked" in reasoning.lower() or "bing" in reasoning.lower()
+        # google.com is blocked — redirects to DuckDuckGo
+        assert "duckduckgo.com" in url
+        assert "blocked" in reasoning.lower() or "duckduckgo" in reasoning.lower()
 
     def test_uses_knowledge_base(self, agent_config):
         """Uses knowledge base for generic goals."""

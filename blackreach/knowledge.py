@@ -660,7 +660,7 @@ def reason_about_goal(goal: str) -> Dict:
             "content_types": content_types,
             "subject": subject,
             "best_source": None,
-            "start_url": "https://www.bing.com",
+            "start_url": "https://duckduckgo.com",
             "reasoning": "No specific source matched - using general web search",
             "search_query": subject,
             "alternate_sources": []

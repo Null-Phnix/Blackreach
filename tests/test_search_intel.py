@@ -24,7 +24,6 @@ class TestSearchEngine:
         """All expected search engines should exist."""
         assert SearchEngine.GOOGLE.value == "google"
         assert SearchEngine.DUCKDUCKGO.value == "duckduckgo"
-        assert SearchEngine.BING.value == "bing"
         assert SearchEngine.SITE_SPECIFIC.value == "site_specific"
 
 
@@ -362,17 +361,17 @@ class TestSearchIntelligence:
         url = intel.get_search_url(query)
         assert "duckduckgo.com" in url
 
-    def test_get_search_url_bing(self):
-        """Should generate Bing search URL."""
+    def test_get_search_url_duckduckgo(self):
+        """Should generate DuckDuckGo search URL."""
         intel = SearchIntelligence()
         query = SearchQuery(
             original="test",
             query="python book",
-            engine=SearchEngine.BING
+            engine=SearchEngine.DUCKDUCKGO
         )
 
         url = intel.get_search_url(query)
-        assert "bing.com" in url
+        assert "duckduckgo.com" in url
 
     def test_start_session(self):
         """Should start a search session."""
