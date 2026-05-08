@@ -16,6 +16,7 @@ from blackreach.exceptions import (
     BrowserError, NavigationError, DownloadError,
     InvalidActionArgsError, UnknownActionError, LLMError, NetworkError,
 )
+from blackreach.search_intel import get_search_fallback_url, SearchEngine
 
 STEP_PAUSE_SECONDS = 0.5
 MIN_FULL_IMAGE_SIZE = 200000
