@@ -2020,6 +2020,17 @@ def show_help():
     ui.print_help()
 
 
+@cli.command()
+@click.option("--host", default="0.0.0.0", help="Host to bind")
+@click.option("--port", default=7433, type=int, help="Port to listen on")
+def serve(host: str, port: int):
+    """Start the REST API server."""
+    from blackreach.server import main as server_main
+    console.print(BANNER)
+    console.print(f"[bold]Starting API server on {host}:{port}[/bold]\n")
+    server_main(host=host, port=port)
+
+
 def main():
     """Entry point."""
     cli()
