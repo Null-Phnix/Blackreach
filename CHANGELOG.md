@@ -13,17 +13,26 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [5.0.0-beta.2] - 2026-05-08
 
+### Added
+
+- **MCP server package**: `mcp_server/` is now a proper Python package with `__init__.py`
+- **`blackreach-server` console script**: `pip install blackreach[server]` adds a `blackreach-server` CLI entry point that starts the Flask async job server on port 7432
+- **Regression test for mixin imports**: `tests/test_mixin_imports.py` verifies `SearchEngine` and `get_search_fallback_url` are importable from `agent_actions` in isolation — catches the exact bug that caused Josii's hantavirus session failure
+
 ### Changed
 
 - **Headless default flipped**: Interactive CLI now defaults to `headless: false` — a real browser window pops up by default. Use `--headless` flag for background mode. API and server defaults also switched from `True` to `False`.
 - **Search engine default switched**: Default start URL moved from Bing (`https://www.bing.com`) to DuckDuckGo (`https://duckduckgo.com`). Search engine fallback chain reordered: DuckDuckGo first, then Google. Bing removed entirely from the chain.
 - **Hardcoded Bing references removed**: All redirect logic, fallback URL generation, and LLM prompt context now use `DEFAULT_SEARCH_ENGINE` constant instead of hardcoded `SearchEngine.BING`. Bare homepage redirects and ultimate fallbacks all point to DuckDuckGo.
+- **Flask HTTP server is now portable**: Replaced absolute `/mnt/GameDrive/...` paths with `Path(__file__)` relative resolution. Added `main()` with `--port`, `--host`, `--no-banner` CLI args.
+- **FastAPI version string synced**: `server.py` version bumped from `5.0.0-beta.1` → `5.0.0-beta.2`
 
 ### Fixed
 
 - **Missing `SearchEngine` import in `agent_actions.py` mixin**: The `navigate` action handler referenced `SearchEngine` and `get_search_fallback_url` after the god-class refactor split them into `agent_actions.py`, but the imports stayed behind in `agent.py`. This caused `NameError` crashes whenever the LLM tried to navigate directly to a search engine URL.
 - **Result text not displayed in interactive REPL**: `AgentProgress.complete()` in `ui.py` showed stats, downloads, and a ✓ banner, but silently dropped the actual `result` text from the agent's `done` action. Summarization/research tasks completed successfully but produced zero visible output. Now renders result text in a cyan "Result" panel above the success banner.
 - **Bing bot detection blocking all searches**: Bing's aggressive headless detection was causing `about:blank#blocked` pages, click timeouts, and infinite loops. Removing Bing and defaulting to a real browser window resolves this.
+- **MCP server port mismatch + missing entry point**: MCP docs referenced `blackreach-server` but the console script didn't exist. The Flask server also had no `main()` function. Fixed both — MCP now works out of the box after `pip install blackreach[server]`.
 
 ---
 
