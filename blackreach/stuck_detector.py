@@ -373,6 +373,7 @@ class StuckDetector:
             RecoveryStrategy.SCROLL_AND_EXPLORE,
             RecoveryStrategy.WAIT_AND_RETRY,
             RecoveryStrategy.GIVE_UP,
+            RecoveryStrategy.REFORMULATE_SEARCH,
         }
 
         def get_best_strategy(strategies: List[RecoveryStrategy]) -> RecoveryStrategy:
@@ -420,9 +421,10 @@ class StuckDetector:
 
         elif state.reason == StuckReason.NO_PROGRESS:
             strategies = [
+                RecoveryStrategy.REFORMULATE_SEARCH,
                 RecoveryStrategy.TRY_ALTERNATE_SOURCE,
                 RecoveryStrategy.SCROLL_AND_EXPLORE,
-                RecoveryStrategy.GO_BACK
+                RecoveryStrategy.GO_BACK,
             ]
             strategy = get_best_strategy(strategies)
             return (strategy, f"No progress: {state.details}")

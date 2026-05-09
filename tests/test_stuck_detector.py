@@ -408,3 +408,60 @@ class TestStuckDetectorAPICompatibility:
         assert state1.is_stuck == state2.is_stuck
         assert state1.reason == state2.reason
         assert state1.confidence == state2.confidence
+
+
+class TestReformulateSearch:
+    """Tests for the REFORMULATE_SEARCH recovery strategy."""
+
+    def test_reformulate_search_in_handled_strategies(self):
+        """REFORMULATE_SEARCH should be in the handled strategies set."""
+        detector = StuckDetector()
+        # Force a NO_PROGRESS stuck state
+        for i in range(12):
+            detector.observe(
+                url=f"https://example.com/page-{i}",
+                content_hash=f"hash_{i}",
+                action="click",
+                download_count=0,
+                step_number=i + 1,
+            )
+        strategy, _ = detector.suggest_strategy()
+        # With no prior attempts, REFORMULATE_SEARCH should be first choice
+        assert strategy == RecoveryStrategy.REFORMULATE_SEARCH
+
+    def test_reformulate_search_avoids_after_attempts(self):
+        """After REFORMULATE_SEARCH fails, it should fall back to other strategies."""
+        detector = StuckDetector()
+        # Record prior attempts to bias selection
+        detector.record_recovery_attempt(RecoveryStrategy.REFORMULATE_SEARCH)
+        detector.record_recovery_attempt(RecoveryStrategy.REFORMULATE_SEARCH)
+        for i in range(12):
+            detector.observe(
+                url=f"https://example.com/page-{i}",
+                content_hash=f"hash_{i}",
+                action="click",
+                download_count=0,
+                step_number=i + 1,
+            )
+        strategy, _ = detector.suggest_strategy()
+        # After 2 attempts, another strategy should be chosen
+        assert strategy != RecoveryStrategy.REFORMULATE_SEARCH
+
+    def test_reformulate_search_for_content_loop(self):
+        """REFORMULATE_SEARCH should not be suggested for content loops (not in strategy list)."""
+        detector = StuckDetector()
+        for i in range(6):
+            detector.observe(
+                url=f"https://example.com/page-{i}",
+                content_hash="same_hash_everywhere",
+                action="click",
+                download_count=0,
+            )
+        strategy, _ = detector.suggest_strategy()
+        # Content loop doesn't include REFORMULATE_SEARCH
+        assert strategy != RecoveryStrategy.REFORMULATE_SEARCH
+        assert strategy in [
+            RecoveryStrategy.TRY_ALTERNATE_SOURCE,
+            RecoveryStrategy.GO_BACK,
+            RecoveryStrategy.SCROLL_AND_EXPLORE,
+        ]

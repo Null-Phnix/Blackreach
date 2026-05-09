@@ -1070,6 +1070,18 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
                 url = self.hand.get_url()
                 title = self.hand.get_title()
 
+            elif strategy == RecoveryStrategy.REFORMULATE_SEARCH:
+                log(f"  [REFORMULATING search - trying alternate query]")
+                self.stuck_detector.record_recovery_attempt(strategy)
+                # Inject a failure note that the LLM will see in context,
+                # prompting it to try different search terms or approach
+                self.session_memory.add_failure(
+                    "STUCK: Current approach isn't working. Try a different search query, "
+                    "use more specific terms, or navigate to a different source entirely."
+                )
+                # Soft reset gives the detector a clean slate for the new approach
+                self.stuck_detector.soft_reset(recovered_url=url)
+
         challenge = self.detector.detect_challenge(html)
         if challenge.detected:
             log(f"  [Challenge page detected: {challenge.details} - waiting...]")
