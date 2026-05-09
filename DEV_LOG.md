@@ -475,3 +475,45 @@ Added the same result-text extraction + Panel rendering to `AgentProgress.comple
 ---
 
 *Last updated: 2026-05-08 by agent*
+
+---
+
+## 2026-05-08 — Session: MCP Server Integration + Regression Test
+
+### What I noticed / The bugs
+
+Three related integration issues found while wiring the MCP server to the main package:
+
+1. **MCP server had no `__init__.py`** — `mcp_server/` was just a flat directory with two .py files. It couldn't be imported as a package, which meant `from mcp_server.blackreach_http_server import main` (used by the console script) would fail.
+
+2. **`blackreach-server` console script didn't exist** — The MCP docs told users to run `blackreach-server`, but `pyproject.toml` only defined `blackreach = "blackreach.cli:main"`. No entry point for the Flask job server.
+
+3. **Flask server had hardcoded paths + no `main()` function** — `blackreach_http_server.py` used `sys.path.insert(0, '/mnt/GameDrive/AI_Projects/Blackreach')` and `DOWNLOAD_DIR = Path("/mnt/GameDrive/AI_Projects/Blackreach/downloads")`. These are absolute paths that break on any other machine. Also no `main()` → `__main__` was the only entry point, unusable as a console script.
+
+4. **Version string stale in FastAPI server** — `server.py` still said `5.0.0-beta.1` even though `__init__.py` had been bumped to `beta.2` earlier in the day.
+
+### Fixes
+
+- Added `mcp_server/__init__.py` (empty, package marker)
+- Added `blackreach-server = "mcp_server.blackreach_http_server:main"` to `[project.scripts]` in `pyproject.toml`
+- Added `flask>=2.3.0` to `[project.optional-dependencies].server` so `pip install blackreach[server]` pulls it in
+- Replaced hardcoded `sys.path` and `DOWNLOAD_DIR` with `_PROJECT_ROOT = Path(__file__).resolve().parent.parent` → portable
+- Added `main()` with argparse (`--port`, `--host`, `--no-banner`) to the Flask server
+- Bumped version strings in `server.py` from `5.0.0-beta.1` → `5.0.0-beta.2`
+
+### Regression test
+
+Added `tests/test_mixin_imports.py` with two tests:
+1. `test_agent_actions_has_searchengine_import` — verifies `agent_actions` module can be imported in isolation with both `SearchEngine` and `get_search_fallback_url` available
+2. `test_agent_actions_navigate_references_searchengine` — verifies the navigate handler references `DEFAULT_SEARCH_ENGINE` and `get_search_fallback_url` (the exact code path that caused Josii's bug)
+
+### Pitfalls
+- Adding `[project.scripts]` requires reinstalling the package (`pip install -e .`) for the console script to actually appear in PATH
+- Flask isn't in the default deps — users who want MCP need `pip install blackreach[server]` or `pip install flask` separately
+- The MCP server (`blackreach-server`, port 7432) and the FastAPI server (`blackreach serve`, port 7433) are two different things. The MCP talks to the Flask one.
+
+---
+
+*Last updated: 2026-05-08 by agent*
+
+---

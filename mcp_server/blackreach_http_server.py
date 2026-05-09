@@ -26,14 +26,14 @@ import time
 from pathlib import Path
 from enum import Enum
 
-sys.path.insert(0, '/mnt/GameDrive/AI_Projects/Blackreach')
-
 from flask import Flask, request, jsonify
 from blackreach.api import BlackreachAPI, ApiConfig
 
 app = Flask(__name__)
 
-DOWNLOAD_DIR = Path("/mnt/GameDrive/AI_Projects/Blackreach/downloads")
+# Use project root relative to this file
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DOWNLOAD_DIR = _PROJECT_ROOT / "downloads"
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -210,12 +210,25 @@ def scrape_jobs():
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
-    print("=" * 60)
-    print("Blackreach HTTP Server (Async Job Queue)")
-    print("Listening on http://127.0.0.1:7432")
-    print("Keep this running while using Claude Code.")
-    print("Stop with Ctrl+C")
-    print("=" * 60)
+def main() -> None:
+    """Entry point for `blackreach-server` console script."""
+    import argparse
+    parser = argparse.ArgumentParser(description="Blackreach HTTP Server (Async Job Queue)")
+    parser.add_argument("--port", type=int, default=7432, help="Port to listen on (default: 7432)")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to (default: 127.0.0.1)")
+    parser.add_argument("--no-banner", action="store_true", help="Suppress startup banner")
+    args = parser.parse_args()
+
+    if not args.no_banner:
+        print("=" * 60)
+        print("Blackreach HTTP Server (Async Job Queue)")
+        print(f"Listening on http://{args.host}:{args.port}")
+        print("Keep this running while using Claude Code.")
+        print("Stop with Ctrl+C")
+        print("=" * 60)
     _start_worker()
-    app.run(host="127.0.0.1", port=7432, threaded=True, debug=False)
+    app.run(host=args.host, port=args.port, threaded=True, debug=False)
+
+
+if __name__ == "__main__":
+    main()

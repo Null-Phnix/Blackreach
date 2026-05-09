@@ -47,6 +47,7 @@ dependencies = [
 server = [
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
+    "flask>=2.3.0",
 ]
 openai = ["openai>=1.0.0"]
 anthropic = ["anthropic>=0.18.0"]
@@ -69,6 +70,7 @@ dev = [
 
 [project.scripts]
 blackreach = "blackreach.cli:main"
+blackreach-server = "mcp_server.blackreach_http_server:main"
 
 [project.urls]
 Homepage = "https://github.com/Null-Phnix/Blackreach"

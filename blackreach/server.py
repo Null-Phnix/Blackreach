@@ -74,13 +74,13 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Blackreach API",
         description="Autonomous browser agent via HTTP",
-        version="5.0.0-beta.1",
+        version="5.0.0-beta.2",
         lifespan=lifespan,
     )
 
     @app.get("/health")
     async def health() -> dict:
-        return {"status": "ok", "version": "5.0.0-beta.1"}
+        return {"status": "ok", "version": "5.0.0-beta.2"}
 
     @app.post("/v1/browse", response_model=ApiResponse)
     async def browse_endpoint(req: BrowseRequest) -> ApiResponse:
