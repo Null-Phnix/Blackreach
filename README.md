@@ -2,8 +2,8 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-7c3aed?style=flat-square&labelColor=07061a)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee?style=flat-square&labelColor=07061a)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v5.0.0--beta.1-9f6ff3?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Blackreach/releases)
-[![Tests](https://img.shields.io/badge/tests-2%2C904_passing-4ade80?style=flat-square&labelColor=07061a)](tests/)
+[![Version](https://img.shields.io/badge/version-v5.0.0--beta.2-9f6ff3?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Blackreach/releases)
+[![Tests](https://img.shields.io/badge/tests-2%2C973_passing-4ade80?style=flat-square&labelColor=07061a)](tests/)
 
 **Autonomous browser agent. Give it a goal, it handles the rest.**
 
@@ -115,6 +115,7 @@ blackreach run --resume 42
 | `blackreach doctor` | Check system requirements |
 | `blackreach health` | Check content source availability |
 | `blackreach downloads` | Show download history |
+| `blackreach serve` | Start REST API server |
 
 **Interactive slash commands:**
 
@@ -127,6 +128,29 @@ blackreach run --resume 42
 | `/sessions` | List resumable sessions |
 | `/status` `/s` | Show current config |
 | `/quit` `/q` | Exit |
+
+---
+
+## Server mode
+
+Run Blackreach as a persistent HTTP server for programmatic access or MCP integration:
+
+```bash
+# FastAPI server (synchronous endpoints, port 7433)
+blackreach serve
+
+# Async job queue server (for Claude Code MCP, port 7432)
+pip install "blackreach[server]"
+blackreach-server
+```
+
+The job server supports:
+- `POST /browse` — submit an agent task, get a `job_id` back immediately
+- `GET /jobs/{job_id}` — poll for completion and results
+- `GET /jobs` — list all jobs
+- `GET /health` — server status
+
+MCP integration (`mcp_server/`) lets Claude Desktop use Blackreach as a tool for JavaScript-rendered sites, pagination, and anti-bot protected pages.
 
 ---
 
