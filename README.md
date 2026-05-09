@@ -15,7 +15,7 @@ blackreach run "download all Linear A inscription tables from sigla.phis.me"
 
 Every autonomous web agent I tried worked on the demo site and fell apart on anything real. Cloudflare caught it in seconds. JavaScript-rendered content was invisible to it. Rate limit responses came back as 200 OK and the agent saved garbage, reported success, and moved on.
 
-Blackreach is built for actual research tasks. Overnight runs. Academic databases. Sites that actively resist automation. 2,904 tests because agents that fail silently are worse than agents that don't run at all.
+Blackreach is built for actual research tasks. Overnight runs. Academic databases. Sites that actively resist automation. 2,973 tests because agents that fail silently are worse than agents that don't run at all.
 
 ---
 
@@ -46,6 +46,8 @@ The loop: **Observe** (DOM walker extracts page state) → **Think** (LLM reason
 - **Stuck Detection** — Loop detection with automatic strategy switching and source failover.
 - **Cross-Session Memory** — SQLite-backed. Remembers what worked per domain.
 - **Multi-Provider** — Ollama (local), OpenAI, Anthropic, Google, xAI.
+- **MCP Server** — Claude Desktop integration for JavaScript-rendered sites and anti-bot pages.
+- **REST API** — FastAPI server + async job queue for programmatic access.
 
 ---
 
@@ -198,24 +200,28 @@ blackreach/
 ├── dom_walker.py     # Live DOM extraction, [N] ID assignment
 ├── llm.py            # Multi-provider LLM integration
 ├── memory.py         # Session memory + SQLite persistence
-├── detection.py      # CAPTCHA, login, paywall detection
-├── stuck_detector.py # Loop detection and recovery
-├── error_recovery.py # Error categorization and recovery
+├── planner.py        # Goal decomposition + plan generation
+├── stuck_detector.py # Loop detection + recovery strategies
 ├── resilience.py     # Retry logic, circuit breaker
+├── detection.py      # CAPTCHA, login, paywall detection
+├── error_recovery.py # Error categorization and recovery
 ├── knowledge.py      # Content source knowledge base
 ├── config.py         # Configuration management
 ├── logging.py        # Structured session logging
 ├── ui.py             # Rich terminal UI
-└── cli.py            # CLI entry point
+├── cli.py            # CLI entry point
+├── api.py            # FastAPI REST server
+├── server.py         # Async job queue server
+└── mcp_server/       # MCP server for Claude Desktop
 ```
 
 ---
 
-## Why 2,904 tests
+## Why 2,973 tests
 
 Every test came from a real failure. Rate limits returning 200 OK. Tables rendered by JavaScript two seconds after page load. Session tokens expiring mid-task. CAPTCHAs on page 3 but not pages 1 or 2. Login walls that only trigger from non-residential IPs.
 
-2,904 tests means 2,904 things the world tried and got caught. When it runs at 3am downloading data, it needs to fail loud. Not silent.
+2,973 tests means 2,973 things the world tried and got caught. When it runs at 3am downloading data, it needs to fail loud. Not silent.
 
 ---
 
