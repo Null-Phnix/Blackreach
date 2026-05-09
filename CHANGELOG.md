@@ -11,6 +11,22 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [5.0.0-beta.2] - 2026-05-08
+
+### Changed
+
+- **Headless default flipped**: Interactive CLI now defaults to `headless: false` — a real browser window pops up by default. Use `--headless` flag for background mode. API and server defaults also switched from `True` to `False`.
+- **Search engine default switched**: Default start URL moved from Bing (`https://www.bing.com`) to DuckDuckGo (`https://duckduckgo.com`). Search engine fallback chain reordered: DuckDuckGo first, then Google. Bing removed entirely from the chain.
+- **Hardcoded Bing references removed**: All redirect logic, fallback URL generation, and LLM prompt context now use `DEFAULT_SEARCH_ENGINE` constant instead of hardcoded `SearchEngine.BING`. Bare homepage redirects and ultimate fallbacks all point to DuckDuckGo.
+
+### Fixed
+
+- **Missing `SearchEngine` import in `agent_actions.py` mixin**: The `navigate` action handler referenced `SearchEngine` and `get_search_fallback_url` after the god-class refactor split them into `agent_actions.py`, but the imports stayed behind in `agent.py`. This caused `NameError` crashes whenever the LLM tried to navigate directly to a search engine URL.
+- **Result text not displayed in interactive REPL**: `AgentProgress.complete()` in `ui.py` showed stats, downloads, and a ✓ banner, but silently dropped the actual `result` text from the agent's `done` action. Summarization/research tasks completed successfully but produced zero visible output. Now renders result text in a cyan "Result" panel above the success banner.
+- **Bing bot detection blocking all searches**: Bing's aggressive headless detection was causing `about:blank#blocked` pages, click timeouts, and infinite loops. Removing Bing and defaulting to a real browser window resolves this.
+
+---
+
 ## [5.0.0-beta.1] - 2026-03-02
 
 ### Added
@@ -144,8 +160,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-[Unreleased]: https://github.com/phnix/blackreach/compare/v5.0.0-beta.1...HEAD
-[5.0.0-beta.1]: https://github.com/phnix/blackreach/compare/v4.2.0-beta.2...v5.0.0-beta.1
+[Unreleased]: https://github.com/Null-Phnix/Blackreach/compare/v5.0.0-beta.2...HEAD
+[5.0.0-beta.2]: https://github.com/Null-Phnix/Blackreach/compare/v5.0.0-beta.1...v5.0.0-beta.2
+[5.0.0-beta.1]: https://github.com/Null-Phnix/Blackreach/compare/v4.2.0-beta.2...v5.0.0-beta.1
 [4.2.0-beta.2]: https://github.com/phnix/blackreach/compare/v4.0.0-beta.1...v4.2.0-beta.2
 [4.0.0-beta.1]: https://github.com/phnix/blackreach/compare/v3.3.0...v4.0.0-beta.1
 [3.3.0]: https://github.com/phnix/blackreach/compare/v3.0.0...v3.3.0
