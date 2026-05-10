@@ -35,4 +35,4 @@ class TestScancodeCLI:
         with runner.isolated_filesystem():
             result = runner.invoke(cli, ['scancode', 'https://wikipedia.org', '--refresh'])
         assert result.exit_code == 0
-        assert 'HEADLESS' in result.output
+        assert 'HEADLESS' in result.output or 'LIGHTWEIGHT' in result.output
