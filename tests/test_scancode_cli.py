@@ -13,14 +13,14 @@ class TestScancodeCLI:
         with runner.isolated_filesystem():
             result = runner.invoke(cli, ['scancode', 'https://wikipedia.org/wiki/Python'])
         assert result.exit_code == 0
-        assert 'LIGHTWEIGHT' in result.output
+        assert 'HEADLESS' in result.output
 
     def test_scancode_verbose(self):
         runner = CliRunner()
         with runner.isolated_filesystem():
             result = runner.invoke(cli, ['scancode', 'https://wikipedia.org/wiki/Python', '--verbose'])
         assert result.exit_code == 0
-        assert 'LIGHTWEIGHT' in result.output
+        assert 'HEADLESS' in result.output
         assert 'Analysis Details' in result.output
 
     def test_scancode_hard_site(self):
@@ -35,4 +35,4 @@ class TestScancodeCLI:
         with runner.isolated_filesystem():
             result = runner.invoke(cli, ['scancode', 'https://wikipedia.org', '--refresh'])
         assert result.exit_code == 0
-        assert 'LIGHTWEIGHT' in result.output
+        assert 'HEADLESS' in result.output
