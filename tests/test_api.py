@@ -109,7 +109,7 @@ class TestApiConfig:
         """ApiConfig has sensible defaults."""
         config = ApiConfig()
         assert config.download_dir == Path("./downloads")
-        assert config.headless is True
+        assert config.headless is False
         assert config.max_steps == 50
         assert config.browser_type == "chromium"
         assert config.verbose is False
@@ -137,7 +137,7 @@ class TestBlackreachAPI:
         """Should initialize with default config."""
         api = BlackreachAPI()
         assert api.config is not None
-        assert api.config.headless is True
+        assert api.config.headless is False
         assert api._agent is None
         assert api._initialized is False
 
