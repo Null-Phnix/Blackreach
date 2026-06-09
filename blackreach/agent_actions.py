@@ -184,7 +184,7 @@ class AgentActionsMixin:
                 else:
                     # Bare homepage (e.g. google.com with no query) — redirect to default search homepage
                     self._blocked_engines.add(target_engine)
-                    url = "https://duckduckgo.com"
+                    url = "https://lite.duckduckgo.com/lite/"
 
             # Skip only if navigating to the exact same URL (normalized)
             # Compare without trailing slash and fragment

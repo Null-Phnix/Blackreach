@@ -7,6 +7,7 @@ enabling Blackreach to make intelligent decisions about where to start searching
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
+from urllib.parse import quote_plus
 import re
 
 
@@ -660,7 +661,9 @@ def reason_about_goal(goal: str) -> Dict:
             "content_types": content_types,
             "subject": subject,
             "best_source": None,
-            "start_url": "https://duckduckgo.com",
+            # Bing serves the headless browser (DuckDuckGo blocks it: main = bot
+            # challenge, lite = 403). Go straight to results.
+            "start_url": f"https://www.bing.com/search?q={quote_plus(subject)}",
             "reasoning": "No specific source matched - using general web search",
             "search_query": subject,
             "alternate_sources": []

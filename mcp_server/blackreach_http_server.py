@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from enum import Enum
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from blackreach.api import BlackreachAPI, ApiConfig
 
 app = Flask(__name__)
@@ -35,6 +35,11 @@ app = Flask(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DOWNLOAD_DIR = _PROJECT_ROOT / "downloads"
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# Per-job page screenshots, captured each step so clients (Mimir) can show a
+# live view of what the agent is doing.
+_SHOT_DIR = _PROJECT_ROOT / "downloads" / "_shots"
+_SHOT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ─── Job Store ────────────────────────────────────────────────────────────────
@@ -86,6 +91,26 @@ def _worker_loop():
             max_steps = job.get("max_steps", 60)
 
             api    = _make_api(max_steps=max_steps)
+
+            # Capture a page screenshot each step so clients can show a live view.
+            agent = api._get_agent()
+            _shot_path = _SHOT_DIR / f"{job_id}.png"
+
+            def _grab_shot(*_args, _agent=agent, _path=_shot_path):
+                try:
+                    if _agent.hand is not None:
+                        _agent.hand.screenshot(path=str(_path))
+                except Exception:
+                    pass  # best-effort; never break the run on a screenshot
+
+            # Capture on both step phases (observe/think/step) and every action
+            # (navigation/click/type). on_action fires on the agent's very first
+            # navigation, so the live view fills in early instead of showing
+            # "waiting" for most of a short run. Callbacks run in the agent's own
+            # thread, so this is Playwright-safe.
+            agent.callbacks.on_step = _grab_shot
+            agent.callbacks.on_action = _grab_shot
+
             result = api.browse(goal=goal, start_url=start_url)
 
             with _jobs_lock:
@@ -156,6 +181,17 @@ def get_job(job_id: str):
     if job is None:
         return jsonify({"error": "job not found"}), 404
     return jsonify(job)
+
+
+@app.route("/jobs/<job_id>/screenshot", methods=["GET"])
+def get_job_screenshot(job_id: str):
+    """Latest page screenshot for a job (PNG), for a live view of the agent."""
+    path = _SHOT_DIR / f"{job_id}.png"
+    if not path.exists():
+        return jsonify({"error": "no screenshot yet"}), 404
+    resp = send_file(str(path), mimetype="image/png")
+    resp.headers["Cache-Control"] = "no-store"  # always fetch the newest frame
+    return resp
 
 
 @app.route("/browse", methods=["POST"])

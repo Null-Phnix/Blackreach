@@ -109,7 +109,7 @@ class AgentConfig:
     max_steps: int = 50
     headless: bool = False
     download_dir: Path = field(default_factory=lambda: Path("./downloads"))
-    start_url: str = "https://duckduckgo.com"
+    start_url: str = "https://lite.duckduckgo.com/lite/"
     memory_db: Path = field(default_factory=lambda: Path("./memory.db"))
     browser_type: str = "chromium"
     use_cdp: bool = False
@@ -753,6 +753,8 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
             return SearchEngine.GOOGLE
         if "duckduckgo.com" in url_lower:
             return SearchEngine.DUCKDUCKGO
+        if "bing.com" in url_lower:
+            return SearchEngine.BING
         return None
 
     @staticmethod
@@ -799,7 +801,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
                         return (fallback_url, f"{engine.value.title()} blocked, using DuckDuckGo search", query)
                     else:
                         log(f"   {engine.value.title()} blocked → using DuckDuckGo")
-                        return ("https://duckduckgo.com", f"{engine.value.title()} blocked, using DuckDuckGo", "")
+                        return ("https://lite.duckduckgo.com/lite/", f"{engine.value.title()} blocked, using DuckDuckGo", "")
                 return (url, f"Using domain specified in goal", "")
 
         result = reason_about_goal(goal)

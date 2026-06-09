@@ -17,11 +17,14 @@ class SearchEngine(Enum):
     """Known search engines with their specifics."""
     GOOGLE = "google"
     DUCKDUCKGO = "duckduckgo"
+    BING = "bing"
     SITE_SPECIFIC = "site_specific"  # Site's own search
 
 
-# Ordered fallback chain: DuckDuckGo first, then Google.
-SEARCH_ENGINE_CHAIN = [SearchEngine.DUCKDUCKGO, SearchEngine.GOOGLE]
+# Ordered fallback chain. Bing first: it actually serves a headless browser,
+# whereas DuckDuckGo blocks it (main = bot challenge, lite = HTTP 403) and Google
+# is heavily protected.
+SEARCH_ENGINE_CHAIN = [SearchEngine.BING, SearchEngine.DUCKDUCKGO, SearchEngine.GOOGLE]
 DEFAULT_SEARCH_ENGINE = SEARCH_ENGINE_CHAIN[0]
 
 
@@ -40,12 +43,14 @@ def get_search_fallback_url(query: str, exclude: list = None) -> tuple:
     for engine in SEARCH_ENGINE_CHAIN:
         if engine in exclude:
             continue
-        if engine == SearchEngine.DUCKDUCKGO:
-            return (f"https://duckduckgo.com/?q={encoded}", engine)
+        if engine == SearchEngine.BING:
+            return (f"https://www.bing.com/search?q={encoded}", engine)
+        elif engine == SearchEngine.DUCKDUCKGO:
+            return (f"https://lite.duckduckgo.com/lite/?q={encoded}", engine)
         elif engine == SearchEngine.GOOGLE:
             return (f"https://www.google.com/search?q={encoded}", engine)
-    # Ultimate fallback — all engines excluded, use DuckDuckGo anyway
-    return (f"https://duckduckgo.com/?q={encoded}", SearchEngine.DUCKDUCKGO)
+    # Ultimate fallback — all engines excluded, use Bing (most headless-friendly).
+    return (f"https://www.bing.com/search?q={encoded}", SearchEngine.BING)
 
 
 @dataclass
@@ -406,9 +411,9 @@ class SearchIntelligence:
         if query.engine == SearchEngine.GOOGLE:
             return f"https://www.google.com/search?q={encoded_query}"
         elif query.engine == SearchEngine.DUCKDUCKGO:
-            return f"https://duckduckgo.com/?q={encoded_query}"
+            return f"https://lite.duckduckgo.com/lite/?q={encoded_query}"
         else:
-            return f"https://duckduckgo.com/?q={encoded_query}"
+            return f"https://www.bing.com/search?q={encoded_query}"
 
     def start_session(self, query: SearchQuery) -> SearchSession:
         """Start a new search session."""

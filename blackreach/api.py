@@ -69,6 +69,7 @@ class BlackreachAPI:
     def _get_agent(self):
         """Get or create the agent instance."""
         if self._agent is None:
+            import os
             from blackreach.agent import Agent, AgentConfig
             from blackreach.llm import LLMConfig
 
@@ -79,8 +80,21 @@ class BlackreachAPI:
                 browser_type=self.config.browser_type
             )
 
+            # Use DeepSeek (OpenAI-compatible API) when its key is in the
+            # environment; otherwise fall back to the default local model.
+            llm_config = None
+            deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
+            if deepseek_key:
+                llm_config = LLMConfig(
+                    provider="openai",
+                    model=os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
+                    api_key=deepseek_key,
+                    api_base="https://api.deepseek.com",
+                )
+
             self._agent = Agent(
-                agent_config=agent_config
+                agent_config=agent_config,
+                llm_config=llm_config,
             )
             self._initialized = True
 
