@@ -26,7 +26,10 @@ except ImportError:
 @dataclass
 class CloudflareBypassConfig:
     """Configuration for Cloudflare bypass behavior."""
-    max_wait_time: int = 45  # Max seconds to wait for challenge to resolve
+    max_wait_time: int = 20  # Max seconds to wait for a challenge to resolve.
+    # Auto-resolving Cloudflare JS challenges clear in <15s; an interactive
+    # bot-challenge won't clear headlessly, so waiting 45s was wasted — the
+    # agent fails over to another source / search engine instead.
     check_interval: float = 0.5  # How often to check if challenge resolved
     mouse_movements: bool = True  # Perform mouse movements during wait
     enable_undetected: bool = True  # Use undetected-playwright if available

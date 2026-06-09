@@ -1085,6 +1085,31 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
                 self.stuck_detector.soft_reset(recovered_url=url)
 
         challenge = self.detector.detect_challenge(html)
+
+        # A search engine throwing a bot-challenge (Bing has started doing this
+        # intermittently): don't sit and wait it out — switch search engines
+        # immediately, reusing the same query. We only fall through to the wait
+        # loop below if the page isn't a search engine, or the engine we failed
+        # over to is also challenged.
+        if challenge.detected:
+            challenged_url = self.hand.get_url()
+            challenged_engine = self._identify_search_engine(challenged_url)
+            query = ""
+            if challenged_engine is not None:
+                # The challenge URL often lacks the ?q= param (Bing redirects to a
+                # bare challenge page), so fall back to the goal as the query.
+                query = self._extract_search_query(challenged_url) or self._current_goal
+            if challenged_engine is not None and query:
+                self._blocked_engines.add(challenged_engine)
+                fallback_url, fallback_engine = get_search_fallback_url(
+                    query, exclude=list(self._blocked_engines)
+                )
+                log(f"  [{challenged_engine.value} challenged the bot → switching to "
+                    f"{fallback_engine.value} immediately: {fallback_url[:60]}]")
+                self.hand.goto(fallback_url)
+                html = self.hand.get_html()
+                challenge = self.detector.detect_challenge(html)
+
         if challenge.detected:
             log(f"  [Challenge page detected: {challenge.details} - waiting...]")
             challenge_resolved = False
