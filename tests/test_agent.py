@@ -34,7 +34,7 @@ class TestAgentConfig:
     def test_default_start_url(self):
         """AgentConfig has default start URL."""
         config = AgentConfig()
-        assert config.start_url == "https://duckduckgo.com"
+        assert config.start_url == "https://lite.duckduckgo.com/lite/"
 
     def test_default_memory_db(self):
         """AgentConfig has default memory database."""
