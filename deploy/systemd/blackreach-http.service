@@ -1,0 +1,19 @@
+[Unit]
+Description=Blackreach HTTP agent gateway
+After=network-online.target starsearch-daemon.service
+Wants=network-online.target starsearch-daemon.service
+
+[Service]
+Type=simple
+WorkingDirectory=/mnt/WorkDrive/AI_Projects/Blackreach
+ExecStart=/mnt/WorkDrive/AI_Projects/Blackreach/.venv/bin/python -c "from mcp_server.blackreach_http_server import main; main()" --no-banner
+Environment=BLACKREACH_BROWSER_BACKEND=starsearch
+Environment=BLACKREACH_HUMAN_LEVEL=1
+Environment=BLACKREACH_MAX_RETAINED_JOBS=500
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

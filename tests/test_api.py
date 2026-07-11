@@ -5,6 +5,8 @@ Tests the high-level API interface.
 """
 
 import pytest
+import json
+from unittest.mock import patch
 from pathlib import Path
 from blackreach.api import (
     BrowseResult,
@@ -153,6 +155,42 @@ class TestBlackreachAPI:
         api = BlackreachAPI()
         assert api._agent is None
         assert api._initialized is False
+
+    def test_search_uses_huginn_contract_and_does_not_rescrape_results(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "success": True,
+                    "data": [{
+                        "metadata": {
+                            "title": "Result",
+                            "url": "https://example.com",
+                            "snippet": "A useful result",
+                        }
+                    }],
+                }).encode()
+
+        captured = {}
+
+        def fake_urlopen(request, timeout):
+            captured["payload"] = json.loads(request.data.decode())
+            captured["timeout"] = timeout
+            return Response()
+
+        api = BlackreachAPI()
+        with patch("blackreach.api.urllib.request.urlopen", side_effect=fake_urlopen):
+            result = api.search("web tooling", max_results=7)
+
+        assert captured["payload"]["search_options"] == {"limit": 7}
+        assert captured["payload"]["scrape_results"] is False
+        assert result.source == "huginn-starsearch"
+        assert result.results[0]["description"] == "A useful result"
 
 
 class TestApiConfigValidation:

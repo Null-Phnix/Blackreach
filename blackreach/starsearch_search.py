@@ -58,7 +58,19 @@ class _Daemon:
     def _send(self, obj: dict) -> dict:
         self.f.write((json.dumps(obj) + "\n").encode())
         self.f.flush()
-        return json.loads(self.f.readline().decode())
+        line = self.f.readline()
+        if not line:
+            raise ConnectionError("StarSearch daemon closed the connection")
+        return json.loads(line.decode())
+
+    def _command(self, command: dict) -> dict:
+        response = self._send(command)
+        if not response.get("ok"):
+            raise RuntimeError(
+                f"StarSearch {command.get('cmd')} failed: "
+                f"{response.get('error', 'unknown error')}"
+            )
+        return response
 
     def get_html(self, url: str, human_level: int = 1, timeout_s: int = 45) -> str:
         r = self._send({"v": 1, "cmd": "new_session", "sid": None,
@@ -67,12 +79,15 @@ class _Daemon:
         if not r.get("ok") or not sid:
             raise RuntimeError(f"new_session failed: {r.get('error')}")
         try:
-            self._send({"v": 1, "cmd": "navigate", "sid": sid, "url": url, "timeout_s": timeout_s})
-            gc = self._send({"v": 1, "cmd": "get_content", "sid": sid})
+            self._command({"v": 1, "cmd": "navigate", "sid": sid, "url": url, "timeout_s": timeout_s})
+            gc = self._command({"v": 1, "cmd": "get_content", "sid": sid})
             c = gc.get("result") or gc.get("content") or ""
             return c if isinstance(c, str) else (c.get("html") or c.get("text") or "")
         finally:
-            self._send({"v": 1, "cmd": "close_session", "sid": sid})
+            try:
+                self._command({"v": 1, "cmd": "close_session", "sid": sid})
+            except Exception:
+                pass
 
     def close(self):
         try:

@@ -10,6 +10,7 @@ No other Blackreach files need modification.
 """
 from __future__ import annotations
 import hashlib
+import json
 import logging
 import os
 import re
@@ -388,7 +389,7 @@ class Hand:
         self._session = self._browser.new_session(
             proxy=proxy_url,
             locale="en-US",
-            human_level=0,
+            human_level=int(os.environ.get("BLACKREACH_HUMAN_LEVEL", "1")),
         )
         self._wake_count += 1
 
@@ -489,12 +490,13 @@ class Hand:
 
     def type(self, selector: str, text: str, human: bool = None, clear: bool = True, **kwargs) -> dict:
         self._ensure_session()
-        escaped_text = text.replace("'", "\\'").replace("\n", "\\n")
+        selector_js = json.dumps(selector)
+        text_js = json.dumps(text)
         # Focus and clear the element via JS first (works with data-br-id selectors)
         if clear:
             self._session.evaluate(f"""
             (() => {{
-                const el = document.querySelector('{selector}');
+                const el = document.querySelector({selector_js});
                 if (el) {{ el.focus(); el.value = ''; }}
             }})()
             """)
@@ -505,10 +507,10 @@ class Hand:
             # Fallback: set value via JS and dispatch events
             self._session.evaluate(f"""
             (() => {{
-                const el = document.querySelector('{selector}');
+                const el = document.querySelector({selector_js});
                 if (el) {{
                     el.focus();
-                    el.value = '{escaped_text}';
+                    el.value = {text_js};
                     el.dispatchEvent(new Event('input', {{bubbles: true}}));
                     el.dispatchEvent(new Event('change', {{bubbles: true}}));
                 }}
@@ -518,14 +520,15 @@ class Hand:
 
     def press(self, key: str) -> dict:
         self._ensure_session()
+        key_js = json.dumps(key)
         self._session.evaluate(f"""
         (() => {{
             const el = document.activeElement || document;
-            const opts = {{key: '{key}', code: '{key}', bubbles: true, cancelable: true}};
+            const opts = {{key: {key_js}, code: {key_js}, bubbles: true, cancelable: true}};
             el.dispatchEvent(new KeyboardEvent('keydown', opts));
             el.dispatchEvent(new KeyboardEvent('keypress', opts));
             el.dispatchEvent(new KeyboardEvent('keyup', opts));
-            if ('{key}' === 'Enter') {{
+            if ({key_js} === 'Enter') {{
                 const form = el.closest('form');
                 if (form) {{
                     try {{ form.requestSubmit(); }} catch(e) {{ form.submit(); }}
@@ -675,12 +678,13 @@ class Hand:
 
     def smart_click(self, text: str, tag: str = "*") -> dict:
         self._ensure_session()
-        # Use XPath text matching via JS
+        if tag != "*" and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", tag):
+            raise InvalidActionArgsError("smart_click", "tag must be a tag name or *")
         script = f"""
         (() => {{
-            const xpath = "//{tag}[contains(normalize-space(.), '{text}')]";
-            const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-            const el = result.singleNodeValue;
+            const wanted = {json.dumps(text)};
+            const el = Array.from(document.querySelectorAll({json.dumps(tag)}))
+                .find(node => (node.textContent || '').includes(wanted));
             if (el) {{ el.click(); return true; }}
             return false;
         }})()
@@ -702,9 +706,9 @@ class Hand:
             (() => {{
                 const labels = document.querySelectorAll('label');
                 for (const l of labels) {{
-                    if (l.textContent.includes('{label}')) {{
+                    if (l.textContent.includes({json.dumps(label)})) {{
                         const input = l.querySelector('input, textarea') || document.getElementById(l.htmlFor);
-                        if (input) {{ input.value = '{text}'; input.dispatchEvent(new Event('input', {{bubbles: true}})); return true; }}
+                        if (input) {{ input.value = {json.dumps(text)}; input.dispatchEvent(new Event('input', {{bubbles: true}})); return true; }}
                     }}
                 }}
                 return false;
@@ -854,14 +858,15 @@ class _KeyboardShim:
     def press(self, key: str):
         # Dispatch key events on the currently focused element (not document)
         # For Enter: also trigger form submission if the element is in a form
+        key_js = json.dumps(key)
         self._session.evaluate(f"""
         (() => {{
             const el = document.activeElement || document;
-            const opts = {{key: '{key}', code: '{key}', bubbles: true, cancelable: true}};
+            const opts = {{key: {key_js}, code: {key_js}, bubbles: true, cancelable: true}};
             el.dispatchEvent(new KeyboardEvent('keydown', opts));
             el.dispatchEvent(new KeyboardEvent('keypress', opts));
             el.dispatchEvent(new KeyboardEvent('keyup', opts));
-            if ('{key}' === 'Enter') {{
+            if ({key_js} === 'Enter') {{
                 // Try to submit the form the element belongs to
                 const form = el.closest('form');
                 if (form) {{
@@ -888,7 +893,7 @@ class _LocatorShim:
     def count(self) -> int:
         try:
             result = self._session.evaluate(
-                f"document.querySelectorAll('{self._selector}').length"
+                f"document.querySelectorAll({json.dumps(self._selector)}).length"
             )
             return int(result) if result else 0
         except Exception:
@@ -901,7 +906,7 @@ class _LocatorShim:
         except (StarSearchError, StarSearchElementNotFound, Exception):
             # Fallback: JS click with scrollIntoView (works for data-br-id selectors)
             clicked = self._session.evaluate(
-                f"(() => {{ const el = document.querySelector('{self._selector}'); "
+                f"(() => {{ const el = document.querySelector({json.dumps(self._selector)}); "
                 f"if (el) {{ el.scrollIntoView({{block:'center'}}); el.click(); return true; }} return false; }})()"
             )
             if not clicked:
@@ -909,10 +914,9 @@ class _LocatorShim:
 
     def fill(self, value: str, **kwargs):
         # Use JS to clear and set value, then dispatch input event
-        escaped_value = value.replace("'", "\\'").replace("\n", "\\n")
         self._session.evaluate(
-            f"(() => {{ const el = document.querySelector('{self._selector}'); "
-            f"if (el) {{ el.focus(); el.value = ''; el.value = '{escaped_value}'; "
+            f"(() => {{ const el = document.querySelector({json.dumps(self._selector)}); "
+            f"if (el) {{ el.focus(); el.value = ''; el.value = {json.dumps(value)}; "
             f"el.dispatchEvent(new Event('input', {{bubbles:true}})); "
             f"el.dispatchEvent(new Event('change', {{bubbles:true}})); }} }})()"
         )
@@ -920,8 +924,8 @@ class _LocatorShim:
     def is_visible(self) -> bool:
         try:
             result = self._session.evaluate(
-                f"!!document.querySelector('{self._selector}') && "
-                f"document.querySelector('{self._selector}').offsetParent !== null"
+                f"!!document.querySelector({json.dumps(self._selector)}) && "
+                f"document.querySelector({json.dumps(self._selector)}).offsetParent !== null"
             )
             return bool(result)
         except Exception:
@@ -941,12 +945,12 @@ class _GetByTextShim:
         return self
 
     def click(self, **kwargs):
-        escaped = self._text.replace("'", "\\'")
         script = f"""
         (() => {{
+            const wanted = {json.dumps(self._text)};
             const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
             while (walker.nextNode()) {{
-                if (walker.currentNode.textContent.includes('{escaped}')) {{
+                if (walker.currentNode.textContent.includes(wanted)) {{
                     walker.currentNode.parentElement.click();
                     return true;
                 }}

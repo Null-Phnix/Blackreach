@@ -1,5 +1,7 @@
 # Blackreach
 
+> Suite architecture and replacement boundaries: [docs/WEB_TOOL_SUITE.md](docs/WEB_TOOL_SUITE.md)
+
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-7c3aed?style=flat-square&labelColor=07061a)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee?style=flat-square&labelColor=07061a)](LICENSE)
 [![Version](https://img.shields.io/badge/version-v5.0.0--beta.2-9f6ff3?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Blackreach/releases)

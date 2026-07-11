@@ -23,7 +23,17 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from blackreach.api import browse, search, download, get_page, BrowseResult, SearchResult, DownloadResult
+from blackreach.api import (
+    ApiConfig,
+    BlackreachAPI,
+    browse,
+    search,
+    download,
+    get_page,
+    BrowseResult,
+    SearchResult,
+    DownloadResult,
+)
 
 # ─── Config ─────────────────────────────────────────────────────────────────
 
@@ -88,13 +98,15 @@ def create_app() -> FastAPI:
         import time
         start = time.time()
         try:
-            # browse() is sync and may take minutes — run in threadpool
-            loop = asyncio.get_event_loop()
-            result: BrowseResult = await loop.run_in_executor(
-                None,
-                browse,
-                req.goal,
-            )
+            def run_browse() -> BrowseResult:
+                with BlackreachAPI(ApiConfig(
+                    headless=req.headless,
+                    max_steps=req.max_steps,
+                    verbose=req.verbose,
+                )) as api:
+                    return api.browse(req.goal, start_url=req.start_url or None)
+
+            result = await asyncio.to_thread(run_browse)
             elapsed = int((time.time() - start) * 1000)
             return ApiResponse(
                 success=result.success,
@@ -118,11 +130,8 @@ def create_app() -> FastAPI:
         import time
         start = time.time()
         try:
-            loop = asyncio.get_event_loop()
-            result: SearchResult = await loop.run_in_executor(
-                None,
-                search,
-                req.query,
+            result = await asyncio.to_thread(
+                search, req.query, max_results=req.num_results
             )
             elapsed = int((time.time() - start) * 1000)
             return ApiResponse(
@@ -144,13 +153,7 @@ def create_app() -> FastAPI:
         import time
         start = time.time()
         try:
-            loop = asyncio.get_event_loop()
-            results: list[DownloadResult] = await loop.run_in_executor(
-                None,
-                download,
-                req.query,
-                req.count,
-            )
+            results = await asyncio.to_thread(download, req.query, req.count)
             elapsed = int((time.time() - start) * 1000)
             return ApiResponse(
                 success=all(r.success for r in results),
@@ -179,8 +182,7 @@ def create_app() -> FastAPI:
         import time
         start = time.time()
         try:
-            loop = asyncio.get_event_loop()
-            result: dict = await loop.run_in_executor(None, get_page, req.url)
+            result = await asyncio.to_thread(get_page, req.url)
             elapsed = int((time.time() - start) * 1000)
             return ApiResponse(success=True, data=result, elapsed_ms=elapsed)
         except Exception as e:

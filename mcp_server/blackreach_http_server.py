@@ -20,6 +20,8 @@ Why async jobs?
   Blackreach can take 2-5 minutes. The MCP tool submits the job and polls for completion.
 """
 import sys
+import os
+import queue
 import threading
 import uuid
 import time
@@ -52,9 +54,15 @@ class JobStatus(str, Enum):
 
 
 _jobs: dict[str, dict] = {}  # job_id → job dict
-_queue: list[str] = []       # ordered list of pending job_ids
+_job_queue: queue.Queue[str] = queue.Queue()
 _jobs_lock = threading.Lock()
 _worker_thread: threading.Thread | None = None
+try:
+    _MAX_RETAINED_JOBS = max(
+        10, int(os.environ.get("BLACKREACH_MAX_RETAINED_JOBS", "500"))
+    )
+except ValueError:
+    _MAX_RETAINED_JOBS = 500
 
 
 def _make_api(max_steps: int = 60) -> BlackreachAPI:
@@ -69,15 +77,8 @@ def _make_api(max_steps: int = 60) -> BlackreachAPI:
 def _worker_loop():
     """Single background thread that runs jobs one at a time."""
     while True:
-        job_id = None
-
-        with _jobs_lock:
-            if _queue:
-                job_id = _queue.pop(0)
-
-        if job_id is None:
-            time.sleep(0.5)
-            continue
+        job_id = _job_queue.get()
+        api = None
 
         with _jobs_lock:
             job = _jobs.get(job_id)
@@ -90,7 +91,7 @@ def _worker_loop():
             start_url = job.get("start_url")
             max_steps = job.get("max_steps", 60)
 
-            api    = _make_api(max_steps=max_steps)
+            api = _make_api(max_steps=max_steps)
 
             # Capture a page screenshot each step so clients can show a live view.
             agent = api._get_agent()
@@ -128,11 +129,19 @@ def _worker_loop():
 
         except Exception as e:
             with _jobs_lock:
-                _jobs[job_id].update({
-                    "status":      JobStatus.FAILED,
-                    "finished_at": time.time(),
-                    "errors":      [str(e)],
-                })
+                if job_id in _jobs:
+                    _jobs[job_id].update({
+                        "status":      JobStatus.FAILED,
+                        "finished_at": time.time(),
+                        "errors":      [str(e)],
+                    })
+        finally:
+            if api is not None:
+                try:
+                    api.close()
+                except Exception:
+                    pass
+            _job_queue.task_done()
 
 
 def _start_worker():
@@ -145,6 +154,19 @@ def _start_worker():
 def _submit_job(goal: str, start_url: str | None = None, max_steps: int = 60) -> str:
     job_id = str(uuid.uuid4())[:8]
     with _jobs_lock:
+        overflow = len(_jobs) - _MAX_RETAINED_JOBS + 1
+        if overflow > 0:
+            terminal = sorted(
+                (
+                    job for job in _jobs.values()
+                    if job.get("status") in (JobStatus.DONE, JobStatus.FAILED)
+                ),
+                key=lambda job: job.get("finished_at", job.get("created_at", 0)),
+            )
+            for old_job in terminal[:overflow]:
+                old_id = old_job["job_id"]
+                _jobs.pop(old_id, None)
+                (_SHOT_DIR / f"{old_id}.png").unlink(missing_ok=True)
         _jobs[job_id] = {
             "job_id":     job_id,
             "status":     JobStatus.PENDING,
@@ -153,7 +175,7 @@ def _submit_job(goal: str, start_url: str | None = None, max_steps: int = 60) ->
             "max_steps":  max_steps,
             "created_at": time.time(),
         }
-        _queue.append(job_id)
+        _job_queue.put(job_id)
     _start_worker()
     return job_id
 
@@ -165,7 +187,14 @@ def health():
     with _jobs_lock:
         running = sum(1 for j in _jobs.values() if j["status"] == JobStatus.RUNNING)
         pending = sum(1 for j in _jobs.values() if j["status"] == JobStatus.PENDING)
-    return jsonify({"status": "ok", "service": "blackreach", "running": running, "pending": pending})
+        retained = len(_jobs)
+    return jsonify({
+        "status": "ok",
+        "service": "blackreach",
+        "running": running,
+        "pending": pending,
+        "retained_jobs": retained,
+    })
 
 
 @app.route("/jobs", methods=["GET"])
@@ -199,10 +228,15 @@ def browse():
     data      = request.get_json(force=True)
     goal      = data.get("goal", "")
     start_url = data.get("start_url") or None
-    max_steps = data.get("max_steps", 60)
+    try:
+        max_steps = int(data.get("max_steps", 60))
+    except (TypeError, ValueError):
+        return jsonify({"error": "max_steps must be an integer"}), 400
 
     if not goal:
         return jsonify({"error": "goal is required"}), 400
+    if not 1 <= max_steps <= 200:
+        return jsonify({"error": "max_steps must be between 1 and 200"}), 400
 
     job_id = _submit_job(goal=goal, start_url=start_url, max_steps=max_steps)
     return jsonify({"job_id": job_id, "status": "pending"}), 202
@@ -212,10 +246,15 @@ def browse():
 def search():
     data       = request.get_json(force=True)
     query      = data.get("query", "")
-    num_results = data.get("num_results", 10)
+    try:
+        num_results = int(data.get("num_results", 10))
+    except (TypeError, ValueError):
+        return jsonify({"error": "num_results must be an integer"}), 400
 
     if not query:
         return jsonify({"error": "query is required"}), 400
+    if not 1 <= num_results <= 50:
+        return jsonify({"error": "num_results must be between 1 and 50"}), 400
 
     # Primary path: Huginn /v1/seek (fast, no browser). BlackreachAPI.search()
     # is a thin Huginn client — it starts no agent unless we fall back below.
@@ -231,11 +270,10 @@ def search():
             "total_found": sr.total_found,
         }), 200
 
-    # Fallback: agent-driven browse search, for queries Huginn can't serve yet
-    # (e.g. when its keyless engines are blocked). Removed once Huginn search
-    # is reliable (Brave key).
+    # Fallback: agent-driven browse search when both Huginn and its direct
+    # StarSearch fallback are unavailable.
     goal = (
-        f"Search Google for: {query}\n"
+        f"Search the web for: {query}\n"
         f"Extract the top {num_results} results.\n"
         f"For each result return: title, URL, and a brief description.\n"
         f"Format as a numbered list."

@@ -306,15 +306,15 @@ class TestReasonAboutGoalEdgeCases:
         result = reason_about_goal("download 10 papers from 2024")
         assert "subject" in result
 
-    def test_fallback_to_google_when_no_sources(self):
-        """Falls back to Google when no sources match."""
+    def test_fallback_to_bing_when_no_sources(self):
+        """Falls back to the suite's StarSearch-supported engine."""
         from blackreach.knowledge import reason_about_goal
         from unittest.mock import patch
 
         with patch('blackreach.knowledge.find_best_sources', return_value=[]):
             result = reason_about_goal("xyz123")
             assert result["best_source"] is None
-            assert "duckduckgo.com" in result["start_url"]
+            assert "bing.com" in result["start_url"]
 
 
 class TestSubjectExtractionEdgeCases:

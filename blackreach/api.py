@@ -16,9 +16,12 @@ import os
 import json
 import urllib.request
 import urllib.parse
+import logging
 
 # Huginn/BlackCrawl is the shared scrape+search backend (localhost:7432).
 HUGINN_URL = os.environ.get("HUGINN_URL", "http://127.0.0.1:7432")
+HUGINN_API_KEY = os.environ.get("HUGINN_API_KEY", "")
+logger = logging.getLogger(__name__)
 
 
 def _clean_result_url(url: str) -> str:
@@ -213,48 +216,70 @@ class BlackreachAPI:
         max_results: int = 10
     ) -> SearchResult:
         """
-        Keyless web search. Primary backend is StarSearch (our anti-detect
-        browser -> Bing), which gets clean SERPs where plain-HTTP scrapers get
-        CAPTCHA'd. Falls back to Huginn /v1/seek. Empty results let callers fall
-        back further (e.g. the agent). No paid APIs, no keys.
+        Keyless web search through Huginn, the suite's shared web-data plane.
+        Huginn routes the request through StarSearch; Blackreach talks directly
+        to StarSearch only as a local availability fallback.
 
         Args:
             query: Search query
             source: label kept for API compatibility (unused)
             max_results: Maximum results to return
         """
-        # Primary: StarSearch anti-detect browser -> Bing (keyless, beats CAPTCHAs).
+        # Primary: centralize search policy, result normalization, and future
+        # engine fallback in Huginn instead of maintaining two competing paths.
         try:
-            from blackreach.starsearch_search import search as _starsearch_bing
-            rows = _starsearch_bing(query, limit=max_results)
-            if rows:
-                return SearchResult(query=query, results=rows,
-                                    source="starsearch-bing", total_found=len(rows))
-        except Exception:
-            pass
-
-        # Fallback: Huginn /v1/seek (shared scrape/search API).
-        try:
+            headers = {"Content-Type": "application/json"}
+            if HUGINN_API_KEY:
+                headers["Authorization"] = f"Bearer {HUGINN_API_KEY}"
             req = urllib.request.Request(
                 f"{HUGINN_URL}/v1/seek",
-                data=json.dumps({"query": query, "limit": max_results}).encode(),
-                headers={"Content-Type": "application/json"},
+                data=json.dumps({
+                    "query": query,
+                    "search_options": {"limit": max_results},
+                    "scrape_results": False,
+                }).encode(),
+                headers=headers,
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=45) as resp:
                 payload = json.loads(resp.read().decode())
-        except Exception:
-            return SearchResult(query=query, results=[], source="starsearch-bing", total_found=0)
+            results = []
+            for item in (payload.get("data") or []):
+                meta = item.get("metadata") or {}
+                results.append({
+                    "title": meta.get("title") or item.get("title") or "",
+                    "url": _clean_result_url(meta.get("url") or item.get("url") or ""),
+                    "description": (
+                        meta.get("description")
+                        or meta.get("snippet")
+                        or item.get("summary")
+                        or ""
+                    ),
+                })
+            if results:
+                return SearchResult(
+                    query=query,
+                    results=results[:max_results],
+                    source="huginn-starsearch",
+                    total_found=len(results[:max_results]),
+                )
+        except Exception as exc:
+            logger.warning("Huginn search unavailable; using direct StarSearch: %s", exc)
 
-        results = []
-        for item in (payload.get("data") or []):
-            meta = item.get("metadata") or {}
-            results.append({
-                "title": meta.get("title") or item.get("title") or "",
-                "url": _clean_result_url(meta.get("url") or item.get("url") or ""),
-                "description": meta.get("description") or item.get("summary") or "",
-            })
-        return SearchResult(query=query, results=results, source="huginn", total_found=len(results))
+        try:
+            from blackreach.starsearch_search import search as _starsearch_bing
+            rows = _starsearch_bing(query, limit=max_results)
+            return SearchResult(
+                query=query,
+                results=rows,
+                source="starsearch-bing",
+                total_found=len(rows),
+            )
+        except Exception as exc:
+            logger.warning("Direct StarSearch search failed: %s", exc)
+            return SearchResult(
+                query=query, results=[], source="unavailable", total_found=0
+            )
 
     def get_page(self, url: str) -> Dict:
         """

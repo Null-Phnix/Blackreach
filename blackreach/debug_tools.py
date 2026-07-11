@@ -317,6 +317,8 @@ class TestResultTracker:
     Track test results with debug info for comprehensive reporting.
     """
 
+    __test__ = False  # Production helper, not a pytest test container.
+
     def __init__(self, debug_tools: Optional[DebugTools] = None):
         self.debug_tools = debug_tools or DebugTools()
         self.results: List[Dict[str, Any]] = []

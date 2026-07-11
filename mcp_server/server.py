@@ -5,7 +5,7 @@ Exposes the Blackreach autonomous browser agent as Claude tool calls.
 Better than WebFetch for: JS-rendered sites, paginated content,
 sites with anti-bot measures, multi-step navigation.
 
-Architecture: Submits jobs to the Blackreach HTTP server (localhost:7432),
+Architecture: Submits jobs to the Blackreach HTTP server (localhost:7434),
 then polls for completion. This avoids MCP tool call timeouts since Blackreach
 can take 2-5 minutes per job.
 
@@ -15,12 +15,13 @@ Start the HTTP server first in your terminal:
 Keep that terminal tab open, then use these tools normally.
 """
 import time
+import os
 import httpx
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("blackreach")
 
-HTTP_BASE   = "http://127.0.0.1:7434"
+HTTP_BASE = os.environ.get("BLACKREACH_HTTP_URL", "http://127.0.0.1:7434").rstrip("/")
 SUBMIT_TIMEOUT = 10    # seconds to submit job
 POLL_INTERVAL  = 5     # seconds between polls
 MAX_WAIT       = 600   # 10 min max wait
@@ -52,7 +53,6 @@ def _poll(job_id: str) -> str:
     dots = 0
 
     while time.time() < deadline:
-        time.sleep(POLL_INTERVAL)
         try:
             resp = httpx.get(f"{HTTP_BASE}/jobs/{job_id}", timeout=SUBMIT_TIMEOUT)
             resp.raise_for_status()
@@ -91,6 +91,7 @@ def _poll(job_id: str) -> str:
         dots = (dots + 1) % 4
         dot_str = "." * (dots + 1)
         print(f"[blackreach] Job {job_id} {status}{dot_str}", flush=True)
+        time.sleep(POLL_INTERVAL)
 
     return f"Timed out waiting for job {job_id} after {MAX_WAIT}s. Check /jobs/{job_id} manually."
 

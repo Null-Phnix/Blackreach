@@ -21,6 +21,11 @@ from unittest.mock import Mock, MagicMock
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from functools import partial
 import json
+import os
+
+# Backend choice must be deterministic in unit tests. A live developer daemon
+# must not change which implementation gets imported or create browser sessions.
+os.environ.setdefault("BLACKREACH_BROWSER_BACKEND", "playwright")
 
 # Add project root to path
 import sys

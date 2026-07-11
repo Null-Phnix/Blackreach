@@ -1,27 +1,50 @@
-"""
-Blackreach Browser Backend — Auto-selecting loader.
+"""Deterministic browser-backend loader.
 
-Tries StarSearch first (stealth daemon with behavioral humanization).
-Falls back to Playwright if StarSearch is not installed or daemon isn't running.
-
-No StarSearch code is shipped with Blackreach — it's an optional dependency.
+``BLACKREACH_BROWSER_BACKEND`` accepts ``auto`` (default), ``starsearch``, or
+``playwright``. Auto selection checks installation and daemon socket presence;
+it never creates a browser session at import time.
 """
+import importlib.util
 import logging
+import os
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_backend = None
+
+def _choose_backend(requested: str, starsearch_available: bool) -> str:
+    """Return the requested backend without silently weakening explicit policy."""
+    if requested == "starsearch":
+        return "starsearch"
+    if requested == "auto" and starsearch_available:
+        return "starsearch"
+    return "playwright"
+
+def _starsearch_available() -> bool:
+    if importlib.util.find_spec("starsearch") is None:
+        return False
+    socket_path = os.environ.get("STARSEARCH_SOCKET")
+    if not socket_path:
+        pointer = Path.home() / ".starsearch" / "daemon.sock_path"
+        try:
+            socket_path = pointer.read_text().strip()
+        except OSError:
+            return False
+    return bool(socket_path and Path(socket_path).is_socket())
+
+
+_requested_backend = os.environ.get("BLACKREACH_BROWSER_BACKEND", "auto").strip().lower()
+if _requested_backend not in {"auto", "starsearch", "playwright"}:
+    logger.warning(
+        "Unknown BLACKREACH_BROWSER_BACKEND=%r; using auto", _requested_backend
+    )
+    _requested_backend = "auto"
+
+_backend = _choose_backend(_requested_backend, _starsearch_available())
 
 try:
-    from starsearch import StarSearch as _StarSearchCheck
-    # Verify daemon is actually running by creating a session and navigating
-    _ss = _StarSearchCheck()
-    _test_session = _ss.new_session(human_level=0)
-    _test_session.evaluate("document.title")
-    _test_session.close()
-    _ss.close()
-    del _ss, _test_session, _StarSearchCheck
-
+    if _backend != "starsearch":
+        raise ImportError("Playwright explicitly selected")
     from blackreach.extras.browser_starsearch import (
         Hand, ProxyConfig, ProxyType, ProxyRotator,
         BrowserNotReadyError, ElementNotFoundError, DownloadError,
@@ -30,7 +53,12 @@ try:
     _backend = "starsearch"
     logger.info("Using StarSearch browser backend (stealth daemon)")
 
-except Exception:
+except (ImportError, ModuleNotFoundError) as exc:
+    if _requested_backend == "starsearch":
+        raise RuntimeError(
+            "BLACKREACH_BROWSER_BACKEND=starsearch but the StarSearch backend "
+            "could not be loaded; refusing silent Playwright fallback"
+        ) from exc
     from blackreach.browser_playwright import (
         Hand, ProxyConfig, ProxyType, ProxyRotator,
     )
