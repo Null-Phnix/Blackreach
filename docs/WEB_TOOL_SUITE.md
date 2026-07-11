@@ -1,211 +1,304 @@
 # Blackreach Web-Tool Suite
 
-> Architecture source of truth. Audit snapshot: 2026-07-11.
+> Architecture and operations source of truth. Validated 2026-07-11 EDT.
 
-## Vision
+## Contract
 
-Own the web execution and intelligence stack end to end: no Firecrawl bill, no
-Browserbase session dependency, no search API key, and no opaque third-party
-browser control plane. The suite should remain personal/self-hosted rather than
-grow SaaS billing, tenancy, or fleet-management machinery.
+The suite is a local-first web execution and intelligence stack for Josii's
+agent fleet. It replaces the locally useful Firecrawl and managed-browser calls
+without claiming infrastructure that is not present.
 
-That goal has four separate planes. Treating them as one feature is how false
-"replacement complete" claims happen.
+| Layer | Sole responsibility |
+| --- | --- |
+| Blackreach | Goal-driven planning, interaction, recovery, downloads, and agent jobs |
+| Huginn / BlackCrawl | Deterministic search, scrape, crawl, map, extraction, batch, cache, replay, schedules, and durable jobs |
+| StarSearch | Browser/session lifecycle, fingerprints, humanized input, screenshots, request policy, and browser capacity |
+| blackreach-mcp | Thin MCP schemas, authentication, transport errors, and bounded job polling |
+| Huginn egress provider | Direct-vs-proxied policy, proxy leases, rotation/stickiness, health, and cooldown |
 
-| Plane | Owner | Responsibility |
-|---|---|---|
-| Browser execution | StarSearch | Chromium lifecycle, fingerprints, stealth, humanized input, cookies, screenshots, SSRF/capability boundaries, session routing |
-| Web data | Huginn | Search, scrape, crawl, map, batch, extraction, cache, jobs, streaming, replay, throttling |
-| Agent decisions | Blackreach | Goal planning, interactive browsing, recovery, downloads, research workflows |
-| Egress | Not complete | Proxy inventory, health, rotation, sticky sessions, geography, and IP reputation |
-
-MCP servers and HTTP wrappers are adapters. They must not grow their own browser
-implementation or independent search policy.
-
-## Request flow
+No adapter owns a second browser. `blackreach-mcp` no longer launches
+Playwright or stores a private browser profile.
 
 ```text
-MCP / CLI / application
-        |
-        +-- structured web operation --> Huginn :7432
-        |                                  |
-        |                                  +--> StarSearch :7676 --> Bing/site
-        |                                  +--> Playwright only for an explicitly
-        |                                       unsupported StarSearch option
-        |
-        +-- autonomous interaction ------> Blackreach :7434
-                                           |
-                                           +--> Huginn for search/data operations
-                                           +--> StarSearch for interactive Hand
+Hermes / Claude / Codex / Anubis / Herdr
+                    |
+              blackreach-mcp
+              /             \
+ deterministic work          goal-driven work
+          |                         |
+     Huginn :7432              Blackreach :7434
+          |                    /           \
+          +---- StarSearch :7676       Huginn for data
+          |
+   direct host egress OR a configured real proxy lease
 ```
 
-Rules:
+Production rules:
 
-1. Huginn is the data-plane gateway. Blackreach does not maintain a competing
-   primary search stack.
-2. StarSearch is the browser product boundary. A stealth setup failure fails
-   closed; it must never silently become a naked automated Chromium session.
-3. A returned `ScrapeData` with `status_code >= 400` is a failure. It is not
-   cacheable, crawlable, or countable as a completed page.
-4. Cache identity includes every option that changes output. Stateful requests
-   (actions, cookies, custom headers, extraction, change tracking) do not cache.
-5. Unsupported options fall back explicitly and are documented. They are never
-   silently discarded.
-6. Public listeners stay on loopback unless authentication is deliberately
-   added. StarSearch TCP rejects non-loopback binds.
-7. Tests must select a backend explicitly. A developer daemon must not change
-   unit-test behavior at import time.
+1. Huginn is the deterministic data-plane gateway.
+2. StarSearch is the browser boundary. Production mode fails closed if it is
+   unavailable or a request needs an unimplemented browser control.
+3. Playwright compatibility fallback requires the explicit
+   `HUGINN_ALLOW_PLAYWRIGHT_FALLBACK=true` opt-in. `render_mode=light` remains
+   an explicit caller-selected HTTP path.
+4. Explicit URLs are preserved. Blackreach forwards `start_url` unchanged and
+   Huginn scrapes the requested URL; neither substitutes a search/default page.
+5. A result with an upstream status of 400 or greater is a failure and is not
+   cached or counted as a completed page.
+6. Cache identity includes output-affecting options and egress policy. Requests
+   with actions, cookies, headers, inline extraction, or change tracking do not cache.
+7. Stealth changes browser-visible identity. It never implies a new IP,
+   residential egress, geolocation, or proxy reputation.
 
-## Current validated state
+## Stable API and MCP surface
 
-### StarSearch
+### Huginn REST
 
-- Unix and loopback TCP JSON-lines transports with a required handshake.
-- Request-scoped sessions, navigation, content, click/type/hover/scroll,
-  evaluate, waits, screenshots, and cookies.
-- Fingerprint/profile selection and stealth setup fail closed.
-- `navigator.webdriver` is absent/undefined, not `false`.
-- User-Agent and Client Hints are applied through the correct CDP emulation
-  domain.
-- SSRF protection allows safe non-network fixtures (`about:blank`, `data:`) and
-  rejects local, private, link-local, shared, documentation, multicast, and
-  reserved address ranges by default. DNS availability errors have a distinct
-  wire error and are no longer misreported as attacks.
-- Configurable socket path, live capacity status, five-process real capacity,
-  and wired cross-daemon session forwarding.
-- Builds use committed fingerprint data. Network refresh requires the explicit
-  `STARSEARCH_REFRESH_PROFILES=1` build flag.
-- The user service can opt into an isolated resolver view. This repaired the
-  live machine's broken router DNS without changing host-wide network settings.
-- The signed installer now targets `Null-Phnix/StarSearch`, re-verifies an
-  existing binary, and replaces it only after an atomic verified download.
-  There are currently no published release assets and no repository Actions
-  secrets configured, so source build/install is still the working deployment
-  path. A signing key must be provisioned deliberately before the first release.
+| Capability | Start/status routes | Notes |
+| --- | --- | --- |
+| Search | `POST /v1/search` (`/v1/seek`) | StarSearch-rendered Bing is the keyless primary engine |
+| Scrape | `POST /v1/scrape` (`/v1/probe`) | Markdown, HTML, raw HTML, links, metadata, screenshot, actions, retries, cache |
+| Crawl | `POST /v1/crawl`, `GET /v1/crawl/{id}` | Durable SQLite job, progress, cancellation, JSONL/SSE support |
+| Batch scrape | `POST /v1/batch/scrape`, `GET /v1/batch/scrape/{id}` | Durable job IDs and partial results; `/v1/flock` remains synchronous |
+| Extract | `POST /v1/extract`, `GET /v1/extract/{id}` | Scrape plus schema/prompt/template extraction |
+| Browser sessions | `POST/GET /v1/browser/sessions` | Authenticated StarSearch lifecycle |
+| Browser command | `POST /v1/browser/sessions/{id}/commands` | Navigate, click, type, scroll, hover, wait, screenshot, content, JS, cookies, history |
+| Browser close | `DELETE /v1/browser/sessions/{id}` | Idempotent close and capacity release |
+| Health | `/health`, `/health/ready`, `/health/detailed` | StarSearch capacity plus explicit egress mode/health |
+| Metrics | `/v1/metrics` | Per-endpoint count, latency, and success rate |
 
-### Huginn
+Data-bearing routes require `Authorization: Bearer ...` when the deployment key
+is configured. Basic health/liveness remains probeable; detailed health and
+metrics require the key.
 
-- StarSearch is primary for browser-rendered scrape and search; `render_mode=light`
-  is the explicit plain-HTTP opt-out.
-- Actions, waits, scroll, cookies, selectors, screenshots, proxy server, locale,
-  timeouts, and daemon errors traverse the StarSearch protocol.
-- Action enums are serialized to their JSON values at both API boundaries;
-  supported actions no longer silently fall back to Playwright.
-- Custom headers, mobile emulation, ad interception, and strict TLS currently
-  use the Playwright fallback because StarSearch does not yet expose those
-  controls.
-- Failed scrape results are not cached, do not reset circuit breakers, and are
-  not counted by batch or crawl.
-- Crawl forwards all `scrapeOptions`, enforces `robots.txt` unless ignored, and
-  streams each page as it completes.
-- `/v1/flock` remains a synchronous native batch endpoint. The Firecrawl-style
-  `/v1/batch/scrape` alias is an asynchronous job with status and cancellation.
-- MCP job IDs, search limits, and synchronous flock behavior match the REST API.
-- Health/readiness reports live StarSearch reachability and session capacity.
-- `HUGINN_DATA_DIR` now drives the derived SQLite path; jobs, replay data, and
-  research memory land on the `/data` volume instead of disappearing from
-  `/root/.huginn` when the container is recreated.
+### MCP tools
 
-### Blackreach
+The Node adapter publishes 12 tools:
 
-- Browser selection is controlled by `BLACKREACH_BROWSER_BACKEND=auto|starsearch|playwright`.
-  Importing the module no longer creates a probe session.
-- The production unit pins `starsearch` and explicit mode fails closed if it
-  cannot load; `auto` is a developer convenience, not the production policy.
-- Huginn is primary search; direct StarSearch/Bing is the availability fallback.
-- Both HTTP entrypoints forward caller `start_url`, limits, and runtime options.
-- StarSearch JavaScript shims encode user strings as data rather than interpolating
-  raw selectors/text into scripts.
-- The persistent HTTP worker closes browser/API resources after every job, uses
-  a blocking queue, validates limits, and bounds retained jobs/screenshots.
+- `blackreach_search`, `blackreach_fetch`, `blackreach_fetch_many`
+- `blackreach_crawl`, `blackreach_extract`, `blackreach_search_page`
+- `blackreach_screenshot`, `blackreach_job`
+- `blackreach_browser_session`, `blackreach_browser_command`
+- `blackreach_browse`, `blackreach_doctor`
 
-## Replacement boundary: honest assessment
+The original six names remain compatible, but now route through Huginn instead
+of a private Playwright browser. Long operations return durable job IDs by
+default. Poll with repeated `blackreach_job` calls; explicit blocking waits are
+capped below common MCP 60-second transport timeouts.
+
+Every adapter error includes a stable code, handling layer, HTTP status,
+retryability, and request ID. Screenshot bytes return through MCP and the old
+arbitrary host `save_path` input is intentionally ignored.
+
+## StarSearch session and security boundary
+
+StarSearch exposes two transports:
+
+- owner-only Unix socket, protected by filesystem mode and peer UID;
+- opt-in loopback TCP at `127.0.0.1:7676`, used by the Huginn container and
+  requiring a 32-character-or-longer handshake token.
+
+TCP never binds to a non-loopback address. The preferred secret setting is
+`STARSEARCH_TCP_TOKEN_FILE`; the systemd deployment uses
+`~/.config/starsearch/tcp-token` with mode `0600`.
+
+Session properties:
+
+- five real process-isolated slots, with the sixth request returning
+  `CapacityExceeded`;
+- typed lifecycle and commands, idle expiry, domain allowlists, cookies, and
+  optional per-session proxy routing;
+- stealth/fingerprint setup fails closed;
+- authenticated HTTP proxy credentials cross the Huginn-to-StarSearch protocol
+  as structured fields and are handled through Chromium authentication;
+- daemon restart invalidates old session IDs cleanly and returns capacity for
+  new sessions.
+
+Network policy checks the top-level URL and every Chromium request paused by
+CDP Fetch, including redirects and subresources. It rejects local/private,
+link-local, metadata, carrier-grade NAT, documentation, benchmark, multicast,
+and reserved destinations by default. `file:`, `javascript:`, and other unsafe
+schemes remain forbidden; `about:blank` and `data:` are allowed only as
+non-network documents. Internal access requires both server policy and an
+explicit session request.
+
+This materially narrows SSRF and redirect bypasses, but it is not a claim that
+DNS rebinding is mathematically eliminated: resolution and Chromium's eventual
+connection are still separate operations. A future socket-level egress proxy
+or browser network service is the stronger enforcement boundary.
+
+## Real proxy boundary
+
+Default health reports:
+
+```json
+{
+  "mode": "direct",
+  "configured": false,
+  "direct_egress": true,
+  "endpoints": 0
+}
+```
+
+That means the host's public IP is in use. To bring real proxy endpoints:
+
+```bash
+install -d -m 700 ~/.config/huginn
+install -m 600 /path/to/proxy-urls ~/.config/huginn/proxy-urls
+```
+
+Set:
+
+```dotenv
+HUGINN_PROXY_PROVIDER=static
+HUGINN_PROXY_URLS_FILE=/home/phnix/.config/huginn/proxy-urls
+HUGINN_PROXY_ROTATION=round_robin   # or sticky
+HUGINN_PROXY_FAILURE_THRESHOLD=3
+HUGINN_PROXY_COOLDOWN_SECONDS=60
+```
+
+The Compose file mounts the host file at
+`/run/secrets/huginn_proxy_urls`; `/dev/null` is mounted in direct mode so no
+fake endpoint is created. Supported schemes are `http`, `https`, and `socks5`.
+Credentials may be embedded in the secret file. Public status and errors never
+return them.
+
+The provider issues per-request/per-session leases, rotates or sticks by key,
+tracks successes and proxy-like failures, cools unhealthy endpoints, and never
+silently falls back to direct egress when all configured endpoints are down.
+It does not supply IPs, test residential reputation, or guarantee geography;
+endpoint procurement remains an infrastructure decision.
+
+## Deployment configuration
+
+| Service | Bind | Required production settings |
+| --- | --- | --- |
+| StarSearch | Unix + `127.0.0.1:7676` | `STARSEARCH_TCP_ADDR`, `STARSEARCH_TCP_TOKEN_FILE` |
+| Huginn | `127.0.0.1:7432` | `HUGINN_API_KEY_FILE`, `HUGINN_STARSEARCH_TCP`, `HUGINN_STARSEARCH_TOKEN_FILE`, `HUGINN_BROWSER_BACKEND=starsearch` |
+| Blackreach | `127.0.0.1:7434` | `BLACKREACH_API_KEY_FILE`, `HUGINN_API_KEY_FILE`, `BLACKREACH_BROWSER_BACKEND=starsearch` |
+| blackreach-mcp | stdio | base URLs plus key files; defaults point at `~/.config/...` |
+
+Current secret files:
+
+```text
+~/.config/starsearch/tcp-token
+~/.config/huginn/api-key
+~/.config/blackreach/api-key
+```
+
+All are local, mode `0600`, excluded from Git, and mounted/read by path rather
+than copied into images or process arguments.
+
+Huginn state lives in the named `huginn-data` volume at `/data/huginn.db`.
+Jobs, replay data, scheduler state, cache metadata, and research memory survive
+container recreation. StarSearch fingerprint profile data remains in its
+dedicated repository and must never be discarded during deployment.
+
+## Runbook
+
+Build and install StarSearch atomically:
+
+```bash
+cd /mnt/WorkDrive/AI_Projects/Project_StarSearch
+cargo test --manifest-path daemon/Cargo.toml
+cargo build --release --manifest-path daemon/Cargo.toml
+install -m 755 daemon/target/release/starsearch-daemon ~/.starsearch/bin/starsearch-daemon.new
+mv -f ~/.starsearch/bin/starsearch-daemon.new ~/.starsearch/bin/starsearch-daemon
+install -m 644 deploy/systemd/starsearch-daemon.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user restart starsearch-daemon
+```
+
+Build/recreate Huginn and restart Blackreach:
+
+```bash
+cd /mnt/WorkDrive/AI_Projects/BlackCrawl
+docker compose build huginn
+docker compose up -d --force-recreate huginn
+
+cd /mnt/WorkDrive/AI_Projects/Blackreach
+install -m 644 deploy/systemd/blackreach-http.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user restart blackreach-http
+```
+
+Build and test the MCP adapter:
+
+```bash
+cd /mnt/WorkDrive/AI_Projects/blackreach-mcp
+npm ci
+npm run check
+npm audit --audit-level=low
+```
+
+Quick doctor calls:
+
+```bash
+curl -s http://127.0.0.1:7432/health | jq
+curl -s -H "Authorization: Bearer $(<~/.config/huginn/api-key)" \
+  http://127.0.0.1:7432/health/detailed | jq
+systemctl --user status starsearch-daemon blackreach-http
+docker ps --filter name=huginn
+```
+
+## Validated installed state
+
+Automated suites after the final runtime change:
+
+- StarSearch: 166 Rust tests and 72 Python tests.
+- Huginn: 827 passed, 6 explicitly deselected integration cases.
+- Blackreach: 3,050 passed in the full repository suite.
+- blackreach-mcp: TypeScript build, 5 HTTP/config tests, real stdio MCP
+  `tools/list` smoke, and zero npm audit findings.
+
+Live evidence from the rebuilt services:
+
+| Contract | Proof |
+| --- | --- |
+| Authentication | missing/wrong StarSearch TCP token rejected; unauthenticated Huginn/Blackreach data routes returned 401 |
+| Search | 3 results for Prometheus through Huginn to StarSearch/Bing; first host `prometheus.io` |
+| Explicit scrape | `https://example.com/`, title and H1 extracted, `render_mode=starsearch` |
+| Actions/screenshot | selector wait plus scroll completed; valid 15,900-byte PNG returned |
+| Cache | unique first request `cached=false`, second `cached=true` |
+| Egress truth | metadata reported `mode=direct`, `proxied=false`, endpoint null |
+| SSRF | top-level loopback rejected; data-page subresource and public HTTP redirect produced zero hits on a live loopback canary |
+| Browser lifecycle | create/navigate/evaluate/close passed; five slots filled, sixth rejected, all five recovered |
+| Crash recovery | stale session returned `SessionNotFound` after daemon restart; new session succeeded with 5/5 available |
+| Batch/crawl | batch completed 2/2; crawl extracted `Example Domain` |
+| Persistence | completed batch `d8f24775-958c-49ba-91ec-803db16b25b2` remained queryable after container restart |
+| MCP | 12 tools, live search/scrape/session/screenshot; 21,200 base64 image characters returned |
+| Agent start URL | MCP agent job retained `https://example.com/` and completed with `H1: Example Domain` |
+| Fail closed | unsupported header control returned `unsupported_option`; stopped StarSearch returned failure, never Playwright content |
+
+## Honest replacement boundary
 
 ### Firecrawl
 
-Huginn replaces the calls used locally today: single scrape, crawl, map, search,
-batch, extraction, streaming, and change tracking. It is not full current
-Firecrawl v2 parity. Missing or incomplete surfaces include the complete v2
-request/response schema, batch pagination/advanced controls, persistent profiles,
-interactive scrape sessions, and some advanced actions/extraction modes.
+The suite covers the local calls in use: search, scrape, screenshots/actions,
+crawl, batch jobs, extraction, progress/status, streaming, caching, retries,
+change tracking, and structured failures. It is not complete Firecrawl v2
+schema parity. Remaining gaps include full v2 request/response compatibility,
+advanced batch controls/pagination, profile APIs, and some interactive scrape
+actions. Extraction quality also depends on the configured local/remote LLM.
 
 Reference: [Firecrawl v2 API](https://docs.firecrawl.dev/api-reference/v2-introduction)
 
 ### Browserbase
 
-StarSearch replaces the need for a managed browser during local Blackreach and
-Huginn execution. It does not yet provide a Browserbase-compatible remote CDP
-connect URL, HTTP session lifecycle API, context persistence API, session replay,
-or fleet autoscaling.
+The suite now has authenticated local HTTP session lifecycle, isolated browser
+processes, capacity limits, per-session proxy routing, typed commands, cookies,
+screenshots, health, and daemon restart behavior. It does not expose a public
+CDP/WebSocket connection URL, durable named contexts, hosted live-view/debug
+URLs, session replay artifacts, multi-host scheduling, autoscaling, or managed
+proxy networks. Those are the honest Browserbase boundary.
 
 Reference: [Browserbase session API](https://docs.browserbase.com/reference/api/create-a-session)
 
-### Proxy services
+### Highest-leverage next slices
 
-This is not replaced yet. StarSearch can launch through a supplied proxy and
-Huginn can forward configured proxy credentials, but the suite does not create
-fresh public IPs. Anti-detect fingerprints do not change network reputation.
-An owned egress plane still needs proxy inventory, health scoring, rotation,
-sticky sessions, geography verification, and an intentional source of IPs.
-
-Reference: [Browserbase proxies](https://docs.browserbase.com/platform/identity/proxies)
-
-## Ports and configuration
-
-| Service | Bind | Key configuration |
-|---|---|---|
-| StarSearch | Unix socket + `127.0.0.1:7676` | `STARSEARCH_SOCKET_PATH`, `STARSEARCH_TCP_ADDR`, optional `~/.config/starsearch/resolver/` |
-| Huginn | `127.0.0.1:7432` | `HUGINN_STARSEARCH_TCP`, `HUGINN_BROWSER_BACKEND`, `HUGINN_PROXY_*`, `HUGINN_DNS_PRIMARY`, `HUGINN_DNS_SECONDARY` |
-| Blackreach HTTP | `127.0.0.1:7434` | `BLACKREACH_BROWSER_BACKEND`, `BLACKREACH_HUMAN_LEVEL`, `BLACKREACH_MAX_RETAINED_JOBS` |
-
-## Roadmap in dependency order
-
-1. **Request-level network policy:** enforce destination policy for redirects
-   and subresources at the browser/egress boundary. The current URL preflight is
-   useful but cannot, by itself, eliminate DNS-rebinding time-of-check/time-of-use
-   risk.
-2. **Protocol controls:** add StarSearch session commands/options for extra HTTP
-   headers, mobile viewport/device hints, request blocking, strict TLS, and
-   authenticated proxy URLs. Remove Playwright fallback one capability at a time.
-3. **Egress plane:** define a `ProxyLease` contract, persistent health/reputation
-   store, sticky domain sessions, location verification, and safe credential
-   storage. Bring-your-own endpoints first; owned IP supply is a separate infra
-   decision.
-4. **Browserbase-compatible gateway:** expose authenticated HTTP session create,
-   inspect, close, keep-alive, and a remote CDP/WebSocket connection boundary.
-   Map those sessions onto StarSearch rather than adding another browser.
-5. **Firecrawl v2 contract suite:** vendor the official OpenAPI schema as a test
-   fixture, produce a machine-readable diff, and implement only the calls used by
-   local consumers first.
-6. **Search resilience:** add at least one StarSearch-rendered engine fallback,
-   engine health scoring, and result-quality fixtures. Keep keys optional, never
-   required.
-7. **Session durability:** context persistence, crash recovery, replay artifacts,
-   and bounded storage lifecycle.
-8. **Release pipeline:** publish signed StarSearch assets from the current
-   private repository and exercise a clean authenticated install in CI.
-9. **Retire duplicate browser code:** turn the separate `blackreach-mcp` browser
-   into a thin gateway client or archive it after consumers migrate.
-
-## Verification snapshot
-
-- StarSearch: 164 Rust tests; 71 Python client/integration tests.
-- Huginn: 809 passed; 6 explicitly deselected integration cases.
-- Blackreach: 3,046 passed in 339.43 seconds (full run).
-
-Live checks on the installed services:
-
-| Contract | Result |
-|---|---|
-| StarSearch status | v0.2.0, 5/5 slots available after work |
-| Huginn full scrape | `example.com`, HTTP 200, `render_mode=starsearch` |
-| Actions + screenshot | selector wait and scroll stayed on StarSearch; PNG returned |
-| Cache | second identical stateless scrape returned `cached=true` |
-| SSRF | loopback target rejected before either browser backend |
-| Search | 3/3 results through Huginn → StarSearch → Bing |
-| Blackreach search | 3/3 results, source `huginn-starsearch` |
-| Async batch and crawl | both completed 1/1 through StarSearch |
-| Container persistence | completed batch job remained queryable after recreate |
-
-The snapshot is evidence for this audit, not a permanent badge. CI is the source
-of truth after the next change.
+1. Persist named StarSearch contexts and encrypted cookie state across daemon restart.
+2. Put DNS and socket connection policy behind one owned egress gateway to close the remaining rebinding gap.
+3. Add a controlled CDP/WebSocket gateway only if Anubis/Herdr truly need third-party browser attachment.
+4. Generate a machine-readable Firecrawl v2 contract diff and implement only consumer-visible gaps.
+5. Add search-engine health scoring and a second StarSearch-rendered keyless engine.
+6. Publish signed StarSearch release artifacts and validate a clean install in CI.
