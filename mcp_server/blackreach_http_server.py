@@ -225,7 +225,7 @@ def search():
         sr = None
     if sr and sr.results:
         return jsonify({
-            "source":      "huginn",
+            "source":      sr.source,
             "query":       query,
             "results":     sr.results,
             "total_found": sr.total_found,

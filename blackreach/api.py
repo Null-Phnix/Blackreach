@@ -209,20 +209,31 @@ class BlackreachAPI:
     def search(
         self,
         query: str,
-        source: str = "huginn",
+        source: str = "starsearch",
         max_results: int = 10
     ) -> SearchResult:
         """
-        Search the web via Huginn (/v1/seek), the shared search backend.
-
-        Returns a SearchResult; ``results`` is empty when Huginn finds nothing,
-        letting callers fall back to the agent. Runs no browser of its own.
+        Keyless web search. Primary backend is StarSearch (our anti-detect
+        browser -> Bing), which gets clean SERPs where plain-HTTP scrapers get
+        CAPTCHA'd. Falls back to Huginn /v1/seek. Empty results let callers fall
+        back further (e.g. the agent). No paid APIs, no keys.
 
         Args:
             query: Search query
             source: label kept for API compatibility (unused)
             max_results: Maximum results to return
         """
+        # Primary: StarSearch anti-detect browser -> Bing (keyless, beats CAPTCHAs).
+        try:
+            from blackreach.starsearch_search import search as _starsearch_bing
+            rows = _starsearch_bing(query, limit=max_results)
+            if rows:
+                return SearchResult(query=query, results=rows,
+                                    source="starsearch-bing", total_found=len(rows))
+        except Exception:
+            pass
+
+        # Fallback: Huginn /v1/seek (shared scrape/search API).
         try:
             req = urllib.request.Request(
                 f"{HUGINN_URL}/v1/seek",
@@ -233,7 +244,7 @@ class BlackreachAPI:
             with urllib.request.urlopen(req, timeout=45) as resp:
                 payload = json.loads(resp.read().decode())
         except Exception:
-            return SearchResult(query=query, results=[], source="huginn", total_found=0)
+            return SearchResult(query=query, results=[], source="starsearch-bing", total_found=0)
 
         results = []
         for item in (payload.get("data") or []):
