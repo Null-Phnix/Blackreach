@@ -375,29 +375,36 @@ class Hand:
         if self._session is not None:
             return
         self.download_dir.mkdir(parents=True, exist_ok=True)
-        proxy_url = None
+        proxy_options = None
         if self._proxy:
             self._current_proxy = self._proxy
-            proxy_url = f"{self._proxy.proxy_type.value}://{self._proxy.host}:{self._proxy.port}"
+            proxy_options = self._proxy.to_playwright_proxy()
         elif self._proxy_rotator and len(self._proxy_rotator) > 0:
             p = self._proxy_rotator.get_next()
             if p:
                 self._current_proxy = p
-                proxy_url = f"{p.proxy_type.value}://{p.host}:{p.port}"
+                proxy_options = p.to_playwright_proxy()
         if self._browser is None:
             self._browser = StarSearch()
         self._session = self._browser.new_session(
-            proxy=proxy_url,
+            proxy=proxy_options,
             locale="en-US",
             human_level=int(os.environ.get("BLACKREACH_HUMAN_LEVEL", "1")),
         )
         self._wake_count += 1
 
-    def sleep(self) -> None:
+    def sleep(self, keep_alive: bool = False) -> None:
+        """Release the session unless the caller explicitly requested reuse."""
+        if keep_alive:
+            return
         if self._session:
             self._session.close()
             self._session = None
         self._current_proxy = None
+
+    def _release_all_keys(self) -> None:
+        """Compatibility hook; StarSearch sends discrete key events per command."""
+        return None
 
     def close(self) -> None:
         self.sleep()
