@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import socket
+import time
 import urllib.parse
 from pathlib import Path
 from typing import List, Dict
@@ -112,19 +113,27 @@ def _parse_bing(html: str, limit: int) -> List[Dict[str, str]]:
     return out
 
 
-def search(query: str, limit: int = 10) -> List[Dict[str, str]]:
-    """Search Bing via StarSearch. Returns [{title,url,description}], or [] on failure."""
+def search(query: str, limit: int = 10, retries: int = 3) -> List[Dict[str, str]]:
+    """Search Bing via StarSearch. Returns [{title,url,description}], or [] on failure.
+
+    Retries transient failures (CapacityExceeded under load, a crashed session,
+    a dropped connection) with backoff before giving up so the caller falls back.
+    """
     url = "https://www.bing.com/search?q=" + urllib.parse.quote_plus(query)
-    d = None
-    try:
-        d = _Daemon()
-        return _parse_bing(d.get_html(url), limit)
-    except Exception as e:
-        logger.warning("StarSearch->Bing search failed (%s): %s", type(e).__name__, e)
-        return []
-    finally:
-        if d:
-            d.close()
+    for attempt in range(retries):
+        d = None
+        try:
+            d = _Daemon()
+            return _parse_bing(d.get_html(url), limit)
+        except Exception as e:
+            if attempt == retries - 1:
+                logger.warning("StarSearch->Bing search failed (%s): %s", type(e).__name__, e)
+                return []
+            time.sleep(0.4 * (attempt + 1))
+        finally:
+            if d:
+                d.close()
+    return []
 
 
 def demo() -> None:
