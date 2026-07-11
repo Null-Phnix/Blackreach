@@ -95,6 +95,18 @@ def _poll(job_id: str) -> str:
     return f"Timed out waiting for job {job_id} after {MAX_WAIT}s. Check /jobs/{job_id} manually."
 
 
+def _format_search(result: dict) -> str:
+    """Format direct (non-job) search results returned by the Huginn fast path."""
+    rows = result.get("results") or []
+    src = result.get("source", "huginn")
+    if not rows:
+        return f"No results for '{result.get('query', '')}' (via {src})."
+    lines = [f"Search results for '{result.get('query', '')}' (via {src}):", ""]
+    for i, r in enumerate(rows, 1):
+        lines.append(f"{i}. {r.get('title', '')}\n   {r.get('url', '')}\n   {r.get('description', '')}")
+    return "\n".join(lines)
+
+
 @mcp.tool()
 def blackreach_browse(goal: str, start_url: str = "") -> str:
     """
@@ -138,8 +150,8 @@ def blackreach_search(query: str, num_results: int = 10) -> str:
     """
     Use Blackreach to perform a web search and extract structured results.
 
-    Better than WebFetch for search because it handles JS-rendered results
-    and can follow pagination. Takes 2-5 minutes.
+    Served by Huginn (fast, seconds) when it can; otherwise falls back to a
+    slower agent-driven browse search (2-5 minutes).
 
     Args:
         query: Search query string
@@ -152,11 +164,16 @@ def blackreach_search(query: str, num_results: int = 10) -> str:
     if isinstance(result, str):
         return result
 
+    # Fast path: Huginn served the search directly (no job to poll).
+    if result.get("results") is not None:
+        return _format_search(result)
+
+    # Fallback: an agent browse job was queued; poll it to completion.
     job_id = result.get("job_id")
     if not job_id:
         return f"Unexpected response: {result}"
 
-    return f"Search job submitted: {job_id}\n\n" + _poll(job_id)
+    return f"Search job submitted (agent fallback): {job_id}\n\n" + _poll(job_id)
 
 
 @mcp.tool()

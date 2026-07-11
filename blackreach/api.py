@@ -12,6 +12,31 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Callable, Union
 from pathlib import Path
 import asyncio
+import os
+import json
+import urllib.request
+import urllib.parse
+
+# Huginn/BlackCrawl is the shared scrape+search backend (localhost:7432).
+HUGINN_URL = os.environ.get("HUGINN_URL", "http://127.0.0.1:7432")
+
+
+def _clean_result_url(url: str) -> str:
+    """Huginn's DDG-sourced results wrap the target in a redirect
+    (//duckduckgo.com/l/?uddg=<encoded>). Unwrap it to the real URL."""
+    if not url:
+        return url
+    if url.startswith("//"):
+        url = "https:" + url
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError:
+        return url
+    if "duckduckgo.com" in parsed.netloc and parsed.path.startswith("/l/"):
+        uddg = urllib.parse.parse_qs(parsed.query).get("uddg")
+        if uddg:
+            return uddg[0]
+    return url
 
 
 @dataclass
@@ -184,33 +209,41 @@ class BlackreachAPI:
     def search(
         self,
         query: str,
-        source: str = "google",
+        source: str = "huginn",
         max_results: int = 10
     ) -> SearchResult:
         """
-        Search the web and return results.
+        Search the web via Huginn (/v1/seek), the shared search backend.
+
+        Returns a SearchResult; ``results`` is empty when Huginn finds nothing,
+        letting callers fall back to the agent. Runs no browser of its own.
 
         Args:
             query: Search query
-            source: Search engine ("google", "duckduckgo")
+            source: label kept for API compatibility (unused)
             max_results: Maximum results to return
-
-        Returns:
-            SearchResult with found items
         """
-        # For now, this is a simplified version
-        # Full implementation would extract search results without downloading
-        from blackreach.search_intel import get_search_intel
+        try:
+            req = urllib.request.Request(
+                f"{HUGINN_URL}/v1/seek",
+                data=json.dumps({"query": query, "limit": max_results}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                payload = json.loads(resp.read().decode())
+        except Exception:
+            return SearchResult(query=query, results=[], source="huginn", total_found=0)
 
-        search_intel = get_search_intel()
-        search_query = search_intel.create_search(query)
-
-        return SearchResult(
-            query=query,
-            results=[],  # Would be populated by actual search
-            source=source,
-            total_found=0
-        )
+        results = []
+        for item in (payload.get("data") or []):
+            meta = item.get("metadata") or {}
+            results.append({
+                "title": meta.get("title") or item.get("title") or "",
+                "url": _clean_result_url(meta.get("url") or item.get("url") or ""),
+                "description": meta.get("description") or item.get("summary") or "",
+            })
+        return SearchResult(query=query, results=results, source="huginn", total_found=len(results))
 
     def get_page(self, url: str) -> Dict:
         """

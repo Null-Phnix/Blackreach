@@ -214,15 +214,34 @@ def search():
     query      = data.get("query", "")
     num_results = data.get("num_results", 10)
 
+    if not query:
+        return jsonify({"error": "query is required"}), 400
+
+    # Primary path: Huginn /v1/seek (fast, no browser). BlackreachAPI.search()
+    # is a thin Huginn client — it starts no agent unless we fall back below.
+    try:
+        sr = _make_api().search(query, max_results=num_results)
+    except Exception:
+        sr = None
+    if sr and sr.results:
+        return jsonify({
+            "source":      "huginn",
+            "query":       query,
+            "results":     sr.results,
+            "total_found": sr.total_found,
+        }), 200
+
+    # Fallback: agent-driven browse search, for queries Huginn can't serve yet
+    # (e.g. when its keyless engines are blocked). Removed once Huginn search
+    # is reliable (Brave key).
     goal = (
         f"Search Google for: {query}\n"
         f"Extract the top {num_results} results.\n"
         f"For each result return: title, URL, and a brief description.\n"
         f"Format as a numbered list."
     )
-
     job_id = _submit_job(goal=goal)
-    return jsonify({"job_id": job_id, "status": "pending", "query": query}), 202
+    return jsonify({"job_id": job_id, "status": "pending", "query": query, "source": "agent-fallback"}), 202
 
 
 @app.route("/scrape-jobs", methods=["POST"])
