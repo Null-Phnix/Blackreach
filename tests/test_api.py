@@ -14,6 +14,7 @@ from blackreach.api import (
     DownloadResult,
     ApiConfig,
     BlackreachAPI,
+    _huginn_api_key,
 )
 
 
@@ -155,6 +156,14 @@ class TestBlackreachAPI:
         api = BlackreachAPI()
         assert api._agent is None
         assert api._initialized is False
+
+    def test_huginn_api_key_file(self, monkeypatch, tmp_path):
+        key_file = tmp_path / "api-key"
+        key_file.write_text("local-huginn-key")
+        monkeypatch.delenv("HUGINN_API_KEY", raising=False)
+        monkeypatch.setenv("HUGINN_API_KEY_FILE", str(key_file))
+
+        assert _huginn_api_key() == "local-huginn-key"
 
     def test_search_uses_huginn_contract_and_does_not_rescrape_results(self):
         class Response:

@@ -9,6 +9,25 @@ from blackreach.api import BrowseResult, SearchResult
 from blackreach.server import create_app
 
 
+def test_async_gateway_requires_configured_api_key(monkeypatch):
+    """The deployed Flask gateway authenticates data-bearing routes."""
+    import importlib
+    import mcp_server.blackreach_http_server as gateway
+
+    monkeypatch.setenv("BLACKREACH_API_KEY", "gateway-secret")
+    gateway = importlib.reload(gateway)
+    client = gateway.app.test_client()
+
+    assert client.get("/health").status_code == 200
+    assert client.get("/jobs").status_code == 401
+    assert client.get(
+        "/jobs", headers={"Authorization": "Bearer gateway-secret"}
+    ).status_code == 200
+
+    monkeypatch.delenv("BLACKREACH_API_KEY", raising=False)
+    importlib.reload(gateway)
+
+
 @pytest.mark.asyncio
 async def test_browse_endpoint_forwards_start_url_and_runtime_config(monkeypatch):
     seen = {}

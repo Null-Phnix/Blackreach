@@ -10,6 +10,10 @@ ExecStart=/mnt/WorkDrive/AI_Projects/Blackreach/.venv/bin/python -c "from mcp_se
 Environment=BLACKREACH_BROWSER_BACKEND=starsearch
 Environment=BLACKREACH_HUMAN_LEVEL=1
 Environment=BLACKREACH_MAX_RETAINED_JOBS=500
+Environment=HUGINN_API_KEY_FILE=%h/.config/huginn/api-key
+Environment=BLACKREACH_API_KEY_FILE=%h/.config/blackreach/api-key
+ExecStartPre=/usr/bin/test -s %h/.config/huginn/api-key
+ExecStartPre=/usr/bin/test -s %h/.config/blackreach/api-key
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

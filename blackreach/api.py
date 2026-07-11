@@ -20,8 +20,20 @@ import logging
 
 # Huginn/BlackCrawl is the shared scrape+search backend (localhost:7432).
 HUGINN_URL = os.environ.get("HUGINN_URL", "http://127.0.0.1:7432")
-HUGINN_API_KEY = os.environ.get("HUGINN_API_KEY", "")
 logger = logging.getLogger(__name__)
+
+
+def _huginn_api_key() -> str:
+    direct = os.environ.get("HUGINN_API_KEY", "").strip()
+    if direct:
+        return direct
+    key_file = os.environ.get("HUGINN_API_KEY_FILE")
+    if not key_file:
+        return ""
+    try:
+        return Path(key_file).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise RuntimeError(f"Cannot read HUGINN_API_KEY_FILE {key_file}: {exc}") from exc
 
 
 def _clean_result_url(url: str) -> str:
@@ -229,8 +241,9 @@ class BlackreachAPI:
         # engine fallback in Huginn instead of maintaining two competing paths.
         try:
             headers = {"Content-Type": "application/json"}
-            if HUGINN_API_KEY:
-                headers["Authorization"] = f"Bearer {HUGINN_API_KEY}"
+            api_key = _huginn_api_key()
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
             req = urllib.request.Request(
                 f"{HUGINN_URL}/v1/seek",
                 data=json.dumps({

@@ -25,6 +25,7 @@ import queue
 import threading
 import uuid
 import time
+import hmac
 from pathlib import Path
 from enum import Enum
 
@@ -32,6 +33,37 @@ from flask import Flask, request, jsonify, send_file
 from blackreach.api import BlackreachAPI, ApiConfig
 
 app = Flask(__name__)
+
+
+def _load_api_key() -> str:
+    direct = os.environ.get("BLACKREACH_API_KEY", "").strip()
+    if direct:
+        return direct
+    key_file = os.environ.get("BLACKREACH_API_KEY_FILE")
+    if not key_file:
+        return ""
+    try:
+        token = Path(key_file).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise RuntimeError(f"Cannot read BLACKREACH_API_KEY_FILE {key_file}: {exc}") from exc
+    if not token:
+        raise RuntimeError(f"BLACKREACH_API_KEY_FILE {key_file} is empty")
+    return token
+
+
+_API_KEY = _load_api_key()
+
+
+@app.before_request
+def authenticate_request():
+    """Health stays probeable; every stateful or data-bearing route is authenticated."""
+    if request.path == "/health" or not _API_KEY:
+        return None
+    authorization = request.headers.get("Authorization", "")
+    scheme, _, candidate = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not candidate or not hmac.compare_digest(candidate, _API_KEY):
+        return jsonify({"error": "unauthorized", "code": "unauthorized"}), 401
+    return None
 
 # Use project root relative to this file
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
