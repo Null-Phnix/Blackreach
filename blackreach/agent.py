@@ -654,7 +654,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
         # Continue running from saved step
         return self._run_loop(self._current_goal, start_step=self._current_step + 1, quiet=quiet)
 
-    def run(self, goal: str, quiet: bool = False) -> Dict[str, Any]:
+    def run(self, goal: str, quiet: bool = False, start_url: Optional[str] = None) -> Dict[str, Any]:
         """
         Run the agent to accomplish a goal.
 
@@ -713,7 +713,13 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
                 "error": "Failed to start browser"
             }
 
-        start_url, reasoning, search_query = self._get_smart_start_url(goal, quiet=quiet)
+        if start_url:
+            # Caller gave an explicit start URL — honor it instead of decomposing
+            # the goal into a web search (the /browse start_url must not be ignored).
+            reasoning, search_query = "explicit start_url provided by caller", None
+            log(f"Using caller-provided start URL: {start_url}")
+        else:
+            start_url, reasoning, search_query = self._get_smart_start_url(goal, quiet=quiet)
         self._goal_reasoning = {
             "start_url": start_url,
             "reasoning": reasoning,

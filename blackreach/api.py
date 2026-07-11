@@ -151,7 +151,7 @@ class BlackreachAPI:
             agent.callbacks.on_step = lambda step, max_s, phase, detail: on_progress(step, max_s, phase)
 
         try:
-            result = agent.run(goal, quiet=not self.config.verbose)
+            result = agent.run(goal, quiet=not self.config.verbose, start_url=start_url)
 
             return BrowseResult(
                 success=result.get("success", False),
