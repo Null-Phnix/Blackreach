@@ -297,7 +297,7 @@ class Hand:
         proxy_rotator: Optional[ProxyRotator] = None,
         **kwargs,
     ):
-        self._browser = StarSearch()
+        self._browser = None  # lazy init in wake()
         self._session: Optional[StarSearchSession] = None
         self.download_dir = download_dir or Path("./downloads")
         self.headless = headless
@@ -383,10 +383,12 @@ class Hand:
             if p:
                 self._current_proxy = p
                 proxy_url = f"{p.proxy_type.value}://{p.host}:{p.port}"
+        if self._browser is None:
+            self._browser = StarSearch()
         self._session = self._browser.new_session(
             proxy=proxy_url,
             locale="en-US",
-            human_level=2,
+            human_level=0,
         )
         self._wake_count += 1
 
