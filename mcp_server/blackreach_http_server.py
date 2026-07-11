@@ -5,9 +5,9 @@ Runs Blackreach as a persistent Flask server with full network access.
 Start this ONCE from your terminal, then Claude Code's MCP can call it over localhost.
 
 Usage:
-  python /mnt/GameDrive/AI_Projects/Blackreach/mcp_server/blackreach_http_server.py
+  python /mnt/AI_Projects/Blackreach/mcp_server/blackreach_http_server.py
 
-Runs on: http://localhost:7432
+Runs on: http://localhost:7434  (7432 is owned by the Huginn/BlackCrawl container)
 
 Architecture:
   - POST /browse, /search, /scrape-jobs  → returns job_id immediately (non-blocking)
@@ -250,7 +250,7 @@ def main() -> None:
     """Entry point for `blackreach-server` console script."""
     import argparse
     parser = argparse.ArgumentParser(description="Blackreach HTTP Server (Async Job Queue)")
-    parser.add_argument("--port", type=int, default=7432, help="Port to listen on (default: 7432)")
+    parser.add_argument("--port", type=int, default=7434, help="Port to listen on (default: 7434; 7432 is Huginn/BlackCrawl)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to (default: 127.0.0.1)")
     parser.add_argument("--no-banner", action="store_true", help="Suppress startup banner")
     args = parser.parse_args()

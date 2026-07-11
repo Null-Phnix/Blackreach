@@ -20,7 +20,7 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("blackreach")
 
-HTTP_BASE   = "http://127.0.0.1:7432"
+HTTP_BASE   = "http://127.0.0.1:7434"
 SUBMIT_TIMEOUT = 10    # seconds to submit job
 POLL_INTERVAL  = 5     # seconds between polls
 MAX_WAIT       = 600   # 10 min max wait
