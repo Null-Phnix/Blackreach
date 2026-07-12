@@ -1,6 +1,6 @@
 # Blackreach Web-Tool Suite
 
-> Architecture and operations source of truth. Validated 2026-07-11 EDT.
+> Architecture and operations source of truth. Validated 2026-07-12 EDT.
 
 ## Contract
 
@@ -40,7 +40,8 @@ Production rules:
    unavailable or a request needs an unimplemented browser control.
 3. Playwright compatibility fallback requires the explicit
    `HUGINN_ALLOW_PLAYWRIGHT_FALLBACK=true` opt-in. `render_mode=light` remains
-   an explicit caller-selected HTTP path.
+   an explicit caller-selected HTTP path. `render_mode=starsearch` forces the
+   daemon path and fails closed even when compatibility fallback is enabled.
 4. Explicit URLs are preserved. Blackreach forwards `start_url` unchanged and
    Huginn scrapes the requested URL; neither substitutes a search/default page.
 5. A result with an upstream status of 400 or greater is a failure and is not
@@ -89,6 +90,12 @@ capped below common MCP 60-second transport timeouts.
 Every adapter error includes a stable code, handling layer, HTTP status,
 retryability, and request ID. Screenshot bytes return through MCP and the old
 arbitrary host `save_path` input is intentionally ignored.
+
+`blackreach_fetch` defaults to explicit `render_mode=starsearch`; callers must
+choose `light` to opt into the direct HTTP path. `blackreach_doctor` accepts
+`check_egress=true` plus an optional `probe_url` to run a real fail-closed
+StarSearch navigation and report the browser runtime, handling layer, upstream
+status, request ID, and direct-vs-proxied egress.
 
 ## StarSearch session and security boundary
 
@@ -276,15 +283,21 @@ systemctl --user status starsearch-daemon blackreach-http
 docker ps --filter name=huginn
 ```
 
+An MCP deep doctor probe distinguishes service reachability from usable public
+DNS/navigation. If it returns `DNSResolutionFailed`, verify the host resolver
+with `resolvectl query <probe-host>` before restarting browser services;
+StarSearch intentionally does not bypass or silently replace host DNS policy.
+
 ## Validated installed state
 
 Automated suites after the final runtime change:
 
 - StarSearch: 166 Rust tests and 72 Python tests.
-- Huginn: 829 passed, 6 explicitly deselected integration cases.
+- Huginn: 834 passed, 6 explicitly deselected integration cases.
 - Blackreach: 3,055 passed in the full repository suite.
-- blackreach-mcp: TypeScript build, 6 client/config tests, real stdio MCP
-  `tools/list` smoke, and zero npm audit findings.
+- blackreach-mcp: TypeScript build, 6 client/config tests, one routed-tool/deep
+  doctor integration test, real stdio MCP `tools/list` smoke, and zero npm
+  audit findings.
 
 Live evidence from the rebuilt services:
 
@@ -292,20 +305,20 @@ Live evidence from the rebuilt services:
 | --- | --- |
 | Authentication | missing/wrong StarSearch TCP token rejected; unauthenticated Huginn/Blackreach data routes returned 401 |
 | Search | 3 results for Prometheus through Huginn to StarSearch/Bing; first host `prometheus.io` |
-| Explicit scrape | `https://example.com/`, title and H1 extracted, `render_mode=starsearch` |
-| Actions/screenshot | selector wait plus scroll completed; valid 15,900-byte PNG returned |
+| Explicit scrape | `https://prometheus.io/`, title and H1 extracted, explicit `render_mode=starsearch` |
+| Actions/screenshot | selector wait plus scroll completed; valid 71,252-character base64 PNG returned |
 | Cache | unique first request `cached=false`, second `cached=true` |
 | Egress truth | metadata reported `mode=direct`, `proxied=false`, endpoint null |
 | SSRF | top-level loopback rejected; data-page subresource and public HTTP redirect produced zero hits on a live loopback canary |
 | Browser lifecycle | create/navigate/evaluate/close passed; five slots filled, sixth rejected, all five recovered |
 | Crash recovery | stale session returned `SessionNotFound` after daemon restart; new session succeeded with 5/5 available |
 | Batch/crawl | batch completed 2/2; crawl extracted `Example Domain` |
-| Persistence | completed batch `d8f24775-958c-49ba-91ec-803db16b25b2` remained queryable after container restart |
-| MCP | 12 tools, live search/scrape/session/screenshot; 21,200 base64 image characters returned |
+| Persistence | completed 2/2 batch `afe95c30-ed3b-4d3d-b395-c8975d987833` remained queryable after container restart |
+| MCP | 12 tools; default fail-closed fetch and deep doctor both navigated Prometheus through Huginn/StarSearch with request and egress metadata |
 | MCP failures | Huginn `success=false` envelope surfaced as MCP `isError=true` with `invalid_url`, layer, retryability, and request ID |
 | Agent start URL | MCP agent job retained `https://example.com/` and completed with `H1: Example Domain` |
 | Agent persistence | completed job `ce151a9e` retained `Example Domain` and remained queryable after a Blackreach/Waitress service restart; journal mode `0600` |
-| Fail closed | unsupported header control returned `unsupported_option`; stopped StarSearch returned failure, never Playwright content |
+| Fail closed | unsupported header control and invalid render mode returned `unsupported_option`; explicit StarSearch never fell back to Playwright |
 
 ## Honest replacement boundary
 
