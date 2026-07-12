@@ -175,7 +175,7 @@ endpoint procurement remains an infrastructure decision.
 | --- | --- | --- |
 | StarSearch | Unix + `127.0.0.1:7676` | `STARSEARCH_TCP_ADDR`, `STARSEARCH_TCP_TOKEN_FILE` |
 | Huginn | `127.0.0.1:7432` | `HUGINN_API_KEY_FILE`, `HUGINN_STARSEARCH_TCP`, `HUGINN_STARSEARCH_TOKEN_FILE`, `HUGINN_BROWSER_BACKEND=starsearch` |
-| Blackreach | `127.0.0.1:7434` | `BLACKREACH_API_KEY_FILE`, `HUGINN_API_KEY_FILE`, `BLACKREACH_BROWSER_BACKEND=starsearch` |
+| Blackreach | `127.0.0.1:7434` | `BLACKREACH_API_KEY_FILE`, `HUGINN_API_KEY_FILE`, `BLACKREACH_JOB_STATE_FILE`, `BLACKREACH_BROWSER_BACKEND=starsearch` |
 | blackreach-mcp | stdio | base URLs plus key files; defaults point at `~/.config/...` |
 
 Current secret files:
@@ -198,6 +198,13 @@ Blackreach and Huginn commit `uv.lock`; the Huginn production image installs
 with `uv sync --locked`. StarSearch commits Cargo's lock and a separate Python
 client lock. `requirements.txt` files are compatibility shims back to
 `pyproject.toml`, not competing dependency declarations.
+
+Blackreach atomically journals retained agent jobs to
+`~/.local/state/blackreach/jobs.json` with mode `0600`. Terminal results remain
+pollable after a service restart. Work interrupted by a crash is recovered as
+an explicit `service_restarted` failure; the server never pretends that an
+in-memory browser run resumed. A corrupt/unwritable journal degrades health and
+rejects new jobs with `job_store_unavailable` instead of overwriting state.
 
 ## Runbook
 
@@ -275,7 +282,7 @@ Automated suites after the final runtime change:
 
 - StarSearch: 166 Rust tests and 72 Python tests.
 - Huginn: 829 passed, 6 explicitly deselected integration cases.
-- Blackreach: 3,051 passed in the full repository suite.
+- Blackreach: 3,053 passed in the full repository suite.
 - blackreach-mcp: TypeScript build, 6 client/config tests, real stdio MCP
   `tools/list` smoke, and zero npm audit findings.
 

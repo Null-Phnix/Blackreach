@@ -19,20 +19,23 @@ Why async jobs?
   Claude Code MCP tool calls time out after ~30 seconds.
   Blackreach can take 2-5 minutes. The MCP tool submits the job and polls for completion.
 """
-import sys
+import hmac
+import json
+import logging
 import os
 import queue
 import threading
-import uuid
 import time
-import hmac
-from pathlib import Path
+import uuid
 from enum import Enum
+from pathlib import Path
 
-from flask import Flask, request, jsonify, send_file
-from blackreach.api import BlackreachAPI, ApiConfig
+from flask import Flask, jsonify, request, send_file
+
+from blackreach.api import ApiConfig, BlackreachAPI
 
 app = Flask(__name__)
+logger = logging.getLogger(__name__)
 
 
 def _load_api_key() -> str:
@@ -89,12 +92,130 @@ _jobs: dict[str, dict] = {}  # job_id → job dict
 _job_queue: queue.Queue[str] = queue.Queue()
 _jobs_lock = threading.Lock()
 _worker_thread: threading.Thread | None = None
+_STATE_FILE = Path(
+    os.environ.get(
+        "BLACKREACH_JOB_STATE_FILE",
+        "~/.local/state/blackreach/jobs.json",
+    )
+).expanduser()
+_state_error: str | None = None
 try:
     _MAX_RETAINED_JOBS = max(
         10, int(os.environ.get("BLACKREACH_MAX_RETAINED_JOBS", "500"))
     )
 except ValueError:
     _MAX_RETAINED_JOBS = 500
+
+
+class JobStateError(RuntimeError):
+    """The on-disk agent job journal could not be read or committed."""
+
+
+@app.errorhandler(JobStateError)
+def handle_job_state_error(_error):
+    return jsonify({
+        "error": "agent job journal is unavailable",
+        "code": "job_store_unavailable",
+    }), 503
+
+
+def _persist_jobs_locked() -> None:
+    """Atomically persist the current job snapshot. Caller holds _jobs_lock."""
+    global _state_error
+    if _state_error:
+        raise JobStateError(_state_error)
+
+    temp_path = None
+    try:
+        _STATE_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        temp_path = _STATE_FILE.with_name(
+            f".{_STATE_FILE.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        )
+        payload = {
+            "version": 1,
+            "jobs": list(_jobs.values()),
+        }
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(temp_path, flags, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2, default=str)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, _STATE_FILE)
+        _STATE_FILE.chmod(0o600)
+        directory_descriptor = os.open(
+            _STATE_FILE.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    except (OSError, TypeError, ValueError) as exc:
+        _state_error = "agent job journal is not writable"
+        logger.exception("Could not persist Blackreach job state to %s", _STATE_FILE)
+        try:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise JobStateError(_state_error) from exc
+
+
+def _persist_background_update_locked() -> None:
+    """Persist worker progress while keeping an already-running job alive."""
+    try:
+        _persist_jobs_locked()
+    except JobStateError:
+        # Health reports the degraded store. Killing the in-flight browser here
+        # would lose more information than allowing it to finish in memory.
+        pass
+
+
+def _load_jobs() -> None:
+    """Load retained results and mark interrupted work explicitly failed."""
+    global _state_error
+    if not _STATE_FILE.exists():
+        return
+
+    try:
+        payload = json.loads(_STATE_FILE.read_text(encoding="utf-8"))
+        records = payload.get("jobs", []) if isinstance(payload, dict) else []
+        if not isinstance(records, list):
+            raise ValueError("jobs must be an array")
+
+        loaded = {}
+        recovered = False
+        now = time.time()
+        for record in records:
+            if not isinstance(record, dict) or not record.get("job_id"):
+                continue
+            job = dict(record)
+            if job.get("status") in (JobStatus.PENDING, JobStatus.RUNNING):
+                job.update({
+                    "status": JobStatus.FAILED,
+                    "finished_at": now,
+                    "success": False,
+                    "error_code": "service_restarted",
+                    "errors": ["Blackreach restarted before this job completed"],
+                })
+                recovered = True
+            loaded[str(job["job_id"])] = job
+
+        retained = sorted(
+            loaded.values(),
+            key=lambda job: job.get("finished_at", job.get("created_at", 0)),
+        )[-_MAX_RETAINED_JOBS:]
+        _jobs.update({str(job["job_id"]): job for job in retained})
+        if recovered or len(retained) != len(loaded):
+            with _jobs_lock:
+                _persist_jobs_locked()
+    except (OSError, ValueError, TypeError, json.JSONDecodeError, JobStateError):
+        _state_error = "agent job journal could not be loaded"
+        logger.exception("Could not load Blackreach job state from %s", _STATE_FILE)
+
+
+_load_jobs()
 
 
 def _make_api(max_steps: int = 60) -> BlackreachAPI:
@@ -117,6 +238,7 @@ def _worker_loop():
             if job:
                 job["status"] = JobStatus.RUNNING
                 job["started_at"] = time.time()
+                _persist_background_update_locked()
 
         try:
             goal      = job["goal"]
@@ -158,6 +280,7 @@ def _worker_loop():
                     "session_id":    result.session_id,
                     "result":        result.result,
                 })
+                _persist_background_update_locked()
 
         except Exception as e:
             with _jobs_lock:
@@ -167,6 +290,7 @@ def _worker_loop():
                         "finished_at": time.time(),
                         "errors":      [str(e)],
                     })
+                    _persist_background_update_locked()
         finally:
             if api is not None:
                 try:
@@ -185,7 +309,9 @@ def _start_worker():
 
 def _submit_job(goal: str, start_url: str | None = None, max_steps: int = 60) -> str:
     job_id = str(uuid.uuid4())[:8]
+    removed_job_ids = []
     with _jobs_lock:
+        previous_jobs = dict(_jobs)
         overflow = len(_jobs) - _MAX_RETAINED_JOBS + 1
         if overflow > 0:
             terminal = sorted(
@@ -198,7 +324,7 @@ def _submit_job(goal: str, start_url: str | None = None, max_steps: int = 60) ->
             for old_job in terminal[:overflow]:
                 old_id = old_job["job_id"]
                 _jobs.pop(old_id, None)
-                (_SHOT_DIR / f"{old_id}.png").unlink(missing_ok=True)
+                removed_job_ids.append(old_id)
         _jobs[job_id] = {
             "job_id":     job_id,
             "status":     JobStatus.PENDING,
@@ -207,7 +333,15 @@ def _submit_job(goal: str, start_url: str | None = None, max_steps: int = 60) ->
             "max_steps":  max_steps,
             "created_at": time.time(),
         }
+        try:
+            _persist_jobs_locked()
+        except JobStateError:
+            _jobs.clear()
+            _jobs.update(previous_jobs)
+            raise
         _job_queue.put(job_id)
+    for old_id in removed_job_ids:
+        (_SHOT_DIR / f"{old_id}.png").unlink(missing_ok=True)
     _start_worker()
     return job_id
 
@@ -226,6 +360,8 @@ def health():
         "running": running,
         "pending": pending,
         "retained_jobs": retained,
+        "job_store": "degraded" if _state_error else "ok",
+        "job_store_persistent": True,
     })
 
 

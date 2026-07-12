@@ -3,7 +3,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-7c3aed?style=flat-square&labelColor=07061a)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee?style=flat-square&labelColor=07061a)](LICENSE)
 [![Version](https://img.shields.io/badge/version-v5.0.0--beta.2-9f6ff3?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Blackreach/releases)
-[![Tests](https://img.shields.io/badge/tests-3%2C051_passing-4ade80?style=flat-square&labelColor=07061a)](tests/)
+[![Tests](https://img.shields.io/badge/tests-3%2C053_passing-4ade80?style=flat-square&labelColor=07061a)](tests/)
 
 **The goal-driven browser orchestrator in a local-first web-tool suite.**
 
@@ -110,6 +110,9 @@ curl --fail http://127.0.0.1:7434/health
 
 Data-bearing routes require the bearer key in
 `~/.config/blackreach/api-key` when installed with the supplied unit.
+Retained jobs are atomically journaled under
+`~/.local/state/blackreach/jobs.json`; interrupted jobs become explicit
+`service_restarted` failures on recovery.
 
 | Route | Purpose |
 |---|---|
