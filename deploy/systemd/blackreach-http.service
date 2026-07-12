@@ -15,6 +15,7 @@ Environment=HUGINN_API_KEY_FILE=%h/.config/huginn/api-key
 Environment=BLACKREACH_API_KEY_FILE=%h/.config/blackreach/api-key
 ExecStartPre=/usr/bin/test -s %h/.config/huginn/api-key
 ExecStartPre=/usr/bin/test -s %h/.config/blackreach/api-key
+ExecStartPre=/mnt/WorkDrive/AI_Projects/Blackreach/.venv/bin/python -c "import starsearch, waitress"
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
