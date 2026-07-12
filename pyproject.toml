@@ -49,6 +49,7 @@ server = [
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
     "flask>=2.3.0",
+    "waitress>=3.0.0",
 ]
 openai = ["openai>=1.0.0"]
 anthropic = ["anthropic>=0.18.0"]

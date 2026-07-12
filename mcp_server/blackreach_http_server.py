@@ -474,9 +474,13 @@ def scrape_jobs():
 def main() -> None:
     """Entry point for `blackreach-server` console script."""
     import argparse
+
+    from waitress import serve
+
     parser = argparse.ArgumentParser(description="Blackreach HTTP Server (Async Job Queue)")
     parser.add_argument("--port", type=int, default=7434, help="Port to listen on (default: 7434; 7432 is Huginn/BlackCrawl)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to bind to (default: 127.0.0.1)")
+    parser.add_argument("--threads", type=int, default=4, choices=range(2, 33), metavar="2-32", help="HTTP worker threads (default: 4)")
     parser.add_argument("--no-banner", action="store_true", help="Suppress startup banner")
     args = parser.parse_args()
 
@@ -488,7 +492,7 @@ def main() -> None:
         print("Stop with Ctrl+C")
         print("=" * 60)
     _start_worker()
-    app.run(host=args.host, port=args.port, threaded=True, debug=False)
+    serve(app, host=args.host, port=args.port, threads=args.threads)
 
 
 if __name__ == "__main__":
