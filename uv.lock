@@ -126,6 +126,7 @@ source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "click" },
+    { name = "cryptography" },
     { name = "ollama" },
     { name = "playwright" },
     { name = "playwright-stealth" },
@@ -173,6 +174,7 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "click", specifier = ">=8.0.0" },
+    { name = "cryptography", specifier = ">=42.0" },
     { name = "fastapi", marker = "extra == 'all'", specifier = ">=0.104.0" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.104.0" },
     { name = "flask", marker = "extra == 'server'", specifier = ">=2.3.0" },

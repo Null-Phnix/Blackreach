@@ -28,15 +28,15 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install -e ".[dev,server]"
-          pip install cryptography
+          python -m pip install uv==0.10.4
+          uv sync --locked --extra dev --extra server
 
       - name: Install Playwright browser
-        run: playwright install chromium
+        run: uv run playwright install chromium
 
       - name: Run unit tests
         run: |
-          pytest tests/ \
+          uv run pytest tests/ \
             --timeout=30 \
             -x \
             -q \
