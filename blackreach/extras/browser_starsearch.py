@@ -25,13 +25,31 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 from urllib.parse import urlparse, unquote
 
-from starsearch import StarSearch
-from starsearch.session import StarSearchSession
-from starsearch.exceptions import (
-    StarSearchError,
-    StarSearchElementNotFound,
-    StarSearchTimeoutError,
-)
+try:
+    from starsearch import StarSearch
+    from starsearch.session import StarSearchSession
+    from starsearch.exceptions import (
+        StarSearchError,
+        StarSearchElementNotFound,
+        StarSearchTimeoutError,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "starsearch" and not (exc.name or "").startswith("starsearch."):
+        raise
+    # The StarSearch client is a deployment dependency, not a requirement for
+    # importing/testing Blackreach's compatibility surface. browser.py checks
+    # availability before selecting this backend, and wake() fails closed.
+    StarSearch = None
+    StarSearchSession = Any
+
+    class StarSearchError(Exception):
+        pass
+
+    class StarSearchElementNotFound(StarSearchError):
+        pass
+
+    class StarSearchTimeoutError(StarSearchError):
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -385,6 +403,11 @@ class Hand:
                 self._current_proxy = p
                 proxy_options = p.to_playwright_proxy()
         if self._browser is None:
+            if StarSearch is None:
+                raise BrowserNotReadyError(
+                    "StarSearch Python client is not installed; install the sibling "
+                    "Project_StarSearch/client package before selecting this backend"
+                )
             self._browser = StarSearch()
         self._session = self._browser.new_session(
             proxy=proxy_options,
