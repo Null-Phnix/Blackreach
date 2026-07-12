@@ -194,6 +194,11 @@ Jobs, replay data, scheduler state, cache metadata, and research memory survive
 container recreation. StarSearch fingerprint profile data remains in its
 dedicated repository and must never be discarded during deployment.
 
+Blackreach and Huginn commit `uv.lock`; the Huginn production image installs
+with `uv sync --locked`. StarSearch commits Cargo's lock and a separate Python
+client lock. `requirements.txt` files are compatibility shims back to
+`pyproject.toml`, not competing dependency declarations.
+
 ## Runbook
 
 Build and install StarSearch atomically:
@@ -217,6 +222,8 @@ docker compose build huginn
 docker compose up -d --force-recreate huginn
 
 cd /mnt/WorkDrive/AI_Projects/Blackreach
+uv sync --locked --extra server
+uv pip install --python .venv -e /mnt/WorkDrive/AI_Projects/Project_StarSearch/client
 install -m 644 deploy/systemd/blackreach-http.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user restart blackreach-http
@@ -229,6 +236,27 @@ cd /mnt/WorkDrive/AI_Projects/blackreach-mcp
 npm ci
 npm run check
 npm audit --audit-level=low
+```
+
+Register that adapter once. Hermes uses:
+
+```yaml
+mcp_servers:
+  blackreach_web:
+    command: node
+    args:
+      - /mnt/WorkDrive/AI_Projects/blackreach-mcp/dist/index.js
+    timeout: 120
+    connect_timeout: 60
+```
+
+Remove or disable the older `blackreach` and `blackcrawl` Python MCP entries;
+running them beside `blackreach_web` recreates duplicate browser and timeout
+paths. Apply a Hermes configuration change with:
+
+```bash
+systemctl --user restart hermes-gateway
+systemctl --user status hermes-gateway
 ```
 
 Quick doctor calls:
@@ -246,8 +274,8 @@ docker ps --filter name=huginn
 Automated suites after the final runtime change:
 
 - StarSearch: 166 Rust tests and 72 Python tests.
-- Huginn: 827 passed, 6 explicitly deselected integration cases.
-- Blackreach: 3,050 passed in the full repository suite.
+- Huginn: 829 passed, 6 explicitly deselected integration cases.
+- Blackreach: 3,051 passed in the full repository suite.
 - blackreach-mcp: TypeScript build, 5 HTTP/config tests, real stdio MCP
   `tools/list` smoke, and zero npm audit findings.
 

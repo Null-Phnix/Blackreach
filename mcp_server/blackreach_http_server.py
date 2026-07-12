@@ -5,7 +5,7 @@ Runs Blackreach as a persistent Flask server with full network access.
 Start this ONCE from your terminal, then Claude Code's MCP can call it over localhost.
 
 Usage:
-  python /mnt/AI_Projects/Blackreach/mcp_server/blackreach_http_server.py
+  python -m mcp_server.blackreach_http_server
 
 Runs on: http://localhost:7434  (7432 is owned by the Huginn/BlackCrawl container)
 

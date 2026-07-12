@@ -1,253 +1,188 @@
 # Blackreach
 
-> Suite architecture and replacement boundaries: [docs/WEB_TOOL_SUITE.md](docs/WEB_TOOL_SUITE.md)
-
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-7c3aed?style=flat-square&labelColor=07061a)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee?style=flat-square&labelColor=07061a)](LICENSE)
 [![Version](https://img.shields.io/badge/version-v5.0.0--beta.2-9f6ff3?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Blackreach/releases)
-[![Tests](https://img.shields.io/badge/tests-2%2C973_passing-4ade80?style=flat-square&labelColor=07061a)](tests/)
+[![Tests](https://img.shields.io/badge/tests-3%2C051_passing-4ade80?style=flat-square&labelColor=07061a)](tests/)
 
-**Autonomous browser agent. Give it a goal, it handles the rest.**
+**The goal-driven browser orchestrator in a local-first web-tool suite.**
 
-![Blackreach Demo](assets/demo.gif)
+Blackreach accepts an objective, observes a real page, chooses typed browser
+actions, and reports a durable job result. It no longer tries to own every web
+capability:
+
+| Component | Responsibility |
+|---|---|
+| **Blackreach** | Goal decomposition, ReAct loop, recovery, memory, and agent jobs |
+| **Huginn / BlackCrawl** | Deterministic search, scrape, crawl, extract, batch, cache, and job API |
+| **StarSearch** | Shared stealth browser runtime, authenticated sessions, and capacity |
+| **blackreach-mcp** | Stable MCP adapter for Hermes, Claude, Codex, and future agents |
+
+The complete architecture, routes, environment, runbook, live validation, and
+honest replacement boundary are in [docs/WEB_TOOL_SUITE.md](docs/WEB_TOOL_SUITE.md).
+
+## Production request path
+
+```text
+MCP client
+    │
+    ▼
+blackreach-mcp
+    ├── deterministic operation ──▶ Huginn ──▶ StarSearch
+    └── goal-driven browse ───────▶ Blackreach ──▶ StarSearch
+```
+
+Blackreach delegates deterministic work to Huginn. The agent browser backend
+is StarSearch in production and fails closed if its client/runtime is missing.
+Playwright remains an explicit development compatibility backend; it is not a
+silent production fallback.
+
+An explicit `start_url` is forwarded unchanged and visited directly. It is
+never replaced with a search page or unrelated default target.
+
+## What the agent does
+
+- Converts a goal into an observe → reason → act loop.
+- Uses a compact DOM observation rather than feeding raw page HTML to the LLM.
+- Executes navigation, click, type, scroll, wait, extraction, download, and
+  screenshot work through StarSearch's shared pool.
+- Detects stuck loops, blocked pages, invalid actions, and unhealthy sessions.
+- Persists agent session state and exposes asynchronous jobs on loopback.
+- Supports local Ollama plus optional hosted LLM providers for reasoning.
+
+Search, scraping, crawling, batch work, screenshots, browser sessions, and
+structured extraction schemas are exposed through Huginn and `blackreach-mcp`,
+not duplicated inside the orchestrator.
+
+## Install for development
 
 ```bash
-blackreach run "download all Linear A inscription tables from sigla.phis.me"
-```
-
-Every autonomous web agent I tried worked on the demo site and fell apart on anything real. Cloudflare caught it in seconds. JavaScript-rendered content was invisible to it. Rate limit responses came back as 200 OK and the agent saved garbage, reported success, and moved on.
-
-Blackreach is built for actual research tasks. Overnight runs. Academic databases. Sites that actively resist automation. 2,973 tests because agents that fail silently are worse than agents that don't run at all.
-
----
-
-## How it works
-
-Blackreach uses a **DOM walker** instead of raw HTML. A typical page is 50k–500k tokens of noise. The DOM walker extracts visible text, interactive elements, navigation landmarks, and ARIA roles. A 200k token page becomes a 2k token observation the LLM can actually reason about.
-
-```
-Thought: I need the inscription table on this page
-Action: navigate("https://sigla.phis.me/")
-Observation: Page loaded. Nav: [About, Database, Signs].
-  Main: table, 847 rows, columns [ID, Site, Text, Image].
-  Interactive: pagination controls, export button.
-Thought: extract all rows and handle pagination
-Action: extract_table(selector=".inscription-table", paginate=True)
-```
-
-The loop: **Observe** (DOM walker extracts page state) → **Think** (LLM reasons about next action) → **Act** (Playwright executes it) → repeat until done.
-
----
-
-## Features
-
-- **DOM Walker** — Live element extraction assigns numeric IDs to every interactive element. The LLM clicks `[15]`, not a CSS selector.
-- **Stealth Playwright** — Patches `navigator.webdriver`, viewport signatures, input timing, and CDP artifacts before any page loads.
-- **Session Resume** — Tasks auto-save on interrupt. Pick up exactly where you left off.
-- **Smart Deduplication** — URL + hash checking. Never downloads the same file twice.
-- **Stuck Detection** — Loop detection with automatic strategy switching and source failover.
-- **Cross-Session Memory** — SQLite-backed. Remembers what worked per domain.
-- **Multi-Provider** — Ollama (local), OpenAI, Anthropic, Google, xAI.
-- **MCP Server** — Claude Desktop integration for JavaScript-rendered sites and anti-bot pages.
-- **REST API** — FastAPI server + async job queue for programmatic access.
-
----
-
-## Installation
-
-```bash
-pip install blackreach
-```
-
-**With specific providers:**
-```bash
-pip install "blackreach[openai]"
-pip install "blackreach[anthropic]"
-pip install "blackreach[all]"
-```
-
-**From source:**
-```bash
-git clone https://github.com/Null-Phnix/Blackreach
+git clone https://github.com/Null-Phnix/Blackreach.git
 cd Blackreach
-pip install -e .
+uv sync --locked --extra dev --extra server
 ```
 
-**Install the browser (required):**
+For the production backend, also install the sibling StarSearch Python client
+into this environment and start the authenticated daemon. The suite runbook
+contains the exact dependency order and service files.
+
 ```bash
-playwright install chromium
+uv pip install --python .venv -e /mnt/WorkDrive/AI_Projects/Project_StarSearch/client
+.venv/bin/pytest -q
 ```
 
----
+## CLI
 
-## Quick start
-
-First run walks you through setup:
 ```bash
-blackreach
-```
-
-Then:
-```bash
-# Run a task
-blackreach run "find and download papers about attention mechanisms from arxiv"
-
-# Headless
-blackreach run --headless "download landscape wallpapers from unsplash"
-
-# Specific provider/model
-blackreach run -p anthropic -m claude-3-5-sonnet "download the pytorch README"
-
-# Resume interrupted session
+blackreach setup
+blackreach doctor
+blackreach run "collect the titles from the first page" --steps 20
+blackreach run "summarize this page" --steps 10
 blackreach sessions
 blackreach run --resume 42
 ```
 
----
+Useful commands:
 
-## Commands
+| Command | Purpose |
+|---|---|
+| `blackreach run "goal"` | Run the goal-driven agent |
+| `blackreach doctor` | Diagnose model, browser, and local dependencies |
+| `blackreach validate` | Validate configuration |
+| `blackreach sessions` / `resumable` | Inspect or resume agent state |
+| `blackreach scancode URL` | Preview routing for a URL |
+| `blackreach stats` / `logs` | Inspect agent behavior |
+| `blackreach serve` | Development REST surface on port 7433 |
 
-| Command | Description |
-|---------|-------------|
-| `blackreach` | Interactive mode |
-| `blackreach run "goal"` | Run agent with goal |
-| `blackreach run --resume ID` | Resume paused session |
-| `blackreach sessions` | List resumable sessions |
-| `blackreach config` | Configure settings and API keys |
-| `blackreach models` | List available models |
-| `blackreach stats` | Show performance metrics |
-| `blackreach doctor` | Check system requirements |
-| `blackreach health` | Check content source availability |
-| `blackreach downloads` | Show download history |
-| `blackreach serve` | Start REST API server |
+The CLI can deliberately select Playwright for isolated development. The
+installed suite service sets `BLACKREACH_BROWSER_BACKEND=starsearch`.
 
-**Interactive slash commands:**
+## Production service
 
-| Command | Description |
-|---------|-------------|
-| `/model` `/m` | Switch model mid-session |
-| `/provider` `/p` | Switch provider |
-| `/plan "goal"` | Preview a plan without running |
-| `/resume ID` | Resume a session |
-| `/sessions` | List resumable sessions |
-| `/status` `/s` | Show current config |
-| `/quit` `/q` | Exit |
-
----
-
-## Server mode
-
-Run Blackreach as a persistent HTTP server for programmatic access or MCP integration:
+The asynchronous agent gateway binds `127.0.0.1:7434`:
 
 ```bash
-# FastAPI server (synchronous endpoints, port 7433)
-blackreach serve
-
-# Async job queue server (for Claude Code MCP, port 7432)
-pip install "blackreach[server]"
-blackreach-server
+install -m 644 deploy/systemd/blackreach-http.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now blackreach-http
+curl --fail http://127.0.0.1:7434/health
 ```
 
-The job server supports:
-- `POST /browse` — submit an agent task, get a `job_id` back immediately
-- `GET /jobs/{job_id}` — poll for completion and results
-- `GET /jobs` — list all jobs
-- `GET /health` — server status
+Data-bearing routes require the bearer key in
+`~/.config/blackreach/api-key` when installed with the supplied unit.
 
-MCP integration (`mcp_server/`) lets Claude Desktop use Blackreach as a tool for JavaScript-rendered sites, pagination, and anti-bot protected pages.
+| Route | Purpose |
+|---|---|
+| `POST /browse` | Submit a goal and optional explicit `start_url` |
+| `GET /jobs/{job_id}` | Poll a durable agent result |
+| `GET /jobs` | List retained jobs |
+| `GET /jobs/{job_id}/screenshots` | List step screenshots |
+| `GET /jobs/{job_id}/screenshots/{name}` | Fetch a screenshot safely |
+| `GET /health` | Probe liveness without exposing job data |
 
----
+## One MCP surface
 
-## Supported providers
-
-| Provider | Type | Models |
-|----------|------|--------|
-| **Ollama** | Local | qwen2.5:7b, llama3.2:3b, mistral:7b |
-| **Anthropic** | Cloud | claude-sonnet-4-6, claude-haiku-4-5 |
-| **OpenAI** | Cloud | gpt-4o, gpt-4o-mini |
-| **Google** | Cloud | gemini-2.5-pro, gemini-2.5-flash |
-| **xAI** | Cloud | grok-2, grok-2-mini |
-
-**Running fully local with Ollama:**
-```bash
-# Install Ollama: https://ollama.ai
-ollama pull qwen2.5:7b
-ollama serve
-blackreach  # select Ollama on first run
-```
-
----
-
-## Configuration
-
-Config file: `~/.blackreach/config.yaml`
+Build and register only the Node adapter:
 
 ```bash
-export OPENAI_API_KEY="sk-..."
-export ANTHROPIC_API_KEY="sk-ant-..."
-export GOOGLE_API_KEY="..."
-export XAI_API_KEY="xai-..."
+cd /mnt/WorkDrive/AI_Projects/blackreach-mcp
+npm ci
+npm run check
 ```
 
-Or use `blackreach config` for interactive setup.
-
----
-
-## Architecture
-
-```
-blackreach/
-├── agent.py          # ReAct loop coordinator
-├── browser.py        # Playwright control + stealth patches
-├── dom_walker.py     # Live DOM extraction, [N] ID assignment
-├── llm.py            # Multi-provider LLM integration
-├── memory.py         # Session memory + SQLite persistence
-├── planner.py        # Goal decomposition + plan generation
-├── stuck_detector.py # Loop detection + recovery strategies
-├── resilience.py     # Retry logic, circuit breaker
-├── detection.py      # CAPTCHA, login, paywall detection
-├── error_recovery.py # Error categorization and recovery
-├── knowledge.py      # Content source knowledge base
-├── config.py         # Configuration management
-├── logging.py        # Structured session logging
-├── ui.py             # Rich terminal UI
-├── cli.py            # CLI entry point
-├── api.py            # FastAPI REST server
-├── server.py         # Async job queue server
-└── mcp_server/       # MCP server for Claude Desktop
+```json
+{
+  "mcpServers": {
+    "blackreach_web": {
+      "command": "node",
+      "args": ["/mnt/WorkDrive/AI_Projects/blackreach-mcp/dist/index.js"]
+    }
+  }
+}
 ```
 
----
+Do not register the legacy Blackreach or BlackCrawl Python MCP servers beside
+this adapter. `blackreach-mcp` already exposes the orchestrator plus every
+deterministic Huginn capability with consistent schemas, job IDs, trace data,
+and structured errors.
 
-## Why 2,973 tests
+## Security and egress
 
-Every test came from a real failure. Rate limits returning 200 OK. Tables rendered by JavaScript two seconds after page load. Session tokens expiring mid-task. CAPTCHAs on page 3 but not pages 1 or 2. Login walls that only trigger from non-residential IPs.
+- Installed services bind loopback and use key files rather than secrets in
+  process arguments.
+- Huginn and StarSearch enforce HTTP(S)-only navigation plus private-network,
+  redirect, and browser-subresource policy.
+- StarSearch capacity is bounded; crashes invalidate stale sessions and free
+  capacity for new work.
+- StarSearch changes fingerprint signals. It does **not** change the host IP,
+  supply residential egress, or create geographic routing.
+- Proxy routing is configured in Huginn. `direct` means the host's real egress;
+  configured proxy failures do not silently fall back to direct.
 
-2,973 tests means 2,973 things the world tried and got caught. When it runs at 3am downloading data, it needs to fail loud. Not silent.
+## Honest boundary
 
----
+The suite implements the useful local vertical slice: search, scrape, crawl,
+extract, screenshots, batch jobs, progress, caching, typed browser sessions,
+proxy leases, observability, and goal-driven browsing. It does not claim full
+Firecrawl wire compatibility or Browserbase parity. There is no managed proxy
+network, multi-host scheduler, public live-view URL, durable remote CDP
+context, or complete DNS-rebinding defense yet.
 
 ## Troubleshooting
 
 ```bash
-blackreach doctor    # check system requirements
+systemctl --user status starsearch-daemon blackreach-http
+curl --fail http://127.0.0.1:7432/health/ready
+curl --fail http://127.0.0.1:7434/health
+cd /mnt/WorkDrive/AI_Projects/blackreach-mcp && npm run check
 ```
 
-**Browser not found:** `playwright install chromium`
-
-**Bot detection (403/418 errors):**
-- Run without `--headless`
-- Try a different browser: `blackreach run -b firefox "goal"`
-- Some sites require residential IPs regardless of stealth settings
-
-**Session resume fails:** `blackreach sessions` to check if session still exists
-
----
+- `BrowserNotReadyError`: install the StarSearch client and verify its daemon.
+- Huginn reports `egress.mode=direct`: no proxy provider is configured; this is
+  truthful local egress, not rotation.
+- Explicit StarSearch mode never falls back silently. Repair the daemon or
+  deliberately opt into a development backend.
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
----
-
-Built by [phnix](https://phnix.dev). Issues and PRs welcome.
