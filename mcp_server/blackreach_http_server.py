@@ -180,7 +180,9 @@ def _load_jobs() -> None:
 
     try:
         payload = json.loads(_STATE_FILE.read_text(encoding="utf-8"))
-        records = payload.get("jobs", []) if isinstance(payload, dict) else []
+        if not isinstance(payload, dict) or payload.get("version") != 1:
+            raise ValueError("unsupported agent job journal schema")
+        records = payload.get("jobs", [])
         if not isinstance(records, list):
             raise ValueError("jobs must be an array")
 
@@ -189,8 +191,15 @@ def _load_jobs() -> None:
         now = time.time()
         for record in records:
             if not isinstance(record, dict) or not record.get("job_id"):
-                continue
+                raise ValueError("invalid agent job journal record")
             job = dict(record)
+            if job.get("status") not in {
+                JobStatus.PENDING,
+                JobStatus.RUNNING,
+                JobStatus.DONE,
+                JobStatus.FAILED,
+            }:
+                raise ValueError("invalid agent job status")
             if job.get("status") in (JobStatus.PENDING, JobStatus.RUNNING):
                 job.update({
                     "status": JobStatus.FAILED,
@@ -374,7 +383,8 @@ def list_jobs():
 @app.route("/jobs/<job_id>", methods=["GET"])
 def get_job(job_id: str):
     with _jobs_lock:
-        job = _jobs.get(job_id)
+        stored_job = _jobs.get(job_id)
+        job = dict(stored_job) if stored_job is not None else None
     if job is None:
         return jsonify({"error": "job not found"}), 404
     return jsonify(job)

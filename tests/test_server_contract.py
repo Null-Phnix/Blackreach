@@ -72,12 +72,22 @@ def test_async_gateway_persists_results_and_recovers_interrupted_jobs(monkeypatc
     assert gateway.app.test_client().get("/health").json["job_store"] == "ok"
 
 
-def test_async_gateway_fails_closed_on_corrupt_job_journal(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "bad_content",
+    [
+        "{not-json",
+        '{"version": 2, "jobs": []}',
+        '{"version": 1, "jobs": [{}]}',
+    ],
+)
+def test_async_gateway_fails_closed_on_corrupt_job_journal(
+    monkeypatch, tmp_path, bad_content
+):
     """A corrupt journal is reported and never overwritten by a new job."""
     import importlib
 
     state_file = tmp_path / "jobs.json"
-    state_file.write_text("{not-json", encoding="utf-8")
+    state_file.write_text(bad_content, encoding="utf-8")
     monkeypatch.setenv("BLACKREACH_JOB_STATE_FILE", str(state_file))
     monkeypatch.delenv("BLACKREACH_API_KEY", raising=False)
 
@@ -89,7 +99,7 @@ def test_async_gateway_fails_closed_on_corrupt_job_journal(monkeypatch, tmp_path
     response = client.post("/browse", json={"goal": "must not enqueue"})
     assert response.status_code == 503
     assert response.json["code"] == "job_store_unavailable"
-    assert state_file.read_text(encoding="utf-8") == "{not-json"
+    assert state_file.read_text(encoding="utf-8") == bad_content
 
 
 @pytest.mark.asyncio

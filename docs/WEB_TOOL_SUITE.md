@@ -282,7 +282,7 @@ Automated suites after the final runtime change:
 
 - StarSearch: 166 Rust tests and 72 Python tests.
 - Huginn: 829 passed, 6 explicitly deselected integration cases.
-- Blackreach: 3,053 passed in the full repository suite.
+- Blackreach: 3,055 passed in the full repository suite.
 - blackreach-mcp: TypeScript build, 6 client/config tests, real stdio MCP
   `tools/list` smoke, and zero npm audit findings.
 
@@ -304,6 +304,7 @@ Live evidence from the rebuilt services:
 | MCP | 12 tools, live search/scrape/session/screenshot; 21,200 base64 image characters returned |
 | MCP failures | Huginn `success=false` envelope surfaced as MCP `isError=true` with `invalid_url`, layer, retryability, and request ID |
 | Agent start URL | MCP agent job retained `https://example.com/` and completed with `H1: Example Domain` |
+| Agent persistence | completed job `ce151a9e` retained `Example Domain` and remained queryable after a Blackreach/Waitress service restart; journal mode `0600` |
 | Fail closed | unsupported header control returned `unsupported_option`; stopped StarSearch returned failure, never Playwright content |
 
 ## Honest replacement boundary
