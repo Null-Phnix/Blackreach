@@ -65,12 +65,15 @@ Production rules:
 | Browser sessions | `POST/GET /v1/browser/sessions` | Authenticated StarSearch lifecycle |
 | Browser command | `POST /v1/browser/sessions/{id}/commands` | Navigate, click, type, scroll, hover, wait, screenshot, content, JS, cookies, history |
 | Browser close | `DELETE /v1/browser/sessions/{id}` | Idempotent close and capacity release |
+| Named contexts | `GET /v1/browser/contexts`, `DELETE /v1/browser/contexts/{context_id}` | Authenticated host-local persistent profile lifecycle (`id`/`name` remain deprecated response aliases) |
 | Health | `/health`, `/health/ready`, `/health/detailed` | StarSearch capacity plus explicit egress mode/health |
 | Metrics | `/v1/metrics` | Per-endpoint count, latency, and success rate |
 
 Data-bearing routes require `Authorization: Bearer ...` when the deployment key
 is configured. Basic health/liveness remains probeable; detailed health and
-metrics require the key.
+metrics require the key. Persistent context operations refuse to run unless an
+API key is configured. Browser-origin access is disabled by default;
+`HUGINN_CORS_ORIGINS` is an explicit allowlist and wildcard CORS requires auth.
 
 ### MCP tools
 
@@ -113,13 +116,32 @@ Session properties:
 
 - five real process-isolated slots, with the sixth request returning
   `CapacityExceeded`;
-- typed lifecycle and commands, idle expiry, domain allowlists, cookies, and
-  optional per-session proxy routing;
+- atomic launch reservations, typed lifecycle and commands, idle expiry,
+  domain allowlists, cookie/evaluate capability gates, and optional per-session
+  proxy routing;
 - stealth/fingerprint setup fails closed;
 - authenticated HTTP proxy credentials cross the Huginn-to-StarSearch protocol
   as structured fields and are handled through Chromium authentication;
-- daemon restart invalidates old session IDs cleanly and returns capacity for
-  new sessions.
+- daemon restart changes an explicit runtime `instance_id`; Huginn marks old
+  handles `interrupted` instead of falsely reporting them active.
+
+Named contexts are separate from runtime sessions. They use hashed directories
+under `~/.local/state/starsearch/contexts`, store the complete fingerprint
+snapshot, and hold an exclusive filesystem lease until Chromium has closed and
+exited. Persistent cookies, local storage, IndexedDB, and related Chromium
+profile state can survive close/reopen and daemon restart; session IDs, open
+tabs, and live CDP attachments do not. `close_session` preserves a named
+profile, while `delete_context` rejects an active lease and removes it
+explicitly. Locale, proxy-server identity, allowed domains, internal-network
+policy, and cookie/evaluate permissions are immutable across reopen.
+If Chromium cannot be confirmed stopped, StarSearch writes a durable quarantine
+marker before releasing control; reopen and delete then fail closed across
+daemon restart instead of risking concurrent writers.
+
+Profile directories are `0700` and manifests/locks are `0600`. This is access
+control, not encryption: StarSearch adds no application-level profile
+encryption, so Chromium/OS keyring behavior and encrypted host storage remain
+the at-rest boundary.
 
 Network policy checks the top-level URL and every Chromium request paused by
 CDP Fetch, including redirects and subresources. It rejects local/private,
@@ -128,6 +150,9 @@ and reserved destinations by default. `file:`, `javascript:`, and other unsafe
 schemes remain forbidden; `about:blank` and `data:` are allowed only as
 non-network documents. Internal access requires both server policy and an
 explicit session request.
+Document-level navigation and domain policy is also rechecked for redirects,
+links/forms, frames, page-script navigation, and history traversal; third-party
+CDN subresources may load only after the same internal-network check.
 
 This materially narrows SSRF and redirect bypasses, but it is not a claim that
 DNS rebinding is mathematically eliminated: resolution and Chromium's eventual
@@ -173,6 +198,14 @@ return them.
 The provider issues per-request/per-session leases, rotates or sticks by key,
 tracks successes and proxy-like failures, cools unhealthy endpoints, and never
 silently falls back to direct egress when all configured endpoints are down.
+Named contexts use deterministic rendezvous selection even when ordinary
+requests use round-robin; if the bound endpoint is cooling down, reopen fails
+closed instead of changing egress identity.
+The binding and health key includes proxy server plus account/session username
+but never the password, so credential rotation is stable while a geographic or
+account identity change cannot silently reuse the profile. Launch, DOM actions,
+and close do not reset proxy failures; only a successful HTTP(S) navigation is
+currently treated as proof of healthy browser egress (`data:`/`about:` do not).
 It does not supply IPs, test residential reputation, or guarantee geography;
 endpoint procurement remains an infrastructure decision.
 
@@ -180,7 +213,7 @@ endpoint procurement remains an infrastructure decision.
 
 | Service | Bind | Required production settings |
 | --- | --- | --- |
-| StarSearch | Unix + `127.0.0.1:7676` | `STARSEARCH_TCP_ADDR`, `STARSEARCH_TCP_TOKEN_FILE` |
+| StarSearch | Unix + `127.0.0.1:7676` | `STARSEARCH_TCP_ADDR`, `STARSEARCH_TCP_TOKEN_FILE`, `STARSEARCH_CONTEXTS_DIR` |
 | Huginn | `127.0.0.1:7432` | `HUGINN_API_KEY_FILE`, `HUGINN_STARSEARCH_TCP`, `HUGINN_STARSEARCH_TOKEN_FILE`, `HUGINN_BROWSER_BACKEND=starsearch` |
 | Blackreach | `127.0.0.1:7434` | `BLACKREACH_API_KEY_FILE`, `HUGINN_API_KEY_FILE`, `BLACKREACH_JOB_STATE_FILE`, `BLACKREACH_BROWSER_BACKEND=starsearch` |
 | blackreach-mcp | stdio | base URLs plus key files; defaults point at `~/.config/...` |
@@ -194,12 +227,19 @@ Current secret files:
 ```
 
 All are local, mode `0600`, excluded from Git, and mounted/read by path rather
-than copied into images or process arguments.
+than copied into images or process arguments. StarSearch and Huginn reject
+symlinks, non-regular files, untrusted owners, and group/world-readable secret
+files. The root-run Huginn container requires an explicit trusted host UID for
+its read-only mounts.
 
 Huginn state lives in the named `huginn-data` volume at `/data/huginn.db`.
 Jobs, replay data, scheduler state, cache metadata, and research memory survive
-container recreation. StarSearch fingerprint profile data remains in its
-dedicated repository and must never be discarded during deployment.
+container recreation. StarSearch's embedded fingerprint catalog remains in its
+dedicated repository, while named browser profiles remain under the configured
+context state directory; neither should be discarded during deployment.
+The production Huginn image is StarSearch-only and does not install a second
+Playwright Chromium. A compatibility image requires the explicit build arg
+`HUGINN_INSTALL_PLAYWRIGHT_BROWSER=1` plus runtime fallback opt-in.
 
 Blackreach and Huginn commit `uv.lock`; the Huginn production image installs
 with `uv sync --locked`. StarSearch commits Cargo's lock and a separate Python
@@ -290,30 +330,32 @@ StarSearch intentionally does not bypass or silently replace host DNS policy.
 
 ## Validated installed state
 
-Automated suites after the final runtime change:
+Automated suites after the named-context/runtime change:
 
-- StarSearch: 166 Rust tests and 72 Python tests.
-- Huginn: 834 passed, 6 explicitly deselected integration cases.
+- StarSearch: 189 Rust tests and 44 Python client tests.
+- Huginn: 873 passed, 6 explicitly deselected network cases.
 - Blackreach: 3,055 passed in the full repository suite.
-- blackreach-mcp: TypeScript build, 6 client/config tests, one routed-tool/deep
-  doctor integration test, real stdio MCP `tools/list` smoke, and zero npm
-  audit findings.
+- blackreach-mcp: TypeScript build and 11 tests covering client errors, routed
+  tools, real stdio schemas, named contexts, and zero npm audit findings.
 
 Live evidence from the rebuilt services:
 
 | Contract | Proof |
 | --- | --- |
 | Authentication | missing/wrong StarSearch TCP token rejected; unauthenticated Huginn/Blackreach data routes returned 401 |
-| Search | 3 results for Prometheus through Huginn to StarSearch/Bing; first host `prometheus.io` |
+| Search | 3 rendered results for Prometheus through Huginn to StarSearch/Bing; first URL `https://prometheus.io/` |
 | Explicit scrape | `https://prometheus.io/`, title and H1 extracted, explicit `render_mode=starsearch` |
-| Actions/screenshot | selector wait plus scroll completed; valid 71,252-character base64 PNG returned |
+| Actions/screenshot | MCP selector wait completed and returned a valid 15,900-byte PNG |
 | Cache | unique first request `cached=false`, second `cached=true` |
 | Egress truth | metadata reported `mode=direct`, `proxied=false`, endpoint null |
 | SSRF | top-level loopback rejected; data-page subresource and public HTTP redirect produced zero hits on a live loopback canary |
+| Domain policy | an allowed `example.com` page clicked a link to another public domain; Fetch blocked the document and Chromium entered its local error page instead of reaching the target |
 | Browser lifecycle | create/navigate/evaluate/close passed; five slots filled, sixth rejected, all five recovered |
-| Crash recovery | stale session returned `SessionNotFound` after daemon restart; new session succeeded with 5/5 available |
-| Batch/crawl | batch completed 2/2; crawl extracted `Example Domain` |
-| Persistence | completed 2/2 batch `afe95c30-ed3b-4d3d-b395-c8975d987833` remained queryable after container restart |
+| Named persistence | persistent cookie, localStorage, IndexedDB, and fingerprint survived close plus StarSearch restart; SID and runtime instance changed |
+| Context exclusivity | simultaneous open and active delete returned `ContextInUse`; inactive delete succeeded and `open_existing` then returned `ContextNotFound` |
+| Crash recovery | StarSearch restart marked Huginn handle `interrupted` and commands returned structured 410; Huginn crash left an authoritative active SID that the restarted API closed |
+| Batch/crawl | crawl completed 1/1; batch `263a4dc8-1dfd-4825-9a99-2a24c3e391f0` completed 2/2 |
+| Persistence | that completed 2/2 batch remained queryable after a Huginn container restart |
 | MCP | 12 tools; default fail-closed fetch and deep doctor both navigated Prometheus through Huginn/StarSearch with request and egress metadata |
 | MCP failures | Huginn `success=false` envelope surfaced as MCP `isError=true` with `invalid_url`, layer, retryability, and request ID |
 | Agent start URL | MCP agent job retained `https://example.com/` and completed with `H1: Example Domain` |
@@ -336,18 +378,19 @@ Reference: [Firecrawl v2 API](https://docs.firecrawl.dev/api-reference/v2-introd
 ### Browserbase
 
 The suite now has authenticated local HTTP session lifecycle, isolated browser
-processes, capacity limits, per-session proxy routing, typed commands, cookies,
-screenshots, health, and daemon restart behavior. It does not expose a public
-CDP/WebSocket connection URL, durable named contexts, hosted live-view/debug
-URLs, session replay artifacts, multi-host scheduling, autoscaling, or managed
-proxy networks. Those are the honest Browserbase boundary.
+processes, atomic capacity limits, typed commands, deterministic per-context
+proxy routing, durable host-local profile contexts, screenshots, runtime IDs,
+and restart reconciliation. It does not expose a public CDP/WebSocket
+connection URL, hosted live-view/debug URLs, live-browser recovery, profile
+migration, multi-host context storage, autoscaling, or managed proxy networks.
+Those are the honest Browserbase boundary.
 
 Reference: [Browserbase session API](https://docs.browserbase.com/reference/api/create-a-session)
 
 ### Highest-leverage next slices
 
-1. Persist named StarSearch contexts and encrypted cookie state across daemon restart.
-2. Put DNS and socket connection policy behind one owned egress gateway to close the remaining rebinding gap.
+1. Put DNS and socket connection policy behind one owned egress gateway to close the remaining rebinding gap.
+2. Add context quotas, retention, explicit fingerprint/browser-version rotation, and encrypted-storage deployment guidance.
 3. Add a controlled CDP/WebSocket gateway only if Anubis/Herdr truly need third-party browser attachment.
 4. Generate a machine-readable Firecrawl v2 contract diff and implement only consumer-visible gaps.
 5. Add search-engine health scoring and a second StarSearch-rendered keyless engine.
