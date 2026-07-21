@@ -111,6 +111,7 @@ class BlackreachAPI:
         if self._agent is None:
             import os
             from blackreach.agent import Agent, AgentConfig
+            from blackreach.config import config_manager
             from blackreach.llm import LLMConfig
 
             agent_config = AgentConfig(
@@ -120,11 +121,24 @@ class BlackreachAPI:
                 browser_type=self.config.browser_type
             )
 
-            # Use DeepSeek (OpenAI-compatible API) when its key is in the
-            # environment; otherwise fall back to the default local model.
+            # Reasoning brain selection, in priority order:
+            # 1. xAI/Grok (OpenAI-compatible API) - the one sanctioned external
+            #    API for agent reasoning, when XAI_API_KEY (env, keyring, or
+            #    config file, via config_manager) is available. Model comes
+            #    from the configured xai.default_model (grok-4.5 by default).
+            # 2. DeepSeek (OpenAI-compatible API) when its key is in the
+            #    environment - legacy operator override.
+            # 3. Otherwise fall back to the default local model (Ollama).
             llm_config = None
+            xai_key = config_manager.get_api_key("xai")
             deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
-            if deepseek_key:
+            if xai_key:
+                llm_config = LLMConfig(
+                    provider="xai",
+                    model=config_manager.load().xai.default_model,
+                    api_key=xai_key,
+                )
+            elif deepseek_key:
                 llm_config = LLMConfig(
                     provider="openai",
                     model=os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),

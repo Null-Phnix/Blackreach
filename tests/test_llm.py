@@ -616,6 +616,46 @@ class TestLLMProviderInitSuccess:
         call_kwargs = mock_openai_module.OpenAI.call_args[1]
         assert call_kwargs["base_url"] == "https://api.x.ai/v1"
 
+    def test_xai_init_with_grok_4_5_reads_key_from_config(self):
+        """_init_xai passes the configured api_key (sourced from XAI_API_KEY)
+        and base_url unchanged, regardless of which grok model is configured."""
+        llm = LLM.__new__(LLM)
+        llm.config = LLMConfig(provider="xai", model="grok-4.5", api_key="xai-configured-key")
+        llm._client = None
+        llm._provider_type = None
+
+        mock_openai_module = MagicMock()
+        mock_client = MagicMock()
+        mock_openai_module.OpenAI.return_value = mock_client
+
+        with patch.dict('sys.modules', {'openai': mock_openai_module}):
+            llm._init_xai()
+
+        call_kwargs = mock_openai_module.OpenAI.call_args[1]
+        assert call_kwargs["base_url"] == "https://api.x.ai/v1"
+        assert call_kwargs["api_key"] == "xai-configured-key"
+
+    @patch('blackreach.llm.LLM._init_client')
+    def test_xai_call_passes_grok_4_5_model_string_unchanged(self, mock_init):
+        """generate() for provider=xai dispatches to _call_openai, which sends
+        the configured model string (grok-4.5) to the API unchanged."""
+        llm = LLM.__new__(LLM)
+        llm.config = LLMConfig(provider="xai", model="grok-4.5", max_retries=1)
+        llm._provider_type = "xai"
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=MagicMock(content="grok response"))]
+        mock_client.chat.completions.create.return_value = mock_response
+        llm._client = mock_client
+
+        result = llm.generate("system prompt", "user message")
+
+        assert result == "grok response"
+        mock_client.chat.completions.create.assert_called_once()
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        assert call_kwargs["model"] == "grok-4.5"
+
 
 class TestCallGoogle:
     """Tests for _call_google method."""

@@ -202,6 +202,102 @@ class TestBlackreachAPI:
         assert result.results[0]["description"] == "A useful result"
 
 
+class TestGetAgentBrainSelection:
+    """Tests for _get_agent()'s reasoning-brain provider selection.
+
+    xAI/Grok is the one sanctioned external API for agent reasoning; these
+    tests confirm _get_agent() actually wires provider="xai" with the
+    configured model (grok-4.5) and the key sourced via config_manager
+    (which reads XAI_API_KEY), with no live network calls.
+    """
+
+    def _fake_config_manager(self, monkeypatch, xai_api_key="", xai_default_model="grok-4.5"):
+        from blackreach.config import Config, ConfigManager
+
+        monkeypatch.setattr("blackreach.config.KEYRING_AVAILABLE", False)
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = Config()
+        manager._config.xai.api_key = xai_api_key
+        manager._config.xai.default_model = xai_default_model
+        monkeypatch.setattr("blackreach.config.config_manager", manager)
+        return manager
+
+    def test_get_agent_uses_xai_grok_4_5_when_key_present(self, monkeypatch):
+        """_get_agent() wires provider=xai, model=grok-4.5 when an xai key is configured."""
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        self._fake_config_manager(monkeypatch, xai_api_key="test-xai-key")
+
+        captured = {}
+
+        class FakeAgent:
+            def __init__(self, agent_config=None, llm_config=None):
+                captured["llm_config"] = llm_config
+
+        with patch("blackreach.agent.Agent", FakeAgent):
+            api = BlackreachAPI()
+            api._get_agent()
+
+        llm_config = captured["llm_config"]
+        assert llm_config is not None
+        assert llm_config.provider == "xai"
+        assert llm_config.model == "grok-4.5"
+        assert llm_config.api_key == "test-xai-key"
+
+    def test_get_agent_falls_back_to_deepseek_without_xai_key(self, monkeypatch):
+        """Without an xai key, DEEPSEEK_API_KEY still selects the DeepSeek override."""
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+        self._fake_config_manager(monkeypatch, xai_api_key="")
+
+        captured = {}
+
+        class FakeAgent:
+            def __init__(self, agent_config=None, llm_config=None):
+                captured["llm_config"] = llm_config
+
+        with patch("blackreach.agent.Agent", FakeAgent):
+            api = BlackreachAPI()
+            api._get_agent()
+
+        llm_config = captured["llm_config"]
+        assert llm_config is not None
+        assert llm_config.provider == "openai"
+        assert llm_config.api_base == "https://api.deepseek.com"
+
+    def test_get_agent_prefers_xai_over_deepseek(self, monkeypatch):
+        """xai is the sanctioned brain: it takes priority over the DeepSeek override."""
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+        self._fake_config_manager(monkeypatch, xai_api_key="test-xai-key")
+
+        captured = {}
+
+        class FakeAgent:
+            def __init__(self, agent_config=None, llm_config=None):
+                captured["llm_config"] = llm_config
+
+        with patch("blackreach.agent.Agent", FakeAgent):
+            api = BlackreachAPI()
+            api._get_agent()
+
+        assert captured["llm_config"].provider == "xai"
+
+    def test_get_agent_defaults_to_local_model_without_any_key(self, monkeypatch):
+        """With no xai or DeepSeek key configured, llm_config stays None (local Ollama default)."""
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        self._fake_config_manager(monkeypatch, xai_api_key="")
+
+        captured = {}
+
+        class FakeAgent:
+            def __init__(self, agent_config=None, llm_config=None):
+                captured["llm_config"] = llm_config
+
+        with patch("blackreach.agent.Agent", FakeAgent):
+            api = BlackreachAPI()
+            api._get_agent()
+
+        assert captured["llm_config"] is None
+
+
 class TestApiConfigValidation:
     """Tests for config validation."""
 
