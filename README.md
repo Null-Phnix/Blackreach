@@ -1,6 +1,6 @@
 # Blackreach
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-7c3aed?style=flat-square&labelColor=07061a)](https://python.org)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-7c3aed?style=flat-square&labelColor=07061a)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee?style=flat-square&labelColor=07061a)](LICENSE)
 [![Version](https://img.shields.io/badge/version-v5.0.0--beta.2-9f6ff3?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Blackreach/releases)
 [![Tests](https://img.shields.io/badge/tests-3%2C055_passing-4ade80?style=flat-square&labelColor=07061a)](tests/)
@@ -62,12 +62,14 @@ cd Blackreach
 uv sync --locked --extra dev --extra server
 ```
 
-For the production backend, also install the sibling StarSearch Python client
-into this environment and start the authenticated daemon. The suite runbook
-contains the exact dependency order and service files.
+The StarSearch Python client (the production browser backend) is a declared
+dependency sourced from the sibling repo, so `uv sync` installs it as an
+editable install automatically — check out `Project_StarSearch` beside
+`Blackreach` first (the suite's standard sibling layout). This means `uv sync`
+no longer prunes the backend. Then start the authenticated daemon; the suite
+runbook has the service files.
 
 ```bash
-uv pip install --python .venv -e /mnt/WorkDrive/AI_Projects/Project_StarSearch/client
 .venv/bin/pytest -q
 ```
 

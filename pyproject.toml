@@ -8,7 +8,7 @@ version = "5.0.0-beta.2"
 description = "Autonomous browser agent that accomplishes goals through web browsing"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.10"
+requires-python = ">=3.11"  # the starsearch browser backend requires >=3.11; runtime is 3.12
 authors = [
     {name = "Phnix"}
 ]
@@ -35,6 +35,7 @@ dependencies = [
     "playwright>=1.40.0",
     "playwright-stealth>=1.0.0",
     "undetected-playwright>=0.3.0",
+    "starsearch>=0.2.0",  # anti-detect browser backend (sibling repo; see [tool.uv.sources])
     "beautifulsoup4>=4.12.0",
     "ollama>=0.1.0",
     "openai>=1.0.0",  # xAI/Grok (OpenAI-compatible) — the sanctioned agent reasoning brain
@@ -80,6 +81,13 @@ Homepage = "https://github.com/Null-Phnix/Blackreach"
 Documentation = "https://github.com/Null-Phnix/Blackreach#readme"
 Repository = "https://github.com/Null-Phnix/Blackreach"
 Issues = "https://github.com/Null-Phnix/Blackreach/issues"
+
+[tool.uv.sources]
+# StarSearch's Python client lives in the sibling repo, not on PyPI. Declaring it
+# here (instead of a manual `uv pip install -e .../client`) makes `uv sync` install
+# and KEEP it as an editable install rather than pruning the browser backend on every
+# sync. Requires the suite's standard sibling layout (Project_StarSearch beside Blackreach).
+starsearch = { path = "../Project_StarSearch/client", editable = true }
 
 [tool.setuptools.packages.find]
 where = ["."]
