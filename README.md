@@ -5,186 +5,88 @@
 [![Version](https://img.shields.io/badge/version-v5.0.0--beta.2-9f6ff3?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Blackreach/releases)
 [![Tests](https://img.shields.io/badge/tests-3%2C055_passing-4ade80?style=flat-square&labelColor=07061a)](tests/)
 
-**The goal-driven browser orchestrator in a local-first web-tool suite.**
+**A local-first browser and research agent that preserves progress and verifies
+outcomes.**
 
-Blackreach accepts an objective, observes a real page, chooses typed browser
-actions, and reports a durable job result. It no longer tries to own every web
-capability:
+[Watch the 27-second proof film](https://phnix.dev/projects/blackreach.html)
+· [Read the engineering case study](https://phnix.dev/posts/how-blackreach-works.html)
+· [Inspect the source](https://github.com/Null-Phnix/Blackreach)
 
-| Component | Responsibility |
+## Why Blackreach exists
+
+A browser action is not the same thing as a completed task. Real web work can
+span several steps, encounter noisy pages, lose a session, or finish on the
+wrong result.
+
+Blackreach is designed around four practical requirements:
+
+- reduce complex pages into focused observations;
+- preserve enough state to resume interrupted work;
+- check outcomes separately from an agent's completion report;
+- keep uncertain or incomplete results visible.
+
+## Public proof
+
+The public repository includes unit, integration, browser, recovery, and
+contract tests. The exact public commit used for the case study,
+[`8a6a8c7`](https://github.com/Null-Phnix/Blackreach/commit/8a6a8c7bdae44a8bd52f13dd3de17556ce2704bd),
+completed the full 3,055-test suite.
+
+The controlled demo uses Blackreach's public browser code against Wikipedia. It
+searches for Browser automation, follows the observed Selenium link, and checks
+the visible destination heading separately.
+
+| Evidence | Result |
 |---|---|
-| **Blackreach** | Goal decomposition, ReAct loop, recovery, memory, and agent jobs |
-| **Huginn / BlackCrawl** | Deterministic search, scrape, crawl, extract, batch, cache, and job API |
-| **StarSearch** | Shared stealth browser runtime, authenticated sessions, and capacity |
-| **blackreach-mcp** | Stable MCP adapter for Hermes, Claude, Codex, and future agents |
+| Source | Exact public commit linked above |
+| Suite | 3,055 tests passed |
+| Browser | Real Chromium session on a public website |
+| Outcome | Visible `Selenium (software)` heading verified |
+| Limit | Deterministic product proof, not a model-planning benchmark |
 
-The complete architecture, routes, environment, runbook, live validation, and
-honest replacement boundary are in [docs/WEB_TOOL_SUITE.md](docs/WEB_TOOL_SUITE.md).
+The film labels its scripted decision path directly. It demonstrates the
+browser control and verification surface without claiming unrestricted
+autonomy or open-web reliability.
 
-## Production request path
+## Inspect it locally
 
-```text
-MCP client
-    │
-    ▼
-blackreach-mcp
-    ├── deterministic operation ──▶ Huginn ──▶ StarSearch
-    └── goal-driven browse ───────▶ Blackreach ──▶ StarSearch
-```
-
-Blackreach delegates deterministic work to Huginn. The agent browser backend
-is StarSearch in production and fails closed if its client/runtime is missing.
-Playwright remains an explicit development compatibility backend; it is not a
-silent production fallback.
-
-An explicit `start_url` is forwarded unchanged and visited directly. It is
-never replaced with a search page or unrelated default target.
-
-## What the agent does
-
-- Converts a goal into an observe → reason → act loop.
-- Uses a compact DOM observation rather than feeding raw page HTML to the LLM.
-- Executes navigation, click, type, scroll, wait, extraction, download, and
-  screenshot work through StarSearch's shared pool.
-- Detects stuck loops, blocked pages, invalid actions, and unhealthy sessions.
-- Persists agent session state and exposes asynchronous jobs on loopback.
-- Supports local Ollama plus optional hosted LLM providers for reasoning.
-
-Search, scraping, crawling, batch work, screenshots, browser sessions, and
-structured extraction schemas are exposed through Huginn and `blackreach-mcp`,
-not duplicated inside the orchestrator.
-
-## Install for development
+Blackreach is currently distributed from source rather than PyPI:
 
 ```bash
 git clone https://github.com/Null-Phnix/Blackreach.git
 cd Blackreach
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install uv==0.10.4
 uv sync --locked --extra dev --extra server
+uv run playwright install chromium
 ```
 
-For the production backend, also install the sibling StarSearch Python client
-into this environment and start the authenticated daemon. The suite runbook
-contains the exact dependency order and service files.
+Start with the public command surface:
 
 ```bash
-uv pip install --python .venv -e /mnt/WorkDrive/AI_Projects/Project_StarSearch/client
-.venv/bin/pytest -q
+uv run blackreach --help
+uv run blackreach setup
+uv run blackreach doctor
 ```
 
-## CLI
+Run the test suite:
 
 ```bash
-blackreach setup
-blackreach doctor
-blackreach run "collect the titles from the first page" --steps 20
-blackreach run "summarize this page" --steps 10
-blackreach sessions
-blackreach run --resume 42
+uv run pytest tests/
 ```
 
-Useful commands:
+## Public boundary
 
-| Command | Purpose |
-|---|---|
-| `blackreach run "goal"` | Run the goal-driven agent |
-| `blackreach doctor` | Diagnose model, browser, and local dependencies |
-| `blackreach validate` | Validate configuration |
-| `blackreach sessions` / `resumable` | Inspect or resume agent state |
-| `blackreach scancode URL` | Preview routing for a URL |
-| `blackreach stats` / `logs` | Inspect agent behavior |
-| `blackreach serve` | Development REST surface on port 7433 |
+The public case study intentionally stops at the product surface, testing
+discipline, and independently visible outcome. Current private deployment
+topology, credentials, live session material, and operational runbooks are not
+part of that public evidence.
 
-The CLI can deliberately select Playwright for isolated development. The
-installed suite service sets `BLACKREACH_BROWSER_BACKEND=starsearch`.
+## Contributing
 
-## Production service
-
-The asynchronous agent gateway binds `127.0.0.1:7434`:
-
-```bash
-install -m 644 deploy/systemd/blackreach-http.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now blackreach-http
-curl --fail http://127.0.0.1:7434/health
-```
-
-Data-bearing routes require the bearer key in
-`~/.config/blackreach/api-key` when installed with the supplied unit.
-Retained jobs are atomically journaled under
-`~/.local/state/blackreach/jobs.json`; interrupted jobs become explicit
-`service_restarted` failures on recovery.
-
-| Route | Purpose |
-|---|---|
-| `POST /browse` | Submit a goal and optional explicit `start_url` |
-| `GET /jobs/{job_id}` | Poll a durable agent result |
-| `GET /jobs` | List retained jobs |
-| `GET /jobs/{job_id}/screenshots` | List step screenshots |
-| `GET /jobs/{job_id}/screenshots/{name}` | Fetch a screenshot safely |
-| `GET /health` | Probe liveness without exposing job data |
-
-## One MCP surface
-
-Build and register only the Node adapter:
-
-```bash
-cd /mnt/WorkDrive/AI_Projects/blackreach-mcp
-npm ci
-npm run check
-```
-
-```json
-{
-  "mcpServers": {
-    "blackreach_web": {
-      "command": "node",
-      "args": ["/mnt/WorkDrive/AI_Projects/blackreach-mcp/dist/index.js"]
-    }
-  }
-}
-```
-
-Do not register the legacy Blackreach or BlackCrawl Python MCP servers beside
-this adapter. `blackreach-mcp` already exposes the orchestrator plus every
-deterministic Huginn capability with consistent schemas, job IDs, trace data,
-and structured errors.
-
-## Security and egress
-
-- Installed services bind loopback and use key files rather than secrets in
-  process arguments.
-- Huginn and StarSearch enforce HTTP(S)-only navigation plus private-network,
-  redirect, and browser-subresource policy.
-- StarSearch capacity is bounded; crashes invalidate stale sessions and free
-  capacity for new work.
-- StarSearch changes fingerprint signals. It does **not** change the host IP,
-  supply residential egress, or create geographic routing.
-- Proxy routing is configured in Huginn. `direct` means the host's real egress;
-  configured proxy failures do not silently fall back to direct.
-
-## Honest boundary
-
-The suite implements the useful local vertical slice: search, scrape, crawl,
-extract, screenshots, batch jobs, progress, caching, typed browser sessions,
-proxy leases, observability, and goal-driven browsing. It does not claim full
-Firecrawl wire compatibility or Browserbase parity. There is no managed proxy
-network, multi-host scheduler, public live-view URL, durable remote CDP
-context, or complete DNS-rebinding defense yet.
-
-## Troubleshooting
-
-```bash
-systemctl --user status starsearch-daemon blackreach-http
-curl --fail http://127.0.0.1:7432/health/ready
-curl --fail http://127.0.0.1:7434/health
-cd /mnt/WorkDrive/AI_Projects/blackreach-mcp && npm run check
-```
-
-- `BrowserNotReadyError`: install the StarSearch client and verify its daemon.
-- Huginn reports `egress.mode=direct`: no proxy provider is configured; this is
-  truthful local egress, not rotation.
-- Explicit StarSearch mode never falls back silently. Repair the daemon or
-  deliberately opt into a development backend.
+Bug reports and focused pull requests are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) before opening a change.
 
 ## License
 
