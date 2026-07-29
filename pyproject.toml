@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "blackreach"
 version = "5.0.0-beta.2"
-description = "Autonomous browser agent that accomplishes goals through web browsing"
+description = "Local-first browser and research agent that preserves progress and verifies outcomes"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -75,8 +75,8 @@ blackreach = "blackreach.cli:main"
 blackreach-server = "mcp_server.blackreach_http_server:main"
 
 [project.urls]
-Homepage = "https://github.com/Null-Phnix/Blackreach"
-Documentation = "https://github.com/Null-Phnix/Blackreach#readme"
+Homepage = "https://phnix.dev/projects/blackreach"
+Documentation = "https://phnix.dev/posts/how-blackreach-works"
 Repository = "https://github.com/Null-Phnix/Blackreach"
 Issues = "https://github.com/Null-Phnix/Blackreach/issues"
 

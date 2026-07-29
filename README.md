@@ -8,8 +8,8 @@
 **A local-first browser and research agent that preserves progress and verifies
 outcomes.**
 
-[Watch the 27-second proof film](https://phnix.dev/projects/blackreach.html)
-· [Read the engineering case study](https://phnix.dev/posts/how-blackreach-works.html)
+[Watch the 27-second proof film](https://phnix.dev/projects/blackreach)
+· [Read the engineering case study](https://phnix.dev/posts/how-blackreach-works)
 · [Inspect the source](https://github.com/Null-Phnix/Blackreach)
 
 ## Why Blackreach exists
