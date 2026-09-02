@@ -31,7 +31,7 @@ import uuid
 from enum import Enum
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_from_directory
 
 from blackreach.api import ApiConfig, BlackreachAPI
 
@@ -404,18 +404,18 @@ def get_job(job_id: str):
 @app.route("/jobs/<job_id>/screenshot", methods=["GET"])
 def get_job_screenshot(job_id: str):
     """Latest page screenshot for a job (PNG), for a live view of the agent."""
-    try:
-        path = _job_screenshot_path(job_id)
-    except ValueError:
-        return jsonify({"error": "job not found"}), 404
     with _jobs_lock:
-        if job_id not in _jobs:
-            return jsonify({"error": "job not found"}), 404
-    if not path.exists():
-        return jsonify({"error": "no screenshot yet"}), 404
-    resp = send_file(str(path), mimetype="image/png")
-    resp.headers["Cache-Control"] = "no-store"  # always fetch the newest frame
-    return resp
+        stored_job = _jobs.get(job_id)
+        owned_id = stored_job.get("job_id") if isinstance(stored_job, dict) else None
+    if not isinstance(owned_id, str) or not _JOB_ID_RE.fullmatch(owned_id):
+        return jsonify({"error": "job not found"}), 404
+    response = send_from_directory(
+        _SHOT_DIR,
+        f"{owned_id}.png",
+        mimetype="image/png",
+    )
+    response.headers["Cache-Control"] = "no-store"  # always fetch the newest frame
+    return response
 
 
 @app.route("/browse", methods=["POST"])
