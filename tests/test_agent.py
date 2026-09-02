@@ -13,6 +13,24 @@ from blackreach.agent import Agent, AgentConfig, AgentCallbacks
 from blackreach.exceptions import SessionNotFoundError, LLMError, BrowserError
 
 
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://google.com/search?q=test", "google"),
+        ("https://scholar.google.com/search?q=test", "google"),
+        ("https://duckduckgo.com/?q=test", "duckduckgo"),
+        ("https://www.bing.com/search?q=test", "bing"),
+        ("https://google.com.attacker.example/", None),
+        ("https://google.com@attacker.example/", None),
+        ("https://evil.example\\@google.com/search", None),
+        ("https://attacker.example/google.com", None),
+    ],
+)
+def test_identify_search_engine_uses_hostname_boundary(url, expected):
+    engine = Agent._identify_search_engine(url)
+    assert (engine.value if engine else None) == expected
+
+
 class TestAgentConfig:
     """Tests for AgentConfig defaults."""
 

@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import queue
+import re
 import threading
 import time
 import uuid
@@ -77,6 +78,14 @@ DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # live view of what the agent is doing.
 _SHOT_DIR = _PROJECT_ROOT / "downloads" / "_shots"
 _SHOT_DIR.mkdir(parents=True, exist_ok=True)
+_JOB_ID_RE = re.compile(r"^[0-9a-f]{8}$")
+
+
+def _job_screenshot_path(job_id: str) -> Path:
+    """Return the owned screenshot path for one generated job identifier."""
+    if not _JOB_ID_RE.fullmatch(job_id):
+        raise ValueError("invalid job id")
+    return _SHOT_DIR / f"{job_id}.png"
 
 
 # ─── Job Store ────────────────────────────────────────────────────────────────
@@ -193,6 +202,8 @@ def _load_jobs() -> None:
             if not isinstance(record, dict) or not record.get("job_id"):
                 raise ValueError("invalid agent job journal record")
             job = dict(record)
+            if not isinstance(job["job_id"], str) or not _JOB_ID_RE.fullmatch(job["job_id"]):
+                raise ValueError("invalid agent job id")
             if job.get("status") not in {
                 JobStatus.PENDING,
                 JobStatus.RUNNING,
@@ -258,7 +269,7 @@ def _worker_loop():
 
             # Capture a page screenshot each step so clients can show a live view.
             agent = api._get_agent()
-            _shot_path = _SHOT_DIR / f"{job_id}.png"
+            _shot_path = _job_screenshot_path(job_id)
 
             def _grab_shot(*_args, _agent=agent, _path=_shot_path):
                 try:
@@ -350,7 +361,7 @@ def _submit_job(goal: str, start_url: str | None = None, max_steps: int = 60) ->
             raise
         _job_queue.put(job_id)
     for old_id in removed_job_ids:
-        (_SHOT_DIR / f"{old_id}.png").unlink(missing_ok=True)
+        _job_screenshot_path(old_id).unlink(missing_ok=True)
     _start_worker()
     return job_id
 
@@ -393,7 +404,13 @@ def get_job(job_id: str):
 @app.route("/jobs/<job_id>/screenshot", methods=["GET"])
 def get_job_screenshot(job_id: str):
     """Latest page screenshot for a job (PNG), for a live view of the agent."""
-    path = _SHOT_DIR / f"{job_id}.png"
+    try:
+        path = _job_screenshot_path(job_id)
+    except ValueError:
+        return jsonify({"error": "job not found"}), 404
+    with _jobs_lock:
+        if job_id not in _jobs:
+            return jsonify({"error": "job not found"}), 404
     if not path.exists():
         return jsonify({"error": "no screenshot yet"}), 404
     resp = send_file(str(path), mimetype="image/png")

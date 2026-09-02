@@ -43,14 +43,38 @@ def _clean_result_url(url: str) -> str:
         return url
     if url.startswith("//"):
         url = "https:" + url
+    if "\\" in url:
+        return ""
     try:
         parsed = urllib.parse.urlparse(url)
     except ValueError:
-        return url
-    if "duckduckgo.com" in parsed.netloc and parsed.path.startswith("/l/"):
+        return ""
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        return ""
+    hostname = (parsed.hostname or "").rstrip(".").lower()
+    is_duckduckgo = hostname == "duckduckgo.com" or hostname.endswith(".duckduckgo.com")
+    if is_duckduckgo and parsed.path.startswith("/l/"):
         uddg = urllib.parse.parse_qs(parsed.query).get("uddg")
         if uddg:
-            return uddg[0]
+            target = uddg[0]
+            try:
+                parsed_target = urllib.parse.urlparse(target)
+            except ValueError:
+                return ""
+            if (
+                "\\" not in target
+                and parsed_target.scheme in {"http", "https"}
+                and parsed_target.hostname
+                and parsed_target.username is None
+                and parsed_target.password is None
+            ):
+                return target
+            return ""
     return url
 
 

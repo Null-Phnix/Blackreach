@@ -754,12 +754,20 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
     @staticmethod
     def _identify_search_engine(url: str) -> Optional[SearchEngine]:
         """Identify which search engine a URL belongs to, or None."""
-        url_lower = url.lower()
-        if "google.com" in url_lower:
+        if "\\" in url:
+            return None
+        try:
+            parsed = urlparse(url)
+            if parsed.username is not None or parsed.password is not None:
+                return None
+            hostname = (parsed.hostname or "").rstrip(".").lower()
+        except ValueError:
+            return None
+        if hostname == "google.com" or hostname.endswith(".google.com"):
             return SearchEngine.GOOGLE
-        if "duckduckgo.com" in url_lower:
+        if hostname == "duckduckgo.com" or hostname.endswith(".duckduckgo.com"):
             return SearchEngine.DUCKDUCKGO
-        if "bing.com" in url_lower:
+        if hostname == "bing.com" or hostname.endswith(".bing.com"):
             return SearchEngine.BING
         return None
 
@@ -1768,4 +1776,3 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
             self._consecutive_failures = 0
 
         return result
-

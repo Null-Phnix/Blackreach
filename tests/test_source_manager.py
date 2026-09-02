@@ -937,6 +937,18 @@ class TestSourceHealthCooldownDetails:
         # Second failure should have longer or equal cooldown (allow for fast CI runners)
         assert cooldown2 >= cooldown1
 
+    def test_first_two_failures_scale_without_marking_source_down(self, monkeypatch):
+        monkeypatch.setattr("blackreach.source_manager.time.time", lambda: 1000.0)
+        health = SourceHealth()
+
+        health.record_failure("Error")
+        assert health.status == SourceStatus.DEGRADED
+        assert health.cool_down_until == 1030.0
+
+        health.record_failure("Error")
+        assert health.status == SourceStatus.DEGRADED
+        assert health.cool_down_until == 1060.0
+
 
 class TestGetBestSourceScoring:
     """Tests for scoring logic in get_best_source."""

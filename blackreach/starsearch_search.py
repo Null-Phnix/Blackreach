@@ -98,13 +98,38 @@ class _Daemon:
 
 def _decode_bing_url(href: str) -> str:
     """Bing wraps results in /ck/a redirects with the target base64 in u=a1<b64>."""
-    if "bing.com/ck/a" not in href:
+    if not href or "\\" in href:
+        return ""
+    try:
+        parsed = urllib.parse.urlparse(href)
+    except ValueError:
+        return ""
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        return ""
+    hostname = (parsed.hostname or "").rstrip(".").lower()
+    is_bing = hostname == "bing.com" or hostname.endswith(".bing.com")
+    if not is_bing or parsed.path != "/ck/a":
         return href
-    u = urllib.parse.parse_qs(urllib.parse.urlparse(href).query).get("u", [""])[0]
+    u = urllib.parse.parse_qs(parsed.query).get("u", [""])[0]
     if u.startswith("a1"):
         b = u[2:] + "=" * (-len(u[2:]) % 4)
         try:
-            return base64.urlsafe_b64decode(b).decode("utf-8", "ignore")
+            target = base64.urlsafe_b64decode(b).decode("utf-8", "ignore")
+            parsed_target = urllib.parse.urlparse(target)
+            if (
+                "\\" not in target
+                and parsed_target.scheme in {"http", "https"}
+                and parsed_target.hostname
+                and parsed_target.username is None
+                and parsed_target.password is None
+            ):
+                return target
+            return ""
         except Exception:
             return href
     return href
@@ -117,10 +142,13 @@ def _parse_bing(html: str, limit: int) -> List[Dict[str, str]]:
         a = li.select_one("h2 a")
         if not a or not a.get("href"):
             continue
+        url = _decode_bing_url(a["href"])
+        if not url:
+            continue
         cap = li.select_one(".b_caption p") or li.select_one("p")
         out.append({
             "title": a.get_text(" ", strip=True),
-            "url": _decode_bing_url(a["href"]),
+            "url": url,
             "description": cap.get_text(" ", strip=True) if cap else "",
         })
         if len(out) >= limit:
