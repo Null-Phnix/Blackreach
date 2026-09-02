@@ -14,8 +14,27 @@ from blackreach.api import (
     DownloadResult,
     ApiConfig,
     BlackreachAPI,
+    _clean_result_url,
     _huginn_api_key,
 )
+
+
+def test_ddg_redirect_unwrap_requires_exact_domain_boundary():
+    wrapped = "https://evilduckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2F"
+    assert _clean_result_url(wrapped) == wrapped
+
+
+def test_ddg_redirect_unwrap_rejects_non_http_destination():
+    wrapped = "https://duckduckgo.com/l/?uddg=javascript%3Aalert%281%29"
+    assert _clean_result_url(wrapped) == ""
+
+
+def test_result_url_rejects_browser_ambiguous_authority():
+    assert _clean_result_url("https://evil.example\\@duckduckgo.com/l/?uddg=https://example.com") == ""
+
+
+def test_non_wrapper_result_requires_http_url():
+    assert _clean_result_url("javascript:alert(1)") == ""
 
 
 class TestBrowseResult:

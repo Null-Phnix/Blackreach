@@ -29,6 +29,33 @@ def test_async_gateway_requires_configured_api_key(monkeypatch, tmp_path):
     importlib.reload(gateway)
 
 
+def test_async_gateway_screenshot_requires_owned_job_id(monkeypatch, tmp_path):
+    """Screenshot paths accept only generated IDs for jobs still in the store."""
+    import importlib
+
+    monkeypatch.setenv("BLACKREACH_JOB_STATE_FILE", str(tmp_path / "jobs.json"))
+    monkeypatch.delenv("BLACKREACH_API_KEY", raising=False)
+
+    import mcp_server.blackreach_http_server as gateway
+    gateway = importlib.reload(gateway)
+    monkeypatch.setattr(gateway, "_SHOT_DIR", tmp_path / "shots")
+    gateway._SHOT_DIR.mkdir()
+
+    known_id = "deadbeef"
+    unknown_id = "cafebabe"
+    with gateway._jobs_lock:
+        gateway._jobs.clear()
+        gateway._jobs[known_id] = {"job_id": known_id, "status": gateway.JobStatus.DONE}
+    gateway._job_screenshot_path(known_id).write_bytes(b"png")
+    gateway._job_screenshot_path(unknown_id).write_bytes(b"png")
+
+    client = gateway.app.test_client()
+    assert client.get(f"/jobs/{known_id}/screenshot").status_code == 200
+    assert client.get(f"/jobs/{unknown_id}/screenshot").status_code == 404
+    with pytest.raises(ValueError, match="invalid job id"):
+        gateway._job_screenshot_path("..\\outside")
+
+
 def test_async_gateway_persists_results_and_recovers_interrupted_jobs(monkeypatch, tmp_path):
     """Restarts retain terminal jobs and make interrupted work explicitly fail."""
     import importlib
@@ -78,6 +105,7 @@ def test_async_gateway_persists_results_and_recovers_interrupted_jobs(monkeypatc
         "{not-json",
         '{"version": 2, "jobs": []}',
         '{"version": 1, "jobs": [{}]}',
+        '{"version": 1, "jobs": [{"job_id": "..\\\\outside", "status": "done"}]}',
     ],
 )
 def test_async_gateway_fails_closed_on_corrupt_job_journal(

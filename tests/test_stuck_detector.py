@@ -264,6 +264,11 @@ class TestContentHashFunction:
         hash2 = compute_content_hash(html2)
         assert hash1 == hash2
 
+    def test_ignores_scripts_with_whitespace_before_closing_bracket(self):
+        html1 = "<html><body><p>Content</p><script>var x = 1;</script ></body></html>"
+        html2 = "<html><body><p>Content</p><script>var x = 2;</script\t\n ignored></body></html>"
+        assert compute_content_hash(html1) == compute_content_hash(html2)
+
     def test_ignores_styles(self):
         """Hash should ignore style content."""
         html1 = "<html><body><p>Content</p><style>.x { color: red; }</style></body></html>"

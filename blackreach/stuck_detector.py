@@ -31,8 +31,8 @@ from enum import Enum
 
 
 # P0-PERF: Pre-compiled regex patterns for content hashing
-_RE_SCRIPT = re.compile(r'<script[^>]*>.*?</script>', re.DOTALL | re.IGNORECASE)
-_RE_STYLE = re.compile(r'<style[^>]*>.*?</style>', re.DOTALL | re.IGNORECASE)
+_RE_SCRIPT = re.compile(r'<script\b[^>]*>.*?</script\b[^>]*>', re.DOTALL | re.IGNORECASE)
+_RE_STYLE = re.compile(r'<style\b[^>]*>.*?</style\b[^>]*>', re.DOTALL | re.IGNORECASE)
 _RE_COMMENT = re.compile(r'<!--.*?-->', re.DOTALL)
 _RE_DATE = re.compile(r'\d{4}-\d{2}-\d{2}')
 _RE_TIME = re.compile(r'\d{1,2}:\d{2}')

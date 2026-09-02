@@ -91,6 +91,8 @@ class SourceHealth:
                 self.status = SourceStatus.BLOCKED
             else:
                 self.status = SourceStatus.DEGRADED
+        elif self.consecutive_failures > 0:
+            self.status = SourceStatus.DEGRADED
         elif self.success_rate >= 0.7:
             self.status = SourceStatus.HEALTHY
         elif self.success_rate >= 0.3:
