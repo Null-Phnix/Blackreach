@@ -35,6 +35,7 @@ dependencies = [
     "playwright-stealth>=1.0.0",
     "undetected-playwright>=0.3.0",
     "beautifulsoup4>=4.12.0",
+    "soupsieve>=2.9",
     "ollama>=0.1.0",
     "click>=8.0.0",
     "rich>=13.0.0",
