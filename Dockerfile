@@ -13,15 +13,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 libatspi2.0-0 fonts-liberation \
     && rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
-# Copy and install the wheel
-COPY dist/blackreach-5.0.0b1-py3-none-any.whl /tmp/
-RUN pip install --no-cache-dir /tmp/blackreach-5.0.0b1-py3-none-any.whl[all]
+# Install the current source with its enforced dependency security floors.
+COPY pyproject.toml README.md LICENSE /app/
+COPY blackreach/ /app/blackreach/
+COPY prompts/ /app/prompts/
+RUN pip install --no-cache-dir '.[all]'
 
 # Install Playwright and Chromium browser
 RUN python -m playwright install chromium --with-deps
-
-# Copy prompts (bundled in wheel but ensure they're accessible)
-COPY prompts/ /app/prompts/
 
 # Create data directory
 RUN mkdir -p /data/.blackreach && chmod -R 755 /data

@@ -3,7 +3,7 @@
 import base64
 import urllib.parse
 
-from blackreach.starsearch_search import _decode_bing_url
+from blackreach.starsearch_search import _decode_bing_url, _parse_bing
 
 
 def _wrapped(target: str, host: str = "www.bing.com") -> str:
@@ -30,3 +30,20 @@ def test_bing_wrapper_rejects_browser_ambiguous_authority():
 
 def test_non_wrapper_result_requires_http_url():
     assert _decode_bing_url("javascript:alert(1)") == ""
+
+
+def test_parse_bing_preserves_title_link_caption_and_limit():
+    html = f"""
+    <ol>
+      <li class="b_algo">
+        <h2><a href="{_wrapped('https://example.com/paper')}">First result</a></h2>
+        <div class="b_caption"><p>Useful description</p></div>
+      </li>
+      <li class="b_algo"><h2><a href="https://example.com/other">Second result</a></h2></li>
+    </ol>
+    """
+    assert _parse_bing(html, limit=1) == [{
+        "title": "First result",
+        "url": "https://example.com/paper",
+        "description": "Useful description",
+    }]
