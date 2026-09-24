@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from urllib.parse import urlparse, urljoin
 
+from blackreach.content_verify import FileType, VerificationStatus
+from blackreach.nav_context import PageValue
 from blackreach.exceptions import (
     BrowserError, NavigationError, DownloadError,
     InvalidActionArgsError, UnknownActionError, LLMError, NetworkError,
@@ -213,12 +215,25 @@ class AgentActionsMixin:
         elif action == "download":
             url = args.get("url", "")
             selector = args.get("selector", "")
+            expected_type = None
+            if "expected_type" in args:
+                try:
+                    expected_type = FileType(args["expected_type"])
+                except (ValueError, TypeError):
+                    raise InvalidActionArgsError("download", "expected_type must be a known file type")
+                if expected_type == FileType.UNKNOWN:
+                    raise InvalidActionArgsError("download", "expected_type must specify a concrete file type")
 
             # Resolve relative URLs to absolute
             if url and not url.startswith(('http://', 'https://')):
                 base_url = self.hand.get_url()
                 url = urljoin(base_url, url)
                 logger.debug("Resolved download URL: %s", url[:70])
+
+            # Preserve an obvious URL expectation even if the server supplies
+            # a misleading filename. Extensionless links need explicit intent.
+            if expected_type is None and url and urlparse(url).path.lower().endswith(".pdf"):
+                expected_type = FileType.PDF
 
             # Check if we've already downloaded this URL
             if url and self.persistent_memory.has_downloaded(url=url):
@@ -255,20 +270,19 @@ class AgentActionsMixin:
 
                 # Use centralized content verification
                 file_path = Path(result["path"])
-                if file_path.exists():
-                    verification = self.content_verifier.verify_file(file_path)
+                verification = self.content_verifier.verify_file(file_path, expected_type)
 
-                    if verification.status != VerificationStatus.VALID:
-                        # Delete invalid file
-                        file_path.unlink()
-                        logger.warning("INVALID download: %s", verification.message)
-                        self.session_memory.add_failure(verification.message)
-                        return {
-                            "action": "download",
-                            "skipped": True,
-                            "reason": verification.status.value,
-                            "verification": verification.message
-                        }
+                if verification.status != VerificationStatus.VALID:
+                    # Missing and rejected artifacts must never become progress.
+                    file_path.unlink(missing_ok=True)
+                    logger.warning("INVALID download: %s", verification.message)
+                    self.session_memory.add_failure(verification.message)
+                    return {
+                        "action": "download",
+                        "skipped": True,
+                        "reason": verification.status.value,
+                        "verification": verification.message
+                    }
 
                 self._record_download(
                     filename=result["filename"],
@@ -343,5 +357,4 @@ class AgentActionsMixin:
 
         else:
             raise UnknownActionError(action)
-
 

@@ -14,7 +14,8 @@ ACTIONS (pick exactly one):
 {{"action": "navigate", "args": {{"url": "https://example.com"}}}}
 
 4. DOWNLOAD a file by URL:
-{{"action": "download", "args": {{"url": "https://example.com/file.pdf"}}}}
+{{"action": "download", "args": {{"url": "https://example.com/file.pdf", "expected_type": "pdf"}}}}
+Include expected_type when the requested format is known (pdf, epub, mobi, azw3, djvu, image, zip, html, text).
 
 5. SCROLL the page:
 {{"action": "scroll", "args": {{"direction": "down"}}}}
