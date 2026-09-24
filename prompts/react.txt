@@ -30,7 +30,8 @@ Downloads so far: {download_count}
   {{"thought":"...","action":"navigate","args":{{"url":"https://..."}}}}
 
 - download: Download a file from a URL
-  {{"thought":"...","action":"download","args":{{"url":"https://..."}}}}
+  {{"thought":"...","action":"download","args":{{"url":"https://...","expected_type":"pdf"}}}}
+  Set expected_type when the goal requests a format: pdf, epub, mobi, azw3, djvu, image, zip, html, or text. Do not infer it from the response filename alone.
 
 - back: Go back to the previous page
   {{"thought":"...","action":"back"}}

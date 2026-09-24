@@ -1340,7 +1340,8 @@ You also receive a text summary of visible page content. READ BOTH CAREFULLY bef
 - click: Click element by ID. {"action":"click","element":N}
 - type: Type into input. {"action":"type","element":N,"text":"query","submit":true}
 - navigate: Go to a known URL directly. {"action":"navigate","args":{"url":"https://..."}}
-- download: Download a file by URL. {"action":"download","args":{"url":"https://..."}}
+- download: Download a file by URL. {"action":"download","args":{"url":"https://...","expected_type":"pdf"}}
+  Include expected_type when the goal specifies a format: pdf, epub, mobi, azw3, djvu, image, zip, html, text. Do not use the response filename as proof of the requested type.
 - scroll: Scroll to reveal more. {"action":"scroll","args":{"direction":"down"}}
 - back: Go to previous page. {"action":"back"}
 - done: Task complete. {"action":"done","args":{"reason":"brief summary","result":"full output text here - include ALL gathered content, summaries, lists, findings etc."}}

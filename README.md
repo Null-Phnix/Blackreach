@@ -3,7 +3,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-7c3aed?style=flat-square&labelColor=07061a)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee?style=flat-square&labelColor=07061a)](LICENSE)
 [![Version](https://img.shields.io/badge/version-v5.0.0--beta.2-9f6ff3?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Blackreach/releases)
-[![Tests](https://img.shields.io/badge/tests-3%2C055_passing-4ade80?style=flat-square&labelColor=07061a)](tests/)
+[![Tests](https://github.com/Null-Phnix/Blackreach/actions/workflows/tests.yml/badge.svg)](https://github.com/Null-Phnix/Blackreach/actions/workflows/tests.yml)
 
 **A local-first browser and research agent that preserves progress and verifies
 outcomes.**
@@ -49,6 +49,22 @@ browser control and verification surface without claiming unrestricted
 autonomy or open-web reliability.
 
 ## Inspect it locally
+
+### Download verification demo
+
+From a source checkout, try a small, offline demonstration of the actual download action handler:
+
+```bash
+uv sync --locked --extra dev --extra server
+uv run python examples/download_verification_demo.py
+```
+
+It rejects HTML, ZIPs and missing files when a PDF was requested, and records
+accepted files as progress. The transport uses temporary fixtures; it does not
+run a model or browser and needs no API key. Format checks do not prove that a
+PDF is the correct document. See the [walkthrough and limits](docs/DOWNLOAD_VERIFICATION_WALKTHROUGH.md).
+
+### Browser agent setup
 
 Blackreach is currently distributed from source rather than PyPI:
 

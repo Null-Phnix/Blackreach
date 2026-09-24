@@ -211,17 +211,7 @@ class ContentVerifier:
                 details={"size": len(data), "min_size": min_size}
             )
 
-        # Type-specific verification
-        if detected_type == FileType.PDF:
-            return self._verify_pdf(data, expected_type)
-        elif detected_type == FileType.EPUB:
-            return self._verify_epub(data, expected_type)
-        elif detected_type == FileType.ZIP:
-            return self._verify_zip(data, expected_type)
-        elif detected_type == FileType.IMAGE:
-            return self._verify_image(data, expected_type)
-
-        # Type mismatch check
+        # Check the requested type BEFORE accepting a valid but different format.
         if expected_type != FileType.UNKNOWN and expected_type != detected_type:
             # Some flexibility - ZIP can be EPUB
             if not (expected_type == FileType.EPUB and detected_type == FileType.ZIP):
@@ -231,6 +221,16 @@ class ContentVerifier:
                     detected_type=detected_type,
                     message=f"Expected {expected_type.value} but got {detected_type.value}"
                 )
+
+        # Type-specific verification
+        if detected_type == FileType.PDF:
+            return self._verify_pdf(data, expected_type)
+        elif detected_type == FileType.EPUB or expected_type == FileType.EPUB:
+            return self._verify_epub(data, expected_type)
+        elif detected_type == FileType.ZIP:
+            return self._verify_zip(data, expected_type)
+        elif detected_type == FileType.IMAGE:
+            return self._verify_image(data, expected_type)
 
         # Default to valid if no issues found
         return VerificationResult(
