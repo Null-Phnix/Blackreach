@@ -284,16 +284,19 @@ class ContentVerifier:
                 confidence=0.7
             )
 
-        # Check for basic PDF structure
+        # Check for basic PDF structure. PDF 1.5+ object streams compress
+        # the catalog and page tree, so /Catalog and /Pages are often absent
+        # from the raw bytes. The trailer or xref dictionary still names /Root.
+        has_root = b'/Root' in data
         has_catalog = b'/Catalog' in data or b'/catalog' in data.lower()
         has_pages = b'/Pages' in data or b'/pages' in data.lower()
 
-        if not has_catalog or not has_pages:
+        if not (has_root or (has_catalog and has_pages)):
             return VerificationResult(
                 status=VerificationStatus.CORRUPTED,
                 file_type=FileType.PDF,
                 detected_type=FileType.PDF,
-                message="PDF missing essential structure (Catalog or Pages)",
+                message="PDF missing essential structure (Root, or Catalog and Pages)",
                 confidence=0.6
             )
 

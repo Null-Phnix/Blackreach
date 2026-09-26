@@ -143,3 +143,31 @@ def test_epub_exception_requires_epub_structure(epub):
 def test_valid_pdf_cannot_satisfy_requested_zip():
     result = ContentVerifier().verify_data(PDF, expected_type=FileType.ZIP)
     assert result.status == VerificationStatus.WRONG_FORMAT
+
+
+# qpdf --object-streams=generate leaves /Root in the trailer and compresses
+# /Catalog and /Pages. A structural check that requires those literals deletes it.
+OBJECT_STREAM_PDF = (
+    b"%PDF-1.5\n"
+    b"1 0 obj\n<< /Type /XRef /Root 2 0 R /Size 3 /Filter /FlateDecode >>\n"
+    b"stream\n" + (b"\x00" * 1100) + b"\nendstream\nendobj\nstartxref\n9\n%%EOF\n"
+)
+
+
+def test_object_stream_pdf_is_kept(tmp_path):
+    assert b"/Catalog" not in OBJECT_STREAM_PDF
+    assert b"/Pages" not in OBJECT_STREAM_PDF
+    path = tmp_path / "paper.pdf"
+    agent = make_agent(path, OBJECT_STREAM_PDF)
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/download", "expected_type": "pdf"}
+    )
+    assert not result.get("skipped")
+    assert path.exists()
+    agent._record_download.assert_called_once()
+
+
+def test_pdf_without_root_or_page_tree_is_still_rejected():
+    data = b"%PDF-1.7\n" + (b"\x00" * 1200) + b"\n%%EOF"
+    result = ContentVerifier().verify_data(data, expected_type=FileType.PDF)
+    assert result.status == VerificationStatus.CORRUPTED
