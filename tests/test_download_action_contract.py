@@ -143,3 +143,33 @@ def test_epub_exception_requires_epub_structure(epub):
 def test_valid_pdf_cannot_satisfy_requested_zip():
     result = ContentVerifier().verify_data(PDF, expected_type=FileType.ZIP)
     assert result.status == VerificationStatus.WRONG_FORMAT
+
+
+def test_multiline_text_is_recorded(tmp_path):
+    """Newlines and a BOM are normal in text downloads and must not delete the file."""
+    data = "\ufeffNotes from the archive.\n".encode() + (
+        "Second line of the article.\n".encode() * 8
+    )
+    path = tmp_path / "notes.txt"
+    agent = make_agent(path, data)
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/download", "expected_type": "text"}
+    )
+    assert not result.get("skipped")
+    assert path.exists()
+    assert path.read_bytes() == data
+    agent._record_download.assert_called_once()
+    agent.persistent_memory.add_download.assert_called_once()
+
+
+def test_txt_extension_accepts_multiline_text():
+    data = ("Plain article paragraph.\n" * 12).encode()
+    result = ContentVerifier().verify_data(data, extension=".txt")
+    assert result.status == VerificationStatus.VALID
+    assert result.detected_type == FileType.TEXT
+
+
+def test_binary_payload_cannot_satisfy_requested_text():
+    data = b"\x00\x01\x02binary payload\xff" * 40
+    result = ContentVerifier().verify_data(data, expected_type=FileType.TEXT)
+    assert result.status == VerificationStatus.WRONG_FORMAT
