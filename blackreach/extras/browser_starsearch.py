@@ -464,6 +464,7 @@ class Hand:
     # ── navigation ──
 
     def goto(self, url: str, handle_popups: bool = True, wait_for_content: bool = True, **kwargs) -> dict:
+        self._document_url = None
         self._ensure_session()
         self._session.navigate(url, timeout=GOTO_TIMEOUT_MS // 1000)
         if wait_for_content:
@@ -474,7 +475,11 @@ class Hand:
 
     def get_url(self) -> str:
         self._ensure_session()
-        return self._session.evaluate("window.location.href") or ""
+        actual = self._session.evaluate("window.location.href") or ""
+        document_url = getattr(self, "_document_url", None)
+        if document_url and actual.startswith(("about:", "data:")):
+            return document_url
+        return actual
 
     def get_title(self, retries: int = 3) -> str:
         self._ensure_session()
@@ -487,11 +492,13 @@ class Hand:
         return self.get_url()
 
     def back(self) -> dict:
+        self._document_url = None
         self._ensure_session()
         self._session.go_back()
         return {"action": "back"}
 
     def forward(self) -> dict:
+        self._document_url = None
         self._ensure_session()
         self._session.go_forward()
         return {"action": "forward"}
@@ -601,7 +608,11 @@ class Hand:
 
     def get_url(self) -> str:
         self._ensure_session()
-        return self._session.evaluate("window.location.href") or ""
+        actual = self._session.evaluate("window.location.href") or ""
+        document_url = getattr(self, "_document_url", None)
+        if document_url and actual.startswith(("about:", "data:")):
+            return document_url
+        return actual
 
     def wait_for_navigation(self, timeout: float = 10000) -> None:
         self._ensure_session()

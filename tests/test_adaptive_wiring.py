@@ -76,6 +76,44 @@ class TestNavigateWithScan:
             agent._navigate_with_scan('https://wikipedia.org/wiki/Python')
 
         agent.hand.page.set_content.assert_called_once()
+        document = agent.hand.page.set_content.call_args.args[0]
+        assert '<base href="https://wikipedia.org/wiki/Python">' in document
+
+    def test_lightweight_reports_fetched_url_and_keeps_existing_base(self, agent):
+        plan = RoutePlan(
+            url='https://en.wikipedia.org/wiki/Python',
+            mode=BrowserMode.LIGHTWEIGHT,
+            confidence=0.15,
+            reasons=['known-light-domain'],
+            estimated_cost_ms=200,
+        )
+        agent._router.plan_for.return_value = plan
+        html = (
+            '<html><head><base href="https://en.wikipedia.org/wiki/Python">'
+            '<title>It\\\'s Python</title></head>'
+            '<body><a href="/wiki/Foo">Foo</a></body></html>'
+        )
+        fake_result = FetchResult(
+            url='https://en.wikipedia.org/wiki/Python',
+            status=200,
+            html=html,
+            elapsed_ms=80.0,
+        )
+        agent.hand.page.evaluate.side_effect = RuntimeError("title assignment failed")
+
+        with patch('blackreach.bulk_fetcher.BulkFetcher') as MockFetcher:
+            mock_fetcher = MagicMock()
+            mock_fetcher.fetch.return_value = fake_result
+            mock_fetcher.__enter__ = MagicMock(return_value=mock_fetcher)
+            mock_fetcher.__exit__ = MagicMock(return_value=False)
+            MockFetcher.return_value = mock_fetcher
+
+            assert agent._navigate_with_scan('https://en.wikipedia.org/wiki/Python')
+
+        document = agent.hand.page.set_content.call_args.args[0]
+        assert document.count("<base ") == 1
+        assert agent.hand._document_url == 'https://en.wikipedia.org/wiki/Python'
+        agent.hand.goto.assert_not_called()
 
     def test_lightweight_falls_back_on_fetch_fail(self, agent):
         plan = RoutePlan(
