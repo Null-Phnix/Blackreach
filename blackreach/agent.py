@@ -15,6 +15,7 @@ import json
 import logging
 import re
 import time
+from html import escape
 from pathlib import Path
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
@@ -89,6 +90,26 @@ RE_SLOW_DOWNLOAD = re.compile(r'(slow\s+download)', re.IGNORECASE)
 RE_FAST_DOWNLOAD = re.compile(r'(fast\s+download)', re.IGNORECASE)
 RE_SLOW_PARTNER = re.compile(r'(slow\s+partner\s+server)', re.IGNORECASE)
 RE_FAST_PARTNER = re.compile(r'(fast\s+partner\s+server)', re.IGNORECASE)
+
+
+def _html_with_document_base(html: str, url: str) -> str:
+    """Resolve relative links against the fetched page.
+
+    Lightweight navigation injects HTML with set_content, so the browser URL
+    stays about:blank. Without a base URL, clicks and relative navigations
+    leave the site.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return html
+    if re.search(r"<base\b", html, re.IGNORECASE):
+        return html
+    tag = f'<base href="{escape(url, quote=True)}">'
+    head = re.search(r"<head\b[^>]*>", html, re.IGNORECASE)
+    if head:
+        end = head.end()
+        return html[:end] + tag + html[end:]
+    return f"<head>{tag}</head>{html}"
 
 
 @dataclass
@@ -283,15 +304,24 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
                     # Inject HTML into the current page via Playwright set_content
                     # so the DOM walker still operates on real elements.
                     title = result.extract_title() or url
+                    document = _html_with_document_base(result.html, url)
                     try:
-                        self.hand.page.set_content(result.html)
-                        self.hand.page.evaluate(
-                            f"document.title = '{title.replace(chr(39), chr(92)+chr(39))}'"
-                        )
+                        self.hand.page.set_content(document)
                     except Exception:
                         # Fallback if set_content not available (starsearch)
-                        data_url = "data:text/html;base64," + base64.b64encode(result.html.encode('utf-8')).decode()
+                        data_url = "data:text/html;base64," + base64.b64encode(document.encode("utf-8")).decode()
                         self.hand.goto(data_url)
+                    else:
+                        try:
+                            self.hand.page.evaluate(
+                                "(title) => { document.title = title; }",
+                                title,
+                            )
+                        except Exception:
+                            logger.debug("Could not set lightweight page title", exc_info=True)
+                    # set_content and data: URLs leave the browser on about:blank
+                    # or data:. Report the fetched URL until a real navigation.
+                    self.hand._document_url = url
                     self._record_visit(url, title=title, success=True)
                     if log:
                         log(f"  [LIGHTWEIGHT] fetched in {result.elapsed_ms:.0f}ms")

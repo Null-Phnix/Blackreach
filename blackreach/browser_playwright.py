@@ -931,6 +931,9 @@ class Hand:
         Returns:
             Dict with action, url, title, content_found, and http_status
         """
+        # A real navigation replaces any lightweight set_content document.
+        self._document_url = None
+
         # Get site characteristics for adaptive timeouts
         site_chars = get_site_characteristics(url)
 
@@ -1311,12 +1314,14 @@ class Hand:
 
     def back(self) -> dict:
         """Go back in history."""
+        self._document_url = None
         self.page.go_back()
         self._human_delay(0.3, 0.8)
         return {"action": "back", "title": self.page.title()}
 
     def forward(self) -> dict:
         """Go forward in history."""
+        self._document_url = None
         self.page.go_forward()
         self._human_delay(0.3, 0.8)
         return {"action": "forward", "title": self.page.title()}
@@ -1596,7 +1601,11 @@ class Hand:
 
     def get_url(self) -> str:
         """Get the current URL."""
-        return self.page.url
+        actual = self.page.url
+        document_url = getattr(self, "_document_url", None)
+        if document_url and actual.startswith(("about:", "data:")):
+            return document_url
+        return actual
 
     def get_title(self, retries: int = 3) -> str:
         """Get the current page title with retry for navigation."""

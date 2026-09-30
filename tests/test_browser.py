@@ -722,6 +722,21 @@ class TestHandWithMockedPage:
 
         assert url == "https://example.com"
 
+    def test_get_url_reports_lightweight_document_until_real_navigation(self):
+        """set_content leaves the browser on about:blank; report the fetched URL."""
+        hand = Hand(headless=True)
+        hand._page = Mock()
+        hand._page.url = "about:blank"
+        hand._document_url = "https://en.wikipedia.org/wiki/Python"
+
+        assert hand.get_url() == "https://en.wikipedia.org/wiki/Python"
+
+        hand._page.url = "data:text/html,hi"
+        assert hand.get_url() == "https://en.wikipedia.org/wiki/Python"
+
+        hand._page.url = "https://en.wikipedia.org/wiki/Foo"
+        assert hand.get_url() == "https://en.wikipedia.org/wiki/Foo"
+
     def test_get_title_with_mock_page(self):
         """get_title() returns page title."""
         hand = Hand(headless=True)
