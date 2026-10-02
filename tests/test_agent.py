@@ -1206,6 +1206,47 @@ class TestBrowserManagement:
 # Tests for run() browser failure handling
 # =============================================================================
 
+class TestRunStartUrlRecovery:
+    """The page a run opens is the page stuck-recovery returns to."""
+
+    def test_explicit_start_url_replaces_default_for_recovery(self, tmp_path):
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        assert agent.config.start_url == "https://lite.duckduckgo.com/lite/"
+
+        with patch.object(agent, "ensure_browser", return_value=True), \
+             patch.object(agent, "_navigate_with_scan") as navigate, \
+             patch.object(agent, "_run_loop", return_value={"success": True, "paused": False}):
+            agent.run(
+                "Extract the pricing table",
+                quiet=True,
+                start_url="https://example.com/pricing",
+            )
+
+        assert agent.config.start_url == "https://example.com/pricing"
+        assert navigate.call_args[0][0] == "https://example.com/pricing"
+        agent._recent_urls = ["https://example.com/pricing"] * 3
+        hint = agent._get_stuck_hint()
+        assert "example.com/pricing" in hint
+        assert "lite.duckduckgo.com" not in hint
+
+    def test_smart_start_url_replaces_default_for_recovery(self, tmp_path):
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+
+        with patch.object(agent, "ensure_browser", return_value=True), \
+             patch.object(
+                 agent,
+                 "_get_smart_start_url",
+                 return_value=("https://example.org/docs", "docs", "docs"),
+             ), \
+             patch.object(agent, "_navigate_with_scan"), \
+             patch.object(agent, "_run_loop", return_value={"success": True, "paused": False}):
+            agent.run("Read the docs", quiet=True)
+
+        assert agent.config.start_url == "https://example.org/docs"
+
+
 class TestRunBrowserFailureHandling:
     """Tests for run() method browser failure handling."""
 

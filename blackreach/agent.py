@@ -720,6 +720,10 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
             log(f"Using caller-provided start URL: {start_url}")
         else:
             start_url, reasoning, search_query = self._get_smart_start_url(goal, quiet=quiet)
+        # Stuck recovery and resume read config.start_url. Keep the page this
+        # run actually opened, not the DuckDuckGo default.
+        if start_url:
+            self.config.start_url = start_url
         self._goal_reasoning = {
             "start_url": start_url,
             "reasoning": reasoning,
