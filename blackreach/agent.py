@@ -90,6 +90,32 @@ RE_FAST_DOWNLOAD = re.compile(r'(fast\s+download)', re.IGNORECASE)
 RE_SLOW_PARTNER = re.compile(r'(slow\s+partner\s+server)', re.IGNORECASE)
 RE_FAST_PARTNER = re.compile(r'(fast\s+partner\s+server)', re.IGNORECASE)
 
+# "not" inside "notes"/"another" is not a refusal to download. "no" must not
+# match "no." (number abbreviation) or "nothing" except as its own word.
+_GOAL_NEGATION = re.compile(r"\b(?:dont|never|not|nothing|without|cannot)\b|\bno(?=\s)")
+_GOAL_OBTAIN = re.compile(r"\b(?:download|fetch|save)\b")
+_GOAL_FILE_REQUEST = re.compile(r"\b(?:epubs?|pdfs?|wallpapers?|pictures?|photos?)\b")
+_GOAL_INFO_ONLY = re.compile(r"\bdownloaded\b|\bdownload counts?\b|\bmost downloaded\b")
+_GOAL_INFO_VERB = re.compile(r"\b(?:list|find|search|show)\b|\bget the\b")
+
+
+def goal_needs_download(goal: str) -> bool:
+    """Return whether finishing with zero files would miss the goal.
+
+    An explicit obtain verb still counts when the goal also says "find" or
+    "search". Queries about download statistics stay informational.
+    """
+    text = goal.lower().replace("'", "")
+    if _GOAL_NEGATION.search(text):
+        return False
+    if _GOAL_INFO_ONLY.search(text):
+        return False
+    if _GOAL_OBTAIN.search(text):
+        return True
+    if _GOAL_INFO_VERB.search(text):
+        return False
+    return _GOAL_FILE_REQUEST.search(text) is not None
+
 
 @dataclass
 class AgentCallbacks:
@@ -1569,25 +1595,10 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
         if action == "done":
             reason = args.get("reason", thought or "Goal complete")
             download_count = len(self.session_memory.downloaded_files)
-            goal_lower = goal.lower()
 
-            # Check if goal requires actual file downloads (not just listing info)
-            # ALSO: negative goals like "don't download anything" are NOT download tasks
-            download_words = ['download', 'fetch', 'save', 'epub', 'pdf',
-                'wallpaper', 'picture', 'photo']
-            negation_words = ["don't", "dont", "never", "not", "no ", "without"]
-            info_words = ['list', 'find', 'search', 'get the', 'show',
-                'downloaded', 'download count', 'most download']
-
-            has_download = any(w in goal_lower for w in download_words)
-            # Strip contractions to catch "don't" before word matching
-            goal_normalized = goal_lower.replace("'", "")
-            is_negated = any(w in f" {goal_normalized} " for w in negation_words)
-            is_info_task = any(w in goal_lower for w in info_words)
-            needs_download = has_download and not is_negated and not is_info_task
-
-            # Don't allow "done" if goal needs downloads but we have 0
-            if needs_download and download_count == 0:
+            # Don't allow "done" if the goal still needs a file and we have 0.
+            # Word boundaries: "notes" and "find and download" must not slip through.
+            if goal_needs_download(goal) and download_count == 0:
                 log(f"  [BLOCKED: Goal needs downloads but have 0 - continuing search]")
                 self._record_failure(url, "premature_done", f"LLM tried to quit: {reason}")
                 # Return a non-done result to force loop to continue
