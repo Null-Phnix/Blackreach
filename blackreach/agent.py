@@ -79,6 +79,15 @@ RE_DOMAIN = re.compile(r'\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}\b')
 RE_JSON_BLOCK = re.compile(r'```json\s*')
 RE_CODE_BLOCK = re.compile(r'```\s*')
 RE_NUMBER = re.compile(r'\b(\d+)\b')
+# A quota is a number tied to the request ("download 5", "5 files").
+# Other numbers are identifiers or ranges, not a file count.
+RE_DOWNLOAD_COUNT = re.compile(
+    r"\b(?:download|fetch|save|get|grab|need|want)\s+(\d+)\b"
+    r"|\b(\d+)\s+(?:files?|pdfs?|epubs?|mobis?|images?|photos?|pictures?"
+    r"|wallpapers?|papers?|books?|ebooks?|documents?|chapters?|volumes?"
+    r"|copies|items?)\b",
+    re.IGNORECASE,
+)
 RE_QUOTED_TEXT = re.compile(r"['\"]([^'\"]+)['\"]")
 RE_ARXIV_ID = re.compile(r'arxiv\.org/(?:abs|pdf)/(\d+\.\d+)')
 RE_CLICK_PATTERN = re.compile(
@@ -89,6 +98,20 @@ RE_SLOW_DOWNLOAD = re.compile(r'(slow\s+download)', re.IGNORECASE)
 RE_FAST_DOWNLOAD = re.compile(r'(fast\s+download)', re.IGNORECASE)
 RE_SLOW_PARTNER = re.compile(r'(slow\s+partner\s+server)', re.IGNORECASE)
 RE_FAST_PARTNER = re.compile(r'(fast\s+partner\s+server)', re.IGNORECASE)
+
+
+def download_quota(goal: str) -> Optional[int]:
+    """How many saved files allow a download goal to auto-complete.
+
+    Returns None when the goal contains numbers that are not a file count.
+    "Download chapters 1-10" must not succeed after a single file.
+    """
+    match = RE_DOWNLOAD_COUNT.search(goal)
+    if match:
+        return int(next(group for group in match.groups() if group))
+    if RE_NUMBER.search(goal):
+        return None
+    return 1
 
 
 @dataclass
@@ -1601,10 +1624,10 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
         download_count = len(self.session_memory.downloaded_files)
         goal_lower = goal.lower()
         if download_count > 0 and any(word in goal_lower for word in ['download', 'wallpaper', 'image', 'file', 'picture', 'photo']):
-            # Check if we've met a numeric goal
-            numbers = RE_NUMBER.findall(goal)
-            target = int(numbers[0]) if numbers else 1
-            if download_count >= target:
+            # Only an explicit count is a quota. The first integer in the goal
+            # is often a chapter, volume, or year.
+            target = download_quota(goal)
+            if target is not None and download_count >= target:
                 log(f" [AUTO-COMPLETE: Downloaded {download_count}/{target}]")
                 return {"done": True, "reason": f"Downloaded {download_count} files"}
 
