@@ -277,6 +277,23 @@ class PersistentMemory:
 
         return cursor.fetchone() is not None
 
+    def find_downloads(self, url: str = "", file_hash: str = "") -> List[Dict]:
+        """Return download rows matching a URL or content hash."""
+        cursor = self._conn.cursor()
+        if file_hash:
+            cursor.execute(
+                "SELECT filename, url, file_hash FROM downloads WHERE file_hash = ?",
+                (file_hash,),
+            )
+        elif url:
+            cursor.execute(
+                "SELECT filename, url, file_hash FROM downloads WHERE url = ?",
+                (url,),
+            )
+        else:
+            return []
+        return [dict(row) for row in cursor.fetchall()]
+
     def get_downloads(self, limit: int = 100) -> List[Dict]:
         """Get recent downloads."""
         cursor = self._conn.cursor()
