@@ -1508,8 +1508,12 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
         if element_id is not None:
             args["_element_id"] = element_id
 
-        # CRITICAL: Handle refusal - don't let LLM quit just because it doesn't want to help
-        if is_refusal:
+        # A policy refusal is the model stopping. Planning language such as
+        # "I cannot find the button" still names a click, navigation, or download
+        # and must be executed. Overriding those abandons the page that has the file.
+        normalized_action = (action or "").strip().lower()
+        refusing_to_act = is_refusal and normalized_action in {"", "done", "finish", "complete"}
+        if refusing_to_act:
             self._refusal_count += 1
             log(f"  [REFUSAL #{self._refusal_count} DETECTED - forcing continue]")
             download_count = len(self.session_memory.downloaded_files)
