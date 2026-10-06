@@ -1583,8 +1583,44 @@ class TestStepMethod:
                             with patch.object(agent.detector, 'detect_download_landing', return_value=MagicMock(detected=False)):
                                 result = agent._step("download files", 1, quiet=True)
 
-        # Should have incremented refusal count
+        # Should have incremented refusal count and left the page
         assert agent._refusal_count >= 1
+        mock_hand.goto.assert_called()
+        assert result.get("override") is True
+
+    def test_step_keeps_download_plan_that_says_cannot_find(self, tmp_path):
+        """Planning text is not a refusal when the model still names a page action."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        agent._current_goal = "download the report pdf"
+
+        mock_hand = MagicMock()
+        mock_hand.get_url.return_value = "https://example.com/report"
+        mock_hand.get_title.return_value = "Report"
+        mock_hand.get_html.return_value = "<html><body><a>PDF</a></body></html>"
+        mock_hand.is_healthy.return_value = True
+        locator = MagicMock()
+        locator.count.return_value = 1
+        mock_hand.page.locator.return_value = locator
+        agent.hand = mock_hand
+
+        llm_response = (
+            '{"thought": "I cannot find a labeled button, so I will click the PDF link",'
+            ' "action": "click", "element": 4}'
+        )
+
+        with patch.object(agent, 'check_browser_health', return_value=True):
+            with patch.object(agent.llm, 'generate', return_value=llm_response):
+                with patch.object(agent.detector, 'detect_challenge', return_value=MagicMock(detected=False)):
+                    with patch.object(agent.detector, 'detect_download_landing', return_value=MagicMock(detected=False)):
+                        with patch.object(agent.detector, 'detect_search_block', return_value=MagicMock(detected=False)):
+                            result = agent._step("download the report pdf", 1, quiet=True)
+
+        assert agent._refusal_count == 0
+        assert result.get("override") is not True
+        assert result.get("action") == "click"
+        assert result.get("element") == 4
+        mock_hand.goto.assert_not_called()
 
     def test_step_blocks_premature_done_without_downloads(self, tmp_path):
         """_step blocks premature done action when downloads are needed but not completed."""
