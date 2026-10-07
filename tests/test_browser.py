@@ -19,6 +19,7 @@ from blackreach.exceptions import (
     BrowserNotReadyError,
     ElementNotFoundError,
     InvalidActionArgsError,
+    NavigationError,
     UnknownActionError,
 )
 
@@ -925,6 +926,26 @@ class TestSSRFProtection:
         """URLs without hostname raise error."""
         with pytest.raises(ValueError, match="no hostname"):
             _is_ssrf_safe("file:///etc/passwd")
+
+    def test_goto_and_download_reject_local_files_before_browser(self):
+        """file:// must fail before the browser is started or the file is read."""
+        hand = Hand(headless=True)
+        for opener in (
+            lambda: hand.goto("file:///etc/passwd"),
+            lambda: hand.goto("javascript:alert(1)"),
+            lambda: hand.download_file(url="file:///etc/passwd"),
+        ):
+            with pytest.raises(NavigationError, match="Only http and https"):
+                opener()
+        with pytest.raises(BrowserNotReadyError):
+            hand.page
+
+    def test_starsearch_goto_rejects_local_files(self):
+        from blackreach.extras.browser_starsearch import Hand as StarHand
+
+        hand = StarHand(headless=True)
+        with pytest.raises(NavigationError, match="Only http and https"):
+            hand.goto("file:///etc/passwd")
 
     def test_case_insensitive_localhost(self):
         """Localhost detection is case-insensitive."""
