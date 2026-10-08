@@ -15,6 +15,7 @@ Each session gets its own log file with timestamp.
 
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -31,6 +32,30 @@ from rich.panel import Panel
 
 # Log directory
 LOG_DIR = Path.home() / ".blackreach" / "logs"
+
+
+def redact_log_text(value: str) -> str:
+    """Remove common credential representations from diagnostic text."""
+    if not isinstance(value, str):
+        return value
+    value = re.sub(r"(?i)(bearer\s+)[^\s,;]+", r"\1[REDACTED]", value)
+    value = re.sub(r"(?i)(https?://)[^/@\s]+:[^/@\s]+@", r"\1[REDACTED]@", value)
+    value = re.sub(r'''(?i)((?:api[_-]?key|access[_-]?token|token|password|secret|authorization)["']?\s*[=:]\s*["']?)[^"'\s&,;}]+''', r"\1[REDACTED]", value)
+    return re.sub(r"\bsk-[A-Za-z0-9_-]+", "[REDACTED]", value)
+
+
+def _safe_log_data(value):
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]" if any(word in str(key).lower() for word in
+                ("password", "secret", "token", "api_key", "authorization", "cookie", "prompt", "thought", "response"))
+            or str(key).lower() in {"text", "content", "value"}
+            else _safe_log_data(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_safe_log_data(item) for item in value]
+    return redact_log_text(value) if isinstance(value, str) else value
 
 
 class LogLevel(IntEnum):
@@ -227,10 +252,10 @@ class FileLogHandler:
         # Ensure directory exists
         log_file.parent.mkdir(parents=True, exist_ok=True)
 
-    def emit(self, entry: LogEntry) -> None:
+    def emit(self, entry: LogEntry) -> bool:
         """Write a log entry to file."""
         if entry.level_value < self.level:
-            return
+            return True
 
         try:
             with self._lock:
@@ -241,8 +266,9 @@ class FileLogHandler:
 
                 with open(self.log_file, "a") as f:
                     f.write(entry.to_json() + "\n")
+            return True
         except Exception:
-            pass  # Don't let logging failures crash the application
+            return False  # The runtime can report failed terminal logging safely.
 
     def _rotate(self) -> None:
         """Rotate log file when it exceeds max size."""
@@ -313,13 +339,16 @@ class SessionLogger:
         # Always set session_id
         if entry.session_id is None:
             entry.session_id = self.session_id
+        entry.event = redact_log_text(entry.event)
+        entry.data = _safe_log_data(entry.data)
 
         # File handler (always active)
-        self._file_handler.emit(entry)
+        written = self._file_handler.emit(entry)
 
         # Console handler (optional)
         if self._console_handler:
             self._console_handler.emit(entry)
+        return written
 
     # -------------------------------------------------------------------------
     # Log Level Methods
@@ -408,14 +437,14 @@ class SessionLogger:
         ))
 
     def think(self, step: int, thought: str, stuck: bool = False):
-        """Log a thought."""
+        """Log decision metadata without retaining model reasoning."""
         self._write(LogEntry(
             timestamp=self._now(),
             level="DEBUG",
             event="think",
             session_id=self.session_id,
             step=step,
-            data={"thought": thought, "stuck": stuck}
+            data={"stuck": stuck}
         ))
 
     def act(self, step: int, action: str, args: Dict, success: bool = True):
@@ -451,10 +480,12 @@ class SessionLogger:
             data={"filename": filename, "url": url, "size": size}
         ))
 
-    def session_end(self, success: bool, steps: int, downloads: int, failures: int):
+    def session_end(self, success: bool, steps: int, downloads: int, failures: int,
+                    *, actions: int = None, status: str = None,
+                    stop_reason: str = None, error: str = None):
         """Log session end."""
         duration = (datetime.now() - self.start_time).total_seconds()
-        self._write(LogEntry(
+        return self._write(LogEntry(
             timestamp=self._now(),
             level="INFO",
             event="session_end",
@@ -464,6 +495,10 @@ class SessionLogger:
                 "steps": steps,
                 "downloads": downloads,
                 "failures": failures,
+                "actions": actions,
+                "status": status or ("success" if success else "error"),
+                "stop_reason": stop_reason or ("goal_complete" if success else "unspecified"),
+                "error": error,
                 "duration_seconds": round(duration, 2)
             }
         ))
@@ -597,12 +632,18 @@ def get_log_summary(log_file: Path) -> Dict[str, Any]:
     goal = start_entry.get("data", {}).get("goal", "") if start_entry else ""
     success = end_entry.get("data", {}).get("success", False) if end_entry else None
     duration = end_entry.get("data", {}).get("duration_seconds", 0) if end_entry else 0
+    outcome = end_entry.get("data", {}) if end_entry else {}
 
     return {
         "total_entries": len(entries),
         "level_counts": level_counts,
         "goal": goal,
         "success": success,
+        "status": outcome.get("status"),
+        "stop_reason": outcome.get("stop_reason"),
+        "error": outcome.get("error"),
+        "steps": outcome.get("steps"),
+        "actions": outcome.get("actions"),
         "duration_seconds": duration,
         "has_errors": level_counts.get("ERROR", 0) > 0,
     }

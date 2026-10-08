@@ -49,7 +49,7 @@ class TestNavigateWithScan:
         agent._navigate_with_scan('https://example.com')
         agent.hand.goto.assert_called_once_with('https://example.com')
 
-    def test_lightweight_uses_bulk_fetcher_then_set_content(self, agent):
+    def test_lightweight_uses_real_navigation(self, agent):
         plan = RoutePlan(
             url='https://wikipedia.org/wiki/Python',
             mode=BrowserMode.LIGHTWEIGHT,
@@ -75,7 +75,9 @@ class TestNavigateWithScan:
 
             agent._navigate_with_scan('https://wikipedia.org/wiki/Python')
 
-        agent.hand.page.set_content.assert_called_once()
+        MockFetcher.assert_not_called()
+        agent.hand.goto.assert_called_once_with('https://wikipedia.org/wiki/Python')
+        agent.hand.page.set_content.assert_not_called()
 
     def test_lightweight_falls_back_on_fetch_fail(self, agent):
         plan = RoutePlan(

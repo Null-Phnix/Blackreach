@@ -9,6 +9,19 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### 5.0.0-beta.3 local engine candidate, October 8, 2026
+
+- Keep interactive navigation at its real origin, including lightweight routing.
+- Report success, limits, pauses, interruptions, and errors with explicit reasons.
+- Preserve decision/action counts and checkpoints across fresh-agent resume; avoid stale replay checkpoints.
+- Route current OpenAI reasoning models through Responses, classify safe provider failures, and bound transport retries/timeouts.
+- Carry provider settings through terminal entry points and expose structured JSON results with meaningful exit codes.
+- Let Ctrl+C reach checkpoint handling; fix browser doctor to check the installed executable rather than an installer dry run.
+- Keep run-local state separate between goals and agent instances.
+- Package the advertised server entry point and its optional dependencies.
+- Add a controlled localhost recovery walkthrough with real Chromium and SQLite, plus negative-path regressions.
+- Existing provider settings and credentials remain unchanged. No broad web reliability or model/account access guarantee is implied.
+
 ---
 
 ## [5.0.0-beta.2] - 2026-05-08

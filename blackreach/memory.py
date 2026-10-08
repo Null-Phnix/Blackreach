@@ -38,6 +38,8 @@ class SessionMemory:
     visited_urls: List[str] = field(default_factory=list)
     actions_taken: List[Dict[str, Any]] = field(default_factory=list)
     failures: List[str] = field(default_factory=list)
+    action_count: int = 0
+    action_count_estimated: bool = False
 
     def add_download(self, filename: str, url: str = ""):
         """Record a downloaded file and its URL."""
@@ -53,9 +55,11 @@ class SessionMemory:
             if len(self.visited_urls) > max_urls:
                 self.visited_urls = self.visited_urls[-max_urls:]
 
-    def add_action(self, action: Dict[str, Any], max_actions: int = 200):
+    def add_action(self, action: Dict[str, Any], max_actions: int = 200, *, counted: bool = False):
         """Record an action taken (with limit to prevent memory issues)."""
         self.actions_taken.append(action)
+        if not counted:
+            self.action_count += 1
         # Prevent unbounded growth - keep only recent actions
         if len(self.actions_taken) > max_actions:
             self.actions_taken = self.actions_taken[-max_actions:]
@@ -82,6 +86,8 @@ class SessionMemory:
             "visited_urls": self.visited_urls,
             "actions_taken": self.actions_taken,
             "failures": self.failures,
+            "action_count": self.action_count,
+            "action_count_estimated": self.action_count_estimated,
         }
 
     @classmethod
@@ -93,6 +99,8 @@ class SessionMemory:
             visited_urls=data.get("visited_urls", []),
             actions_taken=data.get("actions_taken", []),
             failures=data.get("failures", []),
+            action_count=data.get("action_count", len(data.get("actions_taken", []))),
+            action_count_estimated=data.get("action_count_estimated", "action_count" not in data),
         )
 
 

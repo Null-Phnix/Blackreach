@@ -28,7 +28,7 @@ from blackreach.llm import LLM, LLMConfig
 from blackreach.stealth import StealthConfig
 from blackreach.resilience import RetryConfig
 from blackreach.memory import SessionMemory, PersistentMemory
-from blackreach.logging import SessionLogger
+from blackreach.logging import SessionLogger, redact_log_text
 from blackreach.exceptions import (
     InvalidActionArgsError, UnknownActionError, SessionNotFoundError,
     BrowserError, NavigationError, DownloadError, LLMError, NetworkError,
@@ -39,9 +39,9 @@ from blackreach.stuck_detector import StuckDetector, RecoveryStrategy, compute_c
 from blackreach.error_recovery import ErrorRecovery
 from blackreach.source_manager import get_source_manager
 from blackreach.goal_engine import GoalDecomposition, get_goal_engine
-from blackreach.nav_context import PageValue, get_nav_context
+from blackreach.nav_context import NavigationContext, PageValue
 from blackreach.site_handlers import get_site_hints
-from blackreach.search_intel import get_search_intel, get_search_fallback_url, SearchEngine, DEFAULT_SEARCH_ENGINE
+from blackreach.search_intel import SearchIntelligence, get_search_fallback_url, SearchEngine, DEFAULT_SEARCH_ENGINE
 from blackreach.content_verify import VerificationStatus, get_verifier
 from blackreach.timeout_manager import get_timeout_manager
 from blackreach.rate_limiter import get_rate_limiter
@@ -166,10 +166,10 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
         self._current_subtask_id: Optional[str] = None
 
         # Context-aware navigation
-        self.nav_context = get_nav_context(self.persistent_memory)
+        self.nav_context = NavigationContext(self.persistent_memory)
 
         # Search intelligence
-        self.search_intel = get_search_intel(self.persistent_memory)
+        self.search_intel = SearchIntelligence(self.persistent_memory)
         self._current_search_session = None
 
         # Content verification
@@ -273,40 +273,10 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
             log(f"  [ROUTE] {plan.mode.value} score={plan.confidence:.2f} ({','.join(plan.reasons[:3])})")
 
         if plan.mode == BrowserMode.LIGHTWEIGHT:
-            # Fast path: use bulk HTTP fetcher instead of browser
-            try:
-                from blackreach.bulk_fetcher import BulkFetcher
-                import base64
-                with BulkFetcher() as fetcher:
-                    result = fetcher.fetch(url)
-                if result.ok and result.html:
-                    # Inject HTML into the current page via Playwright set_content
-                    # so the DOM walker still operates on real elements.
-                    title = result.extract_title() or url
-                    try:
-                        self.hand.page.set_content(result.html)
-                        self.hand.page.evaluate(
-                            f"document.title = '{title.replace(chr(39), chr(92)+chr(39))}'"
-                        )
-                    except Exception:
-                        # Fallback if set_content not available (starsearch)
-                        data_url = "data:text/html;base64," + base64.b64encode(result.html.encode('utf-8')).decode()
-                        self.hand.goto(data_url)
-                    self._record_visit(url, title=title, success=True)
-                    if log:
-                        log(f"  [LIGHTWEIGHT] fetched in {result.elapsed_ms:.0f}ms")
-                    return True
-                else:
-                    # Fallback to browser
-                    if log:
-                        log(f"  [LIGHTWEIGHT] failed: {result.error or result.status}, falling back to browser")
-                    self.hand.goto(url)
-                    return True
-            except Exception as e:
-                if log:
-                    log(f"  [LIGHTWEIGHT] error: {e}, falling back to browser")
-                self.hand.goto(url)
-                return True
+            # Interactive actions require a real document URL and origin.
+            # Bulk HTML/set_content cannot preserve relative links, assets or scripts.
+            self.hand.goto(url)
+            return True
 
         elif plan.mode == BrowserMode.HEADLESS:
             # Normal headless with extra headers
@@ -379,7 +349,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
                 self._callback_errors[event] = error_count
 
                 if error_count <= self._max_callback_errors_per_event:
-                    logger.warning("Callback error in %s: %s", event, e)
+                    logger.warning("Callback error in %s: %s", event, redact_log_text(str(e)))
                     if error_count == self._max_callback_errors_per_event:
                         logger.warning("Callback error in %s: suppressing further errors", event)
 
@@ -495,7 +465,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
             try:
                 self.hand.goto(navigate_to)
             except (NavigationError, BrowserError, OSError) as e:
-                logger.debug("Best-effort post-restart navigation failed: %s", e)
+                logger.debug("Best-effort post-restart navigation failed: %s", redact_log_text(str(e)))
 
         return success
 
@@ -578,12 +548,41 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
         """Request the agent to pause at next opportunity."""
         self._paused = True
 
-    def save_state(self) -> None:
+    def _reset_transient_state(self) -> None:
+        """Keep a previous goal's failures and observations out of a new run."""
+        self._page_cache = {"url": None, "html": None, "parsed": None, "elements": None}
+        self._recent_urls, self._action_history = [], []
+        self._consecutive_failures = self._stuck_counter = self._repeated_failure_count = 0
+        self._last_action = self._last_failed_action = None
+        self._clicked_selectors, self._selector_click_counts = set(), {}
+        self._clicked_page_url = None
+        self._refusal_count = self._consecutive_challenges = 0
+        self._failed_download_urls, self._failed_urls, self._blocked_engines = set(), set(), set()
+        self._current_source = self._current_subtask_id = self._current_decomposition = None
+        self._current_search_session = None
+        self._goal_reasoning, self._callback_errors = {}, {}
+        # reset() keeps old detector breadcrumbs, so start a genuinely fresh detector.
+        self.stuck_detector, self.error_recovery = StuckDetector(), ErrorRecovery()
+        self.nav_context = NavigationContext(self.persistent_memory)
+        self.search_intel = SearchIntelligence(self.persistent_memory)
+
+    def save_state(self, status: str = "paused") -> bool:
         """Save current session state for later resume."""
         if not self.session_id or not self._current_goal:
-            return
+            return False
 
-        current_url = self.hand.get_url() if self.hand else ""
+        current_url = ""
+        if self.hand:
+            try:
+                current_url = self.hand.get_url()
+            except Exception:
+                # Browser failure must not destroy an otherwise valid checkpoint.
+                pass
+        if not isinstance(current_url, str) or current_url.startswith(("about:", "data:")):
+            current_url = ""
+        if not current_url:
+            recent_urls = getattr(self, "_recent_urls", [])
+            current_url = recent_urls[-1] if recent_urls else self.config.start_url
         self.persistent_memory.save_session_state(
             session_id=self.session_id,
             goal=self._current_goal,
@@ -592,10 +591,12 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
             session_memory=self.session_memory,
             start_url=self.config.start_url,
             max_steps=self.config.max_steps,
-            status="paused"
+            status=status
         )
+        return True
 
-    def resume(self, session_id: int, quiet: bool = False) -> Dict[str, Any]:
+    def resume(self, session_id: int, quiet: bool = False,
+               max_steps: Optional[int] = None) -> Dict[str, Any]:
         """
         Resume a previously paused session.
 
@@ -606,17 +607,37 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
         Returns:
             Dict with results
         """
-        state = self.persistent_memory.load_session_state(session_id)
+        try:
+            state = self.persistent_memory.load_session_state(session_id)
+        except Exception as exc:
+            self.session_id = session_id
+            self._current_step, self._current_goal = 0, ""
+            self.session_memory = SessionMemory()
+            self._logger = SessionLogger(session_id, "")
+            return self._finish_run("", "error", "state_load_failed", str(exc), preserve_checkpoint=True)
         if not state:
             raise SessionNotFoundError(str(session_id))
 
         # Restore state
+        self._reset_transient_state()
         self.session_id = state["session_id"]
         self._current_goal = state["goal"]
         self._current_step = state["current_step"]
         self.session_memory = state["session_memory"]
+        self._recent_urls = self.session_memory.visited_urls[-MAX_RECENT_URLS:]
+        saved_url = state["current_url"]
+        if isinstance(saved_url, str) and saved_url.startswith(("http://", "https://")):
+            if not self._recent_urls or self._recent_urls[-1] != saved_url:
+                self._recent_urls.append(saved_url)
+                self._recent_urls = self._recent_urls[-MAX_RECENT_URLS:]
+        self._action_history = [
+            f"{entry.get('action', 'unknown')} -> {entry.get('error') or 'recorded'}"
+            for entry in self.session_memory.actions_taken[-5:]
+        ]
         self.config.start_url = state["start_url"]
-        self.config.max_steps = state["max_steps"]
+        self.config.max_steps = state["max_steps"] if max_steps is None else max_steps
+        self._paused = False
+        self._logger = SessionLogger(self.session_id, self._current_goal)
 
         def log(msg: str):
             if not quiet:
@@ -629,27 +650,26 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
         log(f"From step: {self._current_step}")
         log(f"{'='*60}\n")
 
-        log("Starting browser...")
-        if not self.ensure_browser():
-            log("ERROR: Failed to start browser")
-            return {
-                "goal": self._current_goal,
-                "success": False,
-                "paused": False,
-                "downloads": [],
-                "pages_visited": 0,
-                "steps_taken": 0,
-                "failures": 1,
-                "session_id": self.session_id,
-                "error": "Failed to start browser"
-            }
+        if self._current_step >= self.config.max_steps:
+            # An exhausted budget needs no browser or model call.
+            return self._run_loop(self._current_goal, start_step=self._current_step + 1, quiet=quiet)
 
-        if state["current_url"]:
-            log(f"Navigating to saved URL: {state['current_url']}")
-            self.hand.goto(state["current_url"])
-        else:
-            log(f"Navigating to start URL: {self.config.start_url}")
-            self.hand.goto(self.config.start_url)
+        log("Starting browser...")
+        try:
+            if not self.ensure_browser():
+                return self._finish_run(self._current_goal, "error", "browser_start_failed",
+                                        "Failed to start browser", preserve_checkpoint=True, resumable=True)
+            saved_url = state["current_url"] or self.config.start_url
+            if not isinstance(saved_url, str) or saved_url.startswith(("about:", "data:")):
+                return self._finish_run(self._current_goal, "error", "navigation_failed",
+                                        "Saved session has no navigable source URL", preserve_checkpoint=True)
+            log(f"Navigating to saved URL: {saved_url}")
+            self.hand.goto(saved_url)
+        except KeyboardInterrupt:
+            return self._interrupt_run(self._current_goal)
+        except Exception as exc:
+            return self._finish_run(self._current_goal, "error", "navigation_failed",
+                                    str(exc), preserve_checkpoint=True, resumable=True)
 
         # Continue running from saved step
         return self._run_loop(self._current_goal, start_step=self._current_step + 1, quiet=quiet)
@@ -671,83 +691,100 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
             self._emit("on_status", msg)
 
         self._current_goal = goal
+        self._reset_transient_state()
         self._paused = False
+        self._current_step = 0
+        self.session_memory = SessionMemory()
+        self.session_id = None
+        if hasattr(self, "_logger"):
+            del self._logger
+        self._recent_urls = []
+        self._action_history = []
 
         log(f"\n{'='*60}")
         log(f"GOAL: {goal}")
         log(f"{'='*60}\n")
 
-        stats = self.persistent_memory.get_stats()
-        if stats["total_sessions"] > 0:
-            log(f"Memory: {stats['total_downloads']} downloads, "
-                f"{stats['total_visits']} visits from {stats['total_sessions']} sessions")
+        try:
+            stats = self.persistent_memory.get_stats()
+            if stats["total_sessions"] > 0:
+                log(f"Memory: {stats['total_downloads']} downloads, "
+                    f"{stats['total_visits']} visits from {stats['total_sessions']} sessions")
 
-        self.session_id = self.persistent_memory.start_session(goal)
-        log(f"Session #{self.session_id} started\n")
+            self.session_id = self.persistent_memory.start_session(goal)
+            log(f"Session #{self.session_id} started\n")
+            self._logger = SessionLogger(self.session_id, goal)
 
-        self._current_decomposition = self.goal_engine.decompose(goal)
-        if self._current_decomposition.subtasks:
-            log(f"Goal decomposed into {len(self._current_decomposition.subtasks)} subtasks:")
-            for i, st in enumerate(self._current_decomposition.subtasks[:5], 1):
-                optional = " (optional)" if st.optional else ""
-                log(f"  {i}. {st.description}{optional}")
-            if len(self._current_decomposition.subtasks) > 5:
-                log(f"  ... and {len(self._current_decomposition.subtasks) - 5} more")
-            log("")
+            self._current_decomposition = self.goal_engine.decompose(goal)
+            if self._current_decomposition.subtasks:
+                log(f"Goal decomposed into {len(self._current_decomposition.subtasks)} subtasks:")
+                for i, st in enumerate(self._current_decomposition.subtasks[:5], 1):
+                    optional = " (optional)" if st.optional else ""
+                    log(f"  {i}. {st.description}{optional}")
+                if len(self._current_decomposition.subtasks) > 5:
+                    log(f"  ... and {len(self._current_decomposition.subtasks) - 5} more")
+                log("")
 
-        self._logger = SessionLogger(self.session_id, goal)
-        self.config.download_dir.mkdir(parents=True, exist_ok=True)
+            self.config.download_dir.mkdir(parents=True, exist_ok=True)
+
+        except KeyboardInterrupt:
+            return self._interrupt_run(goal)
+        except Exception as exc:
+            return self._finish_run(goal, "error", "initialization_failed", str(exc))
 
         log("Starting browser...")
-        if not self.ensure_browser():
-            log("ERROR: Failed to start browser")
-            return {
-                "goal": goal,
-                "success": False,
-                "paused": False,
-                "downloads": [],
-                "pages_visited": 0,
-                "steps_taken": 0,
-                "failures": 1,
-                "session_id": self.session_id,
-                "error": "Failed to start browser"
-            }
-
-        if start_url:
-            # Caller gave an explicit start URL — honor it instead of decomposing
-            # the goal into a web search (the /browse start_url must not be ignored).
-            reasoning, search_query = "explicit start_url provided by caller", None
-            log(f"Using caller-provided start URL: {start_url}")
-        else:
-            start_url, reasoning, search_query = self._get_smart_start_url(goal, quiet=quiet)
-        self._goal_reasoning = {
-            "start_url": start_url,
-            "reasoning": reasoning,
-            "search_query": search_query
-        }
-
-        log(f"Navigating to: {start_url}")
         try:
-            self._navigate_with_scan(start_url, log=log)
-        except (NavigationError, BrowserError, OSError) as e:
-            # If a search engine URL failed, try the next engine in the chain
-            failed_engine = self._identify_search_engine(start_url)
-            if failed_engine:
-                # Try URL query param first, fall back to goal's search query
-                query = self._extract_search_query(start_url) or search_query
-                if query:
-                    self._blocked_engines.add(failed_engine)
-                    log(f"  [{failed_engine.value} navigation failed: {e}]")
-                    fallback_url, fallback_engine = get_search_fallback_url(
-                        query, exclude=[failed_engine]
-                    )
-                    log(f"  [Failing over to {fallback_engine.value}: {fallback_url[:60]}]")
-                    self._navigate_with_scan(fallback_url, log=log)
+            if not self.ensure_browser():
+                return self._finish_run(goal, "error", "browser_start_failed", "Failed to start browser")
+        except KeyboardInterrupt:
+            return self._interrupt_run(goal)
+        except Exception as exc:
+            return self._finish_run(goal, "error", "browser_start_failed", str(exc))
+
+        try:
+            if start_url:
+                # Caller gave an explicit start URL — honor it instead of decomposing
+                # the goal into a web search (the /browse start_url must not be ignored).
+                reasoning, search_query = "explicit start_url provided by caller", None
+                log(f"Using caller-provided start URL: {start_url}")
+            else:
+                start_url, reasoning, search_query = self._get_smart_start_url(goal, quiet=quiet)
+            self._goal_reasoning = {
+                "start_url": start_url,
+                "reasoning": reasoning,
+                "search_query": search_query
+            }
+            self.config.start_url = start_url
+
+            log(f"Navigating to: {start_url}")
+            try:
+                self._navigate_with_scan(start_url, log=log)
+            except (NavigationError, BrowserError, OSError) as e:
+                # If a search engine URL failed, try the next engine in the chain
+                failed_engine = self._identify_search_engine(start_url)
+                if failed_engine:
+                    # Try URL query param first, fall back to goal's search query
+                    query = self._extract_search_query(start_url) or search_query
+                    if query:
+                        self._blocked_engines.add(failed_engine)
+                        log(f"  [{failed_engine.value} navigation failed: {e}]")
+                        fallback_url, fallback_engine = get_search_fallback_url(
+                            query, exclude=[failed_engine]
+                        )
+                        log(f"  [Failing over to {fallback_engine.value}: {fallback_url[:60]}]")
+                        self._navigate_with_scan(fallback_url, log=log)
+                        start_url = fallback_url
+                        self.config.start_url = fallback_url
+                    else:
+                        raise
                 else:
                     raise
-            else:
-                raise
-        self._record_visit(start_url)
+            self._record_visit(start_url)
+
+        except KeyboardInterrupt:
+            return self._interrupt_run(goal)
+        except Exception as exc:
+            return self._finish_run(goal, "error", "navigation_failed", str(exc))
 
         return self._run_loop(goal, start_step=1, quiet=quiet)
 
@@ -818,6 +855,10 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
                         return ("https://lite.duckduckgo.com/lite/", f"{engine.value.title()} blocked, using DuckDuckGo", "")
                 return (url, f"Using domain specified in goal", "")
 
+        if re.search(r"\b(?:summari[sz]e|summari[sz]ing|summary|summize|explain|overview)\b", goal, re.I):
+            search_url, _ = get_search_fallback_url(goal)
+            return (search_url, "Search for source material for an information request", goal)
+
         result = reason_about_goal(goal)
         content_type = result['content_types'][0] if result['content_types'] else ""
         search_query = self.search_intel.create_search(goal, content_type)
@@ -864,121 +905,138 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
             result["search_query"]
         )
 
+    def _finish_run(self, goal: str, status: str, stop_reason: str,
+                    error: Optional[str] = None, result_text: str = "",
+                    preserve_checkpoint: bool = False, resumable: bool = False) -> Dict[str, Any]:
+        """Finalize every exit path without letting cleanup conceal its outcome."""
+        paused = status in {"paused", "interrupted"}
+        resumable = resumable or paused
+        keep = self.config.use_cdp or self.config.keep_browser_alive
+        cleanup_errors = []
+        if self.hand:
+            try:
+                self.hand.sleep(keep_alive=keep)
+            except Exception as exc:
+                cleanup_errors.append(f"Browser cleanup failed: {exc}")
+        if cleanup_errors and status != "error":
+            status, stop_reason = "error", "cleanup_failed"
+        if self.session_id and not paused and not preserve_checkpoint:
+            try:
+                self.persistent_memory.end_session(
+                    self.session_id, steps=self._current_step,
+                    downloads=len(self.session_memory.downloaded_files), success=status == "success")
+                if status == "success" or (status == "error" and not resumable):
+                    self.persistent_memory.delete_session_state(self.session_id)
+            except Exception as exc:
+                cleanup_errors.append(f"Session persistence failed: {exc}")
+        if cleanup_errors:
+            error = "; ".join(([error] if error else []) + cleanup_errors)
+            if status != "error":
+                status, stop_reason = "error", "cleanup_failed"
+        if error:
+            error = redact_log_text(error)
+            if not self.session_memory.failures or self.session_memory.failures[-1] != error:
+                self.session_memory.add_failure(error)
+        result = {
+            "goal": goal, "success": status == "success", "paused": paused,
+            "status": status, "stop_reason": stop_reason, "error": error,
+            "resumable": resumable,
+            "result": result_text,
+            "downloads": self.session_memory.downloaded_files,
+            "pages_visited": len(self.session_memory.visited_urls),
+            "steps_taken": self._current_step,
+            "actions_taken": self.session_memory.action_count,
+            "actions_count_estimated": self.session_memory.action_count_estimated,
+            "failures": len(self.session_memory.failures), "session_id": self.session_id,
+        }
+        if hasattr(self, "_logger"):
+            try:
+                logged = self._logger.session_end(
+                    success=result["success"], steps=result["steps_taken"],
+                    actions=result["actions_taken"], downloads=len(result["downloads"]),
+                    failures=result["failures"], status=status, stop_reason=stop_reason, error=error)
+                if logged is False:
+                    raise OSError("Session end could not be written")
+            except Exception as exc:
+                logger.warning("Could not write session end: %s", redact_log_text(str(exc)))
+                result["success"] = False
+                result["status"] = "error"
+                result["stop_reason"] = "log_write_failed"
+                result["error"] = redact_log_text("; ".join(filter(None, [error, f"Session logging failed: {exc}"])))
+        self._emit("on_complete", result["success"], result)
+        return result
+
+    def _interrupt_run(self, goal: str) -> Dict[str, Any]:
+        """Release keys and checkpoint on interruption before normal finalization."""
+        if self.hand:
+            try:
+                self.hand._release_all_keys()
+            except Exception as exc:
+                logger.warning("Key release on interruption failed: %s", redact_log_text(str(exc)))
+        try:
+            if self.save_state(status="interrupted") is False:
+                raise RuntimeError("Cannot save progress without an active session and goal")
+        except Exception as exc:
+            return self._finish_run(goal, "error", "state_save_failed", str(exc))
+        return self._finish_run(goal, "interrupted", "interrupted")
+
     def _run_loop(self, goal: str, start_step: int = 1, quiet: bool = False) -> Dict[str, Any]:
-        """
-        Main ReAct loop - can be called from run() or resume().
-
-        Args:
-            goal: The goal to accomplish
-            start_step: Step number to start from (for resume)
-            quiet: Suppress output
-
-        Returns:
-            Dict with results
-        """
+        """Run bounded decisions; terminal errors take precedence over completion."""
         def log(msg: str):
             if not quiet:
                 print(msg)
             self._emit("on_status", msg)
 
-        success = False
-        paused = False
-        final_result_text = ""
-
+        status, stop_reason = "max_steps", "max_steps"
+        resumable = False
+        error, final_result_text = None, ""
         try:
-            # Main ReAct loop
             for step in range(start_step, self.config.max_steps + 1):
-                self._current_step = step
-
-                # Check for pause request
+                # Save the last attempted decision, not the next unattempted one.
                 if self._paused:
-                    log(f"\n⏸ PAUSED at step {step}")
-                    self.save_state()
-                    paused = True
+                    try:
+                        if self.save_state() is False:
+                            raise RuntimeError("Cannot save progress without an active session and goal")
+                    except Exception as exc:
+                        status, stop_reason, error = "error", "state_save_failed", str(exc)
+                    else:
+                        status, stop_reason = "paused", "paused"
                     break
-
-                log(f"\n[Step {step}/{self.config.max_steps}]")
+                self._current_step = step
                 self._emit("on_step", step, self.config.max_steps, "step", "")
-
-                # Run one iteration
-                result = self._step(goal, step, quiet=quiet)
-
-                if result.get("error"):
-                    err = result.get("error", "")
-                    log(f"  ⚠️  {err[:80]}{'...' if len(err) > 80 else ''}")
-                    # If step-level error is non-recoverable, accumulate and abort if persistent
-                    if not result.get("recoverable", True):
-                        log(f"  [FATAL: {err[:60]} — aborting loop]")
-                        break
-
-                if result.get("done"):
-                    log(f"\n✓ COMPLETE: {result.get('reason', 'Goal achieved')}")
-                    success = True
-                    final_result_text = result.get("result") or ""
+                step_result = self._step(goal, step, quiet=quiet)
+                step_error = step_result.get("error")
+                if step_error:
+                    error = redact_log_text(str(step_error))
+                    log(f"Step {step} error: {error[:80]}")
+                if step_result.get("fatal") or step_result.get("recoverable") is False:
+                    status, stop_reason = "error", "permanent_error"
+                    error = error or "Step cannot be recovered"
                     break
-
+                if step_error:
+                    # An error cannot also establish successful completion.
+                    time.sleep(STEP_PAUSE_SECONDS)
+                    continue
+                if step_result.get("done"):
+                    status, stop_reason, error = "success", "goal_complete", None
+                    final_result_text = step_result.get("result") or ""
+                    break
                 time.sleep(STEP_PAUSE_SECONDS)
-
-            else:
-                log(f"\n⚠ Reached max steps ({self.config.max_steps})")
-
         except KeyboardInterrupt:
-            log(f"\n⏸ INTERRUPTED at step {self._current_step}")
-            # IMPORTANT: Immediately release any stuck keyboard keys
-            if self.hand:
-                self.hand._release_all_keys()
-            self.persistent_memory.save_session_state(
-                session_id=self.session_id,
-                goal=goal,
-                current_step=self._current_step,
-                current_url=self.hand.get_url() if self.hand else "",
-                session_memory=self.session_memory,
-                start_url=self.config.start_url,
-                max_steps=self.config.max_steps,
-                status="interrupted"
-            )
-            log(f"Session state saved. Resume with: blackreach run --resume {self.session_id}")
-            paused = True
-
-        finally:
-            keep = getattr(self.config, "use_cdp", False) or getattr(self.config, "keep_browser_alive", False)
-            log("\nClosing browser..." if not keep else "\nLeaving browser live for reuse...")
-            if self.hand:
-                self.hand.sleep(keep_alive=keep)
-
-            if not paused:
-                self.persistent_memory.end_session(
-                    self.session_id,
-                    steps=len(self.session_memory.actions_taken),
-                    downloads=len(self.session_memory.downloaded_files),
-                    success=success
-                )
-                # Clean up session state if completed successfully
-                if success:
-                    self.persistent_memory.delete_session_state(self.session_id)
-            log(f"Session #{self.session_id} ended (success={success}, paused={paused})")
-            if hasattr(self, '_logger'):
-                self._logger.session_end(
-                    success=success,
-                    steps=len(self.session_memory.actions_taken),
-                    downloads=len(self.session_memory.downloaded_files),
-                    failures=len(self.session_memory.failures)
-                )
-
-        result = {
-            "goal": goal,
-            "success": success,
-            "paused": paused,
-            "result": final_result_text,
-            "downloads": self.session_memory.downloaded_files,
-            "pages_visited": len(self.session_memory.visited_urls),
-            "steps_taken": len(self.session_memory.actions_taken),
-            "failures": len(self.session_memory.failures),
-            "session_id": self.session_id,
-        }
-
-        self._emit("on_complete", success, result)
-        return result
+            return self._interrupt_run(goal)
+        except Exception as exc:
+            status, stop_reason, error = "error", "permanent_error", str(exc)
+        if (status == "max_steps" or stop_reason == "permanent_error") and self._current_step > 0:
+            try:
+                if self.save_state() is False:
+                    raise RuntimeError("Cannot save progress without an active session and goal")
+            except Exception as exc:
+                status, stop_reason = "error", "state_save_failed"
+                error = "; ".join(filter(None, [error, str(exc)]))
+            else:
+                resumable = True
+        return self._finish_run(goal, status, stop_reason, error, final_result_text,
+                                resumable=resumable)
 
     def _step(self, goal: str, step_num: int, quiet: bool = False) -> Dict[str, Any]:
         """Execute one ReAct iteration with a SINGLE LLM call."""
@@ -992,7 +1050,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
             log("  [Browser unhealthy - attempting restart...]")
             if not self.restart_browser():
                 log("  [FATAL: Browser restart failed]")
-                return {"done": False, "error": "Browser restart failed", "fatal": True}
+                return {"done": False, "error": "Browser restart failed", "fatal": True, "recoverable": False}
             log("  [Browser restarted successfully]")
 
             # Try to navigate back to where we were
@@ -1001,10 +1059,13 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
                 try:
                     self.hand.goto(last_url, wait_for_content=False)
                 except (NavigationError, BrowserError, OSError) as e:
-                    logger.debug("Best-effort navigation after restart failed: %s", e)
+                    logger.debug("Best-effort navigation after restart failed: %s", redact_log_text(str(e)))
 
         # Track current URL for stuck detection
         current_url = self.hand.get_url()
+        if isinstance(current_url, str) and current_url.startswith(("about:blank", "data:")):
+            return {"done": False, "fatal": True, "recoverable": False,
+                    "error": "Browser has no navigated source page; cannot verify completion"}
         self._track_url(current_url)
 
         if hasattr(self, '_logger'):
@@ -1257,6 +1318,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
         self._page_cache["html"] = html
         self._page_cache["dom_result"] = dom_result
         self._page_cache["elements"] = elements
+        self._emit("on_observe", f"{title} · {dom_result.get('total_elements', 0)} interactive elements")
 
         self.nav_context.record_navigation(
             url=url,
@@ -1373,12 +1435,14 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
         except (LLMError, NetworkError, OSError) as e:
             log(f"LLM Error: {e}")
             self._record_failure(url, "llm", str(e))
-            return {"done": False, "error": f"LLM call failed: {e}"}
+            return {"done": False, "error": f"LLM call failed: {e}",
+                    "recoverable": getattr(e, "recoverable", True),
+                    "fatal": not getattr(e, "recoverable", True)}
 
         if not response or not response.strip():
             log("Empty response from LLM")
             self._record_failure(url, "llm", "Empty response")
-            return {"done": False, "error": "Empty LLM response"}
+            return {"done": False, "error": "Empty LLM response", "recoverable": True}
 
         # Parse the response
         thought = ""
@@ -1433,7 +1497,7 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
         if not data:
             log(f"No valid JSON found in response: {response_clean[:200]}...")
             self._record_failure(url, "parse", "No JSON in LLM response")
-            return {"done": False, "error": "No valid JSON in response"}
+            return {"done": False, "error": "No valid JSON in response", "recoverable": True}
 
         # Extract fields with VERY flexible handling for inconsistent LLM outputs
         thought = data.get("thought", data.get("reason", ""))
@@ -1507,6 +1571,11 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
         # Inject element_id into args for _execute_action
         if element_id is not None:
             args["_element_id"] = element_id
+
+        if isinstance(action, str):
+            action = action.lower()
+            if action in {"finish", "complete"}:
+                action = "done"
 
         # CRITICAL: Handle refusal - don't let LLM quit just because it doesn't want to help
         if is_refusal:
@@ -1634,7 +1703,7 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                 self._record_visit(search_url)
                 return {"done": False, "fallback": True, "reason": "Forced search on parse failure"}
 
-            return {"done": False, "error": "Parse failed"}
+            return {"done": False, "error": "Parse failed", "recoverable": True}
 
         # Track target for action tracking
         element_id_for_tracking = args.get("_element_id")
@@ -1647,6 +1716,7 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
         error_msg = ""
         result = None
 
+        self.session_memory.action_count += 1
         try:
             result = self._execute_action(action, args)
             self._last_action = action
@@ -1675,7 +1745,7 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                 self._logger.act(step_num, action, result, success=True)
 
         except Exception as e:
-            error_msg = str(e)
+            error_msg = redact_log_text(str(e))
             self._record_failure(url, action, error_msg)
             self._consecutive_failures += 1
 
@@ -1716,30 +1786,34 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
             if hasattr(self, '_logger'):
                 self._logger.error(error_msg, step=step_num, action=action)
 
-            if recovery_result.should_skip:
+            recoverable = error_info.recoverable and getattr(e, "recoverable", True)
+            if not recoverable:
+                result = {"done": False, "error": error_msg, "fatal": True, "recoverable": False}
+            elif recovery_result.should_skip:
                 log(f"  [SKIPPING: {recovery_result.message}]")
-                result = {"done": False, "skipped": True, "reason": recovery_result.message}
+                result = {"done": False, "skipped": True, "reason": recovery_result.message,
+                          "error": error_msg, "recoverable": True}
             elif recovery_result.new_context.get("switch_source"):
                 log(f"  [RECOVERY: Switching source due to {error_info.category.value}]")
                 self._consecutive_challenges = 2
-                result = {"done": False, "error": error_msg, "recoverable": error_info.recoverable}
+                result = {"done": False, "error": error_msg, "recoverable": recoverable}
             elif recovery_result.new_context.get("use_alternative"):
                 log(f"  [RECOVERY: Trying alternative approach]")
                 alternatives = self.action_tracker.get_alternative_actions(action, target, domain)
                 if alternatives:
                     log(f"  [ALTERNATIVES: {', '.join(alternatives[:3])}]")
-                result = {"done": False, "error": error_msg, "recoverable": error_info.recoverable}
+                result = {"done": False, "error": error_msg, "recoverable": recoverable}
             else:
-                result = {"done": False, "error": error_msg, "recoverable": error_info.recoverable}
+                result = {"done": False, "error": error_msg, "recoverable": recoverable}
 
-        # ALWAYS record this step so steps_taken is accurate on failure.
+        # History is bounded; the monotonic action counter was advanced before execution.
         self.session_memory.add_action({
             "action": action,
             "args": {k: v for k, v in args.items() if not k.startswith("_")},
             "thought": thought,
             "success": not result.get("error"),
             "error": result.get("error", "")
-        })
+        }, counted=True)
 
         history_entry = f"[Step {step_num}] {action}"
         if element_id_for_tracking is not None:

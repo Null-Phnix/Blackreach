@@ -26,13 +26,11 @@ from pydantic import BaseModel, Field
 from blackreach.api import (
     ApiConfig,
     BlackreachAPI,
-    browse,
-    search,
+    BrowseResult,
     download,
     get_page,
-    BrowseResult,
-    SearchResult,
-    DownloadResult,
+    safe_browse_error,
+    search,
 )
 
 # ─── Config ─────────────────────────────────────────────────────────────────
@@ -118,11 +116,13 @@ def create_app() -> FastAPI:
                     "steps_taken": result.steps_taken,
                     "errors": result.errors,
                     "session_id": result.session_id,
+                    "metadata": result.metadata,
+                    **result.outcome(),
                 },
                 elapsed_ms=elapsed,
             )
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=safe_browse_error(e)) from None
 
     @app.post("/v1/search", response_model=ApiResponse)
     async def search_endpoint(req: SearchRequest) -> ApiResponse:

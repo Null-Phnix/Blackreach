@@ -8,19 +8,30 @@ Provides a clean programmatic API for Blackreach:
 - Progress callbacks
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Callable, Union
-from pathlib import Path
-import asyncio
-import os
 import json
-import urllib.request
-import urllib.parse
 import logging
+import os
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 # Huginn/BlackCrawl is the shared scrape+search backend (localhost:7432).
 HUGINN_URL = os.environ.get("HUGINN_URL", "http://127.0.0.1:7432")
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from blackreach.llm import LLMConfig
+
+
+def safe_browse_error(exc: Exception) -> str:
+    """Expose actionable Blackreach errors without echoing arbitrary SDK payloads."""
+    from blackreach.exceptions import BlackreachError
+    from blackreach.logging import redact_log_text
+    if isinstance(exc, BlackreachError):
+        return redact_log_text(str(exc))
+    return f"Browse execution failed ({type(exc).__name__}); check configuration and the session log."
 
 
 def _huginn_api_key() -> str:
@@ -90,6 +101,24 @@ class BrowseResult:
     session_id: Optional[int] = None
     metadata: Dict = field(default_factory=dict)
     result: str = ""  # The agent's final extracted text/answer
+    status: str = ""
+    stop_reason: str = ""
+    resumable: bool = False
+    paused: bool = False
+    actions_taken: int = 0
+    actions_count_estimated: bool = False
+    failures: int = 0
+
+    def __post_init__(self):
+        if not self.status:
+            self.status = "success" if self.success else "error" if self.errors else "stopped"
+
+    def outcome(self) -> Dict[str, Any]:
+        """Run outcome, separate from HTTP transport/job completion."""
+        return {name: getattr(self, name) for name in (
+            "status", "stop_reason", "resumable", "paused", "actions_taken",
+            "actions_count_estimated", "failures",
+        )}
 
 
 @dataclass
@@ -120,6 +149,7 @@ class ApiConfig:
     max_steps: int = 50
     browser_type: str = "chromium"
     verbose: bool = False
+    llm_config: Optional["LLMConfig"] = None
 
 
 class BlackreachAPI:
@@ -133,8 +163,8 @@ class BlackreachAPI:
     def _get_agent(self):
         """Get or create the agent instance."""
         if self._agent is None:
-            import os
             from blackreach.agent import Agent, AgentConfig
+            from blackreach.config import config_manager
             from blackreach.llm import LLMConfig
 
             agent_config = AgentConfig(
@@ -144,17 +174,27 @@ class BlackreachAPI:
                 browser_type=self.config.browser_type
             )
 
-            # Use DeepSeek (OpenAI-compatible API) when its key is in the
-            # environment; otherwise fall back to the default local model.
-            llm_config = None
-            deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
-            if deepseek_key:
-                llm_config = LLMConfig(
-                    provider="openai",
-                    model=os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
-                    api_key=deepseek_key,
-                    api_base="https://api.deepseek.com",
-                )
+            # Explicit API settings win, then the saved CLI provider settings.
+            # Preserve the historical DeepSeek environment shortcut only while
+            # the saved default is Ollama; never replace a selected cloud provider.
+            llm_config = self.config.llm_config
+            if llm_config is None:
+                cfg = config_manager.load()
+                provider = cfg.default_provider
+                provider_cfg = getattr(cfg, provider)
+                deepseek_key = os.environ.get("DEEPSEEK_API_KEY") if provider == "ollama" else None
+                if deepseek_key:
+                    llm_config = LLMConfig(
+                        provider="openai", model=os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
+                        api_key=deepseek_key, api_base="https://api.deepseek.com", api_mode="chat",
+                        **{name: value for name, value in provider_cfg.llm_settings().items() if name != "api_mode"},
+                    )
+                else:
+                    llm_config = LLMConfig(
+                        provider=provider, model=provider_cfg.default_model,
+                        api_key=config_manager.get_api_key(provider) if provider != "ollama" else None,
+                        api_base=provider_cfg.base_url or None, **provider_cfg.llm_settings(),
+                    )
 
             self._agent = Agent(
                 agent_config=agent_config,
@@ -181,32 +221,51 @@ class BlackreachAPI:
         Returns:
             BrowseResult with outcome
         """
-        from blackreach.agent import AgentCallbacks
-
-        agent = self._get_agent()
-
-        # Set up callbacks
-        if on_progress:
-            agent.callbacks.on_step = lambda step, max_s, phase, detail: on_progress(step, max_s, phase)
-
+        from blackreach.logging import redact_log_text
+        agent, previous_callback = None, None
         try:
+            agent = self._get_agent()
+            previous_callback = agent.callbacks.on_step
+            if on_progress:
+                agent.callbacks.on_step = lambda step, max_s, phase, detail: on_progress(step, max_s, phase)
             result = agent.run(goal, quiet=not self.config.verbose, start_url=start_url)
-
+            errors = [redact_log_text(str(error)) for error in result.get("errors", [])]
+            if result.get("error"):
+                error = redact_log_text(str(result["error"]))
+                if error not in errors:
+                    errors.append(error)
+            status = result.get("status") or (
+                "success" if result.get("success") else "paused" if result.get("paused") else "error" if errors else "stopped"
+            )
+            outcome = {
+                "status": status, "stop_reason": result.get("stop_reason") or "unspecified",
+                "resumable": bool(result.get("resumable", result.get("paused", False))),
+                "paused": bool(result.get("paused", False)),
+                "actions_taken": result.get("actions_taken", 0),
+                "actions_count_estimated": bool(result.get("actions_count_estimated", False)),
+                "failures": result.get("failures", len(errors)),
+            }
             return BrowseResult(
-                success=result.get("success", False),
+                success=bool(result.get("success", False)) and status == "success",
                 goal=goal,
                 downloads=result.get("downloads", []),
                 pages_visited=result.get("pages_visited", 0),
                 steps_taken=result.get("steps_taken", 0),
                 session_id=result.get("session_id"),
                 result=result.get("result") or "",
+                errors=errors, metadata=outcome.copy(), **outcome,
             )
         except Exception as e:
-            return BrowseResult(
-                success=False,
-                goal=goal,
-                errors=[str(e)]
+            failure = BrowseResult(
+                success=False, goal=goal, errors=[safe_browse_error(e)], status="error",
+                stop_reason="startup_error" if agent is None else "permanent_error",
+                failures=1,
             )
+            failure.metadata = failure.outcome()
+            return failure
+        finally:
+            if agent is not None and on_progress:
+                agent.callbacks.on_step = previous_callback
 
     def download(
         self,
@@ -342,7 +401,7 @@ class BlackreachAPI:
             agent.hand = agent._create_browser()
 
         agent.hand.goto(url)
-        html = agent.hand.get_html()
+        agent.hand.get_html()
         from blackreach.dom_walker import walk_dom
         dom = walk_dom(agent.hand.page)
         parsed = {

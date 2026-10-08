@@ -13,6 +13,8 @@ Usage:
 import click
 from rich.console import Console
 from rich.panel import Panel
+from rich.text import Text
+from rich.markup import escape
 from rich.table import Table
 from rich.prompt import Prompt, Confirm
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -30,6 +32,7 @@ from blackreach import __version__
 from blackreach.config import config_manager, AVAILABLE_MODELS, CONFIG_FILE, validate_config, validate_for_run
 from blackreach.exceptions import BlackreachError, SessionNotFoundError
 from blackreach.logging import LogLevel
+from blackreach.run_status import describe_run
 
 # Global reference to active agent for cleanup
 _active_agent = None
@@ -44,9 +47,9 @@ def _cleanup_keyboard():
             pass
 
 def _signal_handler(signum, frame):
-    """Handle termination signals by cleaning up keyboard state."""
+    """Let the agent checkpoint on interruption instead of exiting as a success."""
     _cleanup_keyboard()
-    sys.exit(0)
+    raise KeyboardInterrupt
 
 # Register cleanup handlers - but not during testing to avoid interfering with pytest
 def _is_running_under_pytest():
@@ -69,6 +72,7 @@ console = Console()
 
 def _make_banner():
     v = f"v{__version__}"
+    label = f"Autonomous Browser Agent   {v}"
     return f"""[bold cyan]
 ╔══════════════════════════════════════════════════════════╗
 ║   ██████╗ ██╗      █████╗  ██████╗██╗  ██╗              ║
@@ -78,7 +82,7 @@ def _make_banner():
 ║   ██████╔╝███████╗██║  ██║╚██████╗██║  ██╗              ║
 ║   ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝              ║
 ║                                                          ║
-║   [white]Autonomous Browser Agent[/white]   [dim]{v:>14}[/dim]   ║
+║   [white]{label:<55}[/white]║
 ╚══════════════════════════════════════════════════════════╝[/bold cyan]
 """
 
@@ -90,17 +94,17 @@ def is_first_run() -> bool:
     return not CONFIG_FILE.exists()
 
 
-def check_playwright_browsers() -> bool:
-    """Check if Playwright browsers are installed."""
+def check_playwright_browsers(browser_type: str = "chromium") -> bool:
+    """Check the selected SDK revision's executable, without launching a browser."""
+    if browser_type not in ("chromium", "firefox", "webkit"):
+        return False
     try:
-        # Check if chromium exists in playwright cache
-        result = subprocess.run(
-            ["playwright", "install", "--dry-run", "chromium"],
-            capture_output=True,
-            text=True
-        )
-        return "already installed" in result.stdout.lower() or result.returncode == 0
-    except FileNotFoundError:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as runtime:
+            executable = Path(getattr(runtime, browser_type).executable_path)
+            return executable.is_file() and os.access(executable, os.X_OK)
+    except Exception:
+        # Diagnostic only: driver startup and missing-library errors mean not ready.
         return False
 
 
@@ -115,7 +119,7 @@ def install_playwright_browsers():
         task = progress.add_task("Installing Chromium...", total=None)
         try:
             subprocess.run(
-                ["playwright", "install", "chromium"],
+                [sys.executable, "-m", "playwright", "install", "chromium"],
                 capture_output=True,
                 check=True
             )
@@ -240,160 +244,97 @@ def cli(ctx):
         interactive_mode()
 
 
+def _make_llm_config(provider: str, model: str, cfg=None):
+    """Pass saved provider settings through every CLI and interactive route."""
+    from blackreach.llm import LLMConfig
+    cfg = cfg or config_manager.load()
+    provider_cfg = getattr(cfg, provider)
+    return LLMConfig(
+        provider=provider, model=model,
+        api_key=config_manager.get_api_key(provider) if provider != "ollama" else None,
+        api_base=provider_cfg.base_url or None,
+        **provider_cfg.llm_settings(),
+    )
+
+
+def _run_exit_code(result: dict) -> int:
+    if result.get('success'):
+        return 0
+    if result.get('status') == 'interrupted':
+        return 130
+    return 1 if result.get('status') == 'error' else 2
+
+
 @cli.command()
 @click.argument('goal', required=False)
-@click.option('--provider', '-p', help='LLM provider (ollama, openai, anthropic, google, xai)')
-@click.option('--model', '-m', help='Model to use')
+@click.option('--provider', '-p', type=click.Choice(['ollama', 'openai', 'anthropic', 'google', 'xai']))
+@click.option('--model', '-m', help='Model ID to use (account access is separate).')
 @click.option('--headless/--no-headless', default=None, help='Run browser headless')
 @click.option('--browser', '-b', type=click.Choice(['chromium', 'firefox', 'webkit']), help='Browser to use')
-@click.option('--steps', '-s', type=int, help='Maximum steps')
-@click.option('--resume', '-r', type=int, help='Resume a paused session by ID')
+@click.option('--steps', '-s', type=click.IntRange(min=1), help='Total decision budget, including previous decisions on resume')
+@click.option('--resume', '-r', type=click.IntRange(min=1), help='Resume a saved session by ID')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose logging')
 @click.option('--validate', 'do_validate', is_flag=True, help='Validate config before running')
 @click.option('--cdp', is_flag=True, help='Use persistent Chrome via CDP (fast reconnects)')
-def run(goal: str, provider: str, model: str, headless: bool, browser: str, steps: int, resume: int, verbose: bool, do_validate: bool, cdp: bool):
-    """Run the agent with a goal.
-
-    \b
-    Examples:
-      blackreach run "search wikipedia for artificial intelligence"
-      blackreach run "download 3 papers about AI from arxiv"
-      blackreach run --headless "find images of cats on unsplash"
-      blackreach run --resume 42
-    """
+@click.option('--json', 'json_output', is_flag=True, help='Print a structured result; exit 0 success, 1 error, 2 stopped, 130 interrupted')
+def run(goal: str, provider: str, model: str, headless: bool, browser: str, steps: int,
+        resume: int, verbose: bool, do_validate: bool, cdp: bool, json_output: bool = False):
+    """Run a goal or resume saved progress with an explicit decision budget."""
     global _active_agent
     from blackreach.agent import Agent, AgentConfig
-    from blackreach.llm import LLMConfig
+    import json
 
-    config = config_manager.load()
-
-    provider = provider or config.default_provider
-    model = model or getattr(config, provider).default_model
-    headless = headless if headless is not None else config.headless
-    browser_type = browser or config.browser_type
-    max_steps = steps or config.max_steps
-
-    # Validate configuration if requested
-    if do_validate:
-        validation = validate_for_run(provider, model)
-        if not validation.valid:
-            console.print("[bold red]Configuration validation failed:[/bold red]")
-            for error in validation.errors:
-                console.print(f"  [red]X[/red] {error}")
-            sys.exit(1)
-        if validation.warnings:
-            console.print("[yellow]Warnings:[/yellow]")
-            for warning in validation.warnings:
-                console.print(f"  [yellow]![/yellow] {warning}")
-
-    # Check API key for non-local providers
-    if provider != "ollama" and not config_manager.has_api_key(provider):
-        env_var_names = {
-            "openai": "OPENAI_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY",
-            "google": "GOOGLE_API_KEY",
-            "xai": "XAI_API_KEY",
-        }
-        env_var = env_var_names.get(provider, f"{provider.upper()}_API_KEY")
-        console.print(f"[red]Error: No API key configured for {provider}[/red]")
-        console.print(f"\nTo fix this, do one of the following:")
-        console.print(f"  1. Run [cyan]blackreach config[/cyan] and choose 'Set API key'")
-        console.print(f"  2. Set the environment variable: [cyan]export {env_var}=\"your-key-here\"[/cyan]")
-        sys.exit(1)
-
-    if resume:
-        console.print(Panel(
-            f"[bold]Resuming Session:[/bold] #{resume}\n"
-            f"[bold]Provider:[/bold] {provider}\n"
-            f"[bold]Model:[/bold] {model}",
-            title="[bold cyan]Blackreach Resume[/bold cyan]",
-            border_style="cyan"
-        ))
-
-        try:
-            llm_config = LLMConfig(
-                provider=provider,
-                model=model,
-                api_key=config_manager.get_api_key(provider) if provider != "ollama" else None
-            )
-
-            agent_config = AgentConfig(
-                max_steps=max_steps,
-                headless=headless,
-                download_dir=Path(config.download_dir),
-                browser_type=browser_type,
-                use_cdp=cdp,
-                keep_browser_alive=cdp,
-            )
-
-            agent = Agent(llm_config=llm_config, agent_config=agent_config)
-            _active_agent = agent
-            result = agent.resume(resume)
-            _show_results(result)
-
-        except SessionNotFoundError as e:
-            console.print(f"[red]Error: {e}[/red]")
-            console.print("Use [cyan]blackreach sessions[/cyan] to see resumable sessions")
-            sys.exit(1)
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Interrupted - session state saved[/yellow]")
-        except BlackreachError as e:
-            console.print(f"[red]Error: {e}[/red]")
-            sys.exit(1)
-        except Exception as e:
-            console.print(f"[red]Unexpected error: {e}[/red]")
-            sys.exit(1)
-        return
-
-    # Regular run - goal is required
-    if not goal:
-        console.print("[red]Error: Goal is required (or use --resume)[/red]")
-        console.print(f"\nUsage:")
-        console.print(f"  [cyan]blackreach run \"your goal here\"[/cyan]")
-        console.print(f"\nExamples:")
-        console.print(f"  blackreach run \"search wikipedia for artificial intelligence\"")
-        console.print(f"  blackreach run \"find and download papers about AI from arxiv\"")
-        console.print(f"  blackreach run --resume 42  [dim](resume a paused session)[/dim]")
-        sys.exit(1)
-
-    console.print(Panel(
-        f"[bold]Goal:[/bold] {goal}\n"
-        f"[bold]Provider:[/bold] {provider}\n"
-        f"[bold]Model:[/bold] {model}\n"
-        f"[bold]Headless:[/bold] {headless}",
-        title="[bold cyan]Blackreach Agent[/bold cyan]",
-        border_style="cyan"
-    ))
-
+    result = None
     try:
-        llm_config = LLMConfig(
-            provider=provider,
-            model=model,
-            api_key=config_manager.get_api_key(provider) if provider != "ollama" else None
+        config = config_manager.load()
+        provider = provider or config.default_provider
+        if provider not in AVAILABLE_MODELS:
+            raise click.ClickException(f"Unsupported provider: {provider}")
+        model = model or getattr(config, provider).default_model
+        if not goal and not resume:
+            raise click.ClickException('Goal is required (or use --resume).')
+        if do_validate:
+            validation = validate_for_run(provider, model)
+            if not validation.valid:
+                raise click.ClickException('Configuration validation failed: ' + '; '.join(validation.errors))
+            if not json_output:
+                for warning in validation.warnings:
+                    console.print(Text('Warning: ' + warning, style='yellow'))
+        if provider != 'ollama' and not config_manager.has_api_key(provider):
+            raise click.ClickException(f'No API key configured for {provider}. Use blackreach config or its provider environment variable.')
+        if not json_output:
+            console.print(Panel(Text(f"{'Session: #' + str(resume) if resume else 'Goal: ' + goal}\nProvider: {provider}\nModel: {model}"),
+                                title='Blackreach', border_style='cyan'))
+        agent = Agent(
+            llm_config=_make_llm_config(provider, model, config),
+            agent_config=AgentConfig(
+                max_steps=steps if steps is not None else config.max_steps,
+                headless=headless if headless is not None else config.headless,
+                download_dir=Path(config.download_dir), browser_type=browser or config.browser_type,
+                use_cdp=cdp, keep_browser_alive=cdp,
+            ),
         )
-
-        agent_config = AgentConfig(
-            max_steps=max_steps,
-            headless=headless,
-            download_dir=Path(config.download_dir),
-            browser_type=browser_type,
-            use_cdp=cdp,
-            keep_browser_alive=cdp,
-        )
-
-        agent = Agent(llm_config=llm_config, agent_config=agent_config)
         _active_agent = agent
-        result = agent.run(goal)
-        _show_results(result)
-
+        if resume:
+            result = agent.resume(resume, quiet=json_output, max_steps=steps)
+        else:
+            result = agent.run(goal, quiet=json_output)
     except KeyboardInterrupt:
-        console.print("\n[yellow]Interrupted - session state saved for resume[/yellow]")
-    except BlackreachError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        sys.exit(1)
-    except Exception as e:
-        console.print(f"[red]Unexpected error: {e}[/red]")
-        sys.exit(1)
+        result = {'goal': goal, 'success': False, 'status': 'interrupted',
+                  'stop_reason': 'interrupted', 'resumable': False,
+                  'error': 'Interrupted before a checkpoint was confirmed.'}
+    except Exception as exc:
+        # Never expose arbitrary request bodies or SDK exception text here.
+        safe = str(exc) if isinstance(exc, (BlackreachError, click.ClickException)) else f'{type(exc).__name__}: run could not start; use blackreach doctor.'
+        result = {'goal': goal, 'success': False, 'status': 'error',
+                  'stop_reason': 'startup_error', 'error': safe, 'resumable': False}
+    finally:
+        _active_agent = None
+    if json_output:
+        click.echo(json.dumps(result, ensure_ascii=False, default=str))
+    else:
+        _show_results(result)
+    raise click.exceptions.Exit(_run_exit_code(result))
 
 
 # ---------------------------------------------------------------------------
@@ -615,34 +556,36 @@ def scancode_cmd(url: str, refresh: bool, verbose: bool):
 
 def _show_results(result: dict):
     """Display agent run results."""
-    status = "[bold green]Success[/bold green]" if result.get('success') else "[bold yellow]Incomplete[/bold yellow]"
-    if result.get('paused'):
-        status = "[bold blue]Paused[/bold blue]"
-
+    description = describe_run(result)
+    color = description['color']
     console.print("\n")
 
     # Show result text if the agent produced one (research/summarization tasks)
     result_text = result.get('result') or result.get('output') or result.get('summary')
     if result_text and isinstance(result_text, str) and result_text.strip():
         console.print(Panel(
-            result_text.strip(),
+            Text(result_text.strip()),
             title="[bold cyan]Result[/bold cyan]",
             border_style="cyan"
         ))
         console.print("\n")
 
-    console.print(Panel(
-        f"[bold]Status:[/bold] {status}\n"
+    lines = (
+        f"[bold]Status:[/bold] [{color}]{description['label']}[/{color}]\n"
+        f"[bold]Reason:[/bold] {escape(description['reason'])}\n"
         f"[bold]Downloads:[/bold] {len(result.get('downloads', []))}\n"
         f"[bold]Pages Visited:[/bold] {result.get('pages_visited', 0)}\n"
-        f"[bold]Steps Taken:[/bold] {result.get('steps_taken', 0)}\n"
-        f"[bold]Failures:[/bold] {result.get('failures', 0)}",
-        title="[bold green]Results[/bold green]",
-        border_style="green"
-    ))
-
-    if result.get('paused'):
-        console.print(f"\n[dim]Resume with: blackreach run --resume {result.get('session_id')}[/dim]")
+        f"[bold]Decisions:[/bold] {result.get('steps_taken', 0)}\n"
+        f"[bold]Actions:[/bold] {result.get('actions_taken', 0)}\n"
+        f"[bold]Failures:[/bold] {result.get('failures', 0)}"
+    )
+    if description['error']:
+        lines += f"\n[bold]Error:[/bold] {escape(description['error'])}"
+    if result.get('session_id') is not None:
+        lines += f"\n[bold]Session:[/bold] #{result['session_id']}"
+    console.print(Panel(lines, title="Results", border_style=color))
+    if description['hint']:
+        console.print(Text(description['hint'], style="dim"))
 
 
 @cli.command(name="resumable")
@@ -781,6 +724,7 @@ def config():
 def models(provider: str):
     """List available models."""
     console.print("\n[bold]Available Models[/bold]\n")
+    console.print("[dim]Known model IDs; API account access is not checked. Custom IDs work with --model or /model.[/dim]")
 
     providers_to_show = [provider] if provider else AVAILABLE_MODELS.keys()
 
@@ -1183,53 +1127,56 @@ def sources(content_type: str):
 
 
 @cli.command()
-def doctor():
-    """Check system requirements and diagnose issues."""
-    console.print(BANNER)
-    console.print("[bold]System Check[/bold]\n")
+@click.option('--browser', type=click.Choice(['chromium', 'firefox', 'webkit']), default='chromium')
+@click.option('--offline', is_flag=True, help='Check installed files only; do not contact model services')
+@click.option('--json', 'json_output', is_flag=True, help='Print diagnostic data without terminal formatting')
+def doctor(browser: str = 'chromium', offline: bool = False, json_output: bool = False):
+    """Check this Python environment. A present executable is not a launch test."""
+    import json
+    import platform
+    import importlib.util
 
     checks = []
-
-    import platform
     py_version = platform.python_version()
-    py_ok = tuple(map(int, py_version.split('.')[:2])) >= (3, 10)
-    checks.append(("Python >= 3.10", py_ok, py_version))
-
-    pw_installed = shutil.which("playwright") is not None
-    checks.append(("Playwright CLI", pw_installed, "installed" if pw_installed else "not found"))
-
-    browser_ok = check_playwright_browsers() if pw_installed else False
-    checks.append(("Chromium browser", browser_ok, "installed" if browser_ok else "not installed"))
-
-    ollama_ok = check_ollama_running()
-    checks.append(("Ollama running", ollama_ok, "running" if ollama_ok else "not running"))
-
+    checks.append(('Python >= 3.10', tuple(map(int, py_version.split('.')[:2])) >= (3, 10), py_version))
+    pw_installed = importlib.util.find_spec('playwright') is not None
+    checks.append(('Playwright SDK', pw_installed, 'installed in this environment' if pw_installed else 'missing'))
+    browser_ok = check_playwright_browsers(browser) if pw_installed else False
+    checks.append((f'{browser} executable', browser_ok,
+                   'present and executable; launch not tested' if browser_ok else 'required SDK revision is missing or not executable'))
     config_ok = CONFIG_FILE.exists()
-    checks.append(("Config file", config_ok, str(CONFIG_FILE) if config_ok else "not created"))
-
-    table = Table(title="System Status")
-    table.add_column("Check", style="cyan")
-    table.add_column("Status")
-    table.add_column("Details", style="dim")
-
-    for name, ok, detail in checks:
-        status = "[green]✓[/green]" if ok else "[red]✗[/red]"
-        table.add_row(name, status, detail)
-
-    console.print(table)
-
-    # Recommendations
-    console.print()
+    checks.append(('Config file', config_ok, str(CONFIG_FILE) if config_ok else 'not created; defaults available'))
+    provider = config_manager.load().default_provider
+    ollama_ok = None
+    if provider == 'ollama' and not offline:
+        ollama_ok = check_ollama_running()
+        checks.append(('Ollama running', ollama_ok, 'running' if ollama_ok else 'not reachable'))
+    recommendations = []
     if not browser_ok:
-        console.print("[yellow]→ Run: playwright install chromium[/yellow]")
-    if not ollama_ok:
-        console.print("[yellow]→ Run: ollama serve[/yellow]")
+        recommendations.append(f'{sys.executable} -m playwright install {browser}')
+    if ollama_ok is False:
+        recommendations.append('Start the configured Ollama service, or choose a cloud provider with blackreach config.')
     if not config_ok:
-        console.print("[yellow]→ Run: blackreach setup[/yellow]")
-
-    all_ok = all(ok for _, ok, _ in checks)
-    if all_ok:
-        console.print("\n[bold green]All checks passed![/bold green]")
+        recommendations.append('blackreach setup')
+    payload = {'python': sys.executable, 'provider': provider, 'browser': browser,
+               'offline': offline, 'provider_access_tested': False, 'browser_launch_tested': False,
+               'checks': [{'name': name, 'ok': ok, 'detail': str(detail)} for name, ok, detail in checks],
+               'recommendations': recommendations}
+    if json_output:
+        click.echo(json.dumps(payload))
+        return
+    console.print(BANNER)
+    console.print('[bold]System Check[/bold]')
+    table = Table(title='System Status')
+    table.add_column('Check', style='cyan')
+    table.add_column('Status')
+    table.add_column('Details', style='dim')
+    for name, ok, detail in checks:
+        table.add_row(name, '[green]✓[/green]' if ok else '[yellow]![/yellow]', Text(str(detail)))
+    console.print(table)
+    for instruction in recommendations:
+        console.print(Text('→ ' + instruction, style='yellow'))
+    console.print(Text('Provider account access and browser launch are not tested by doctor.', style='dim'))
 
 
 @cli.command()
@@ -1727,11 +1674,7 @@ def interactive_mode():
                     from blackreach.llm import LLMConfig
 
                     with ui.spinner("Planning..."):
-                        llm_config = LLMConfig(
-                            provider=provider,
-                            model=model,
-                            api_key=config_manager.get_api_key(provider) if provider != "ollama" else None
-                        )
+                        llm_config = _make_llm_config(provider, model, cfg)
                         planner = Planner(llm_config)
 
                         if planner.is_simple_goal(goal):
@@ -1801,16 +1744,13 @@ def interactive_mode():
                         continue
 
                     with ui.spinner(f"Resuming session #{session_id}..."):
-                        llm_config = LLMConfig(
-                            provider=provider,
-                            model=model,
-                            api_key=config_manager.get_api_key(provider) if provider != "ollama" else None
-                        )
+                        llm_config = _make_llm_config(provider, model, cfg)
 
                         agent_config = AgentConfig(
                             max_steps=cfg.max_steps,
                             headless=cfg.headless,
-                            download_dir=Path(cfg.download_dir)
+                            download_dir=Path(cfg.download_dir),
+                            browser_type=cfg.browser_type
                         )
 
                         agent = Agent(llm_config=llm_config, agent_config=agent_config)
@@ -1818,13 +1758,8 @@ def interactive_mode():
 
                     result = agent.resume(session_id, quiet=False)
 
-                    # Show completion
-                    if result.get('success'):
-                        ui.print_success(f"Session completed! Downloaded {len(result.get('downloads', []))} files")
-                    elif result.get('paused'):
-                        ui.print_info(f"Session paused. Resume with: /resume {result.get('session_id')}")
-                    else:
-                        ui.print_warning("Session ended without completing goal")
+                    ui.AgentProgress().complete(result.get('success', False), result)
+                    _active_agent = None
 
                 except SessionNotFoundError as e:
                     ui.print_error(str(e))
@@ -1832,6 +1767,8 @@ def interactive_mode():
                     ui.print_error(f"Resume failed: {e}")
                 except Exception as e:
                     ui.print_error(f"Unexpected error during resume: {e}")
+                finally:
+                    _active_agent = None
 
             elif cmd_lower in ['/provider', '/p', 'provider']:
                 # Interactive provider selection menu
@@ -1974,16 +1911,13 @@ def run_agent_with_ui(goal: str, provider: str, model: str, cfg):
     try:
         # Show starting message
         with ui.spinner("Initializing browser..."):
-            llm_config = LLMConfig(
-                provider=provider,
-                model=model,
-                api_key=config_manager.get_api_key(provider) if provider != "ollama" else None
-            )
+            llm_config = _make_llm_config(provider, model, cfg)
 
             agent_config = AgentConfig(
                 max_steps=cfg.max_steps,
                 headless=cfg.headless,
-                download_dir=Path(cfg.download_dir)
+                download_dir=Path(cfg.download_dir),
+                            browser_type=cfg.browser_type
             )
 
             agent = Agent(
@@ -2012,6 +1946,9 @@ def run_agent_with_ui(goal: str, provider: str, model: str, cfg):
         ui.print_error(str(e))
     except Exception as e:
         ui.print_error(f"Unexpected error: {e}")
+
+    finally:
+        _active_agent = None
 
 
 def show_help():

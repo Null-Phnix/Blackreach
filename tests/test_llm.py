@@ -5,10 +5,12 @@ Tests LLM configuration and response parsing.
 Note: Provider integration tests require actual API keys.
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import Mock, MagicMock, patch
-from blackreach.llm import LLM, LLMConfig, LLMResponse
+
 from blackreach.exceptions import ProviderError, ProviderNotInstalledError
+from blackreach.llm import LLM, LLMConfig, LLMResponse
 
 
 class TestLLMConfig:
@@ -37,7 +39,7 @@ class TestLLMConfig:
     def test_default_max_tokens(self):
         """LLMConfig has default max_tokens."""
         config = LLMConfig()
-        assert config.max_tokens == 1024
+        assert config.max_tokens == 4096
 
     def test_default_max_retries(self):
         """LLMConfig has default max_retries."""
@@ -269,7 +271,7 @@ class TestLLMGenerate:
         def mock_call_ollama(system, user):
             call_count[0] += 1
             if call_count[0] < 3:
-                raise Exception("Temporary error")
+                raise ConnectionError("Temporary error")
             return "success"
 
         llm._call_ollama = mock_call_ollama
@@ -289,14 +291,16 @@ class TestLLMGenerate:
         llm._provider_type = "ollama"
 
         def mock_call_ollama(system, user):
-            raise Exception("Persistent error")
+            raise ConnectionError("Persistent error")
 
         llm._call_ollama = mock_call_ollama
 
         with pytest.raises(Exception) as exc_info:
             llm.generate("system", "user")
 
-        assert "Persistent error" in str(exc_info.value)
+        assert "Could not connect" in str(exc_info.value)
+        assert exc_info.value.details["attempts"] == 2
+        assert mock_sleep.call_count == 1
 
 
 class TestLLMProviderCalls:
@@ -313,6 +317,7 @@ class TestLLMProviderCalls:
         llm._client = mock_client
 
         result = llm._call_ollama("system prompt", "user message")
+        assert result == "response"
 
         mock_client.chat.assert_called_once()
         call_args = mock_client.chat.call_args
@@ -336,6 +341,7 @@ class TestLLMProviderCalls:
         llm._client = mock_client
 
         result = llm._call_openai("system prompt", "user message")
+        assert result == "response"
 
         mock_client.chat.completions.create.assert_called_once()
         call_args = mock_client.chat.completions.create.call_args
@@ -357,6 +363,7 @@ class TestLLMProviderCalls:
         llm._client = mock_client
 
         result = llm._call_anthropic("system prompt", "user message")
+        assert result == "response"
 
         mock_client.messages.create.assert_called_once()
         call_args = mock_client.messages.create.call_args
@@ -379,8 +386,7 @@ class TestLLMProviderCalls:
 
         # Mock the google.genai.types import
         with patch.dict('sys.modules', {'google.genai': MagicMock(), 'google.genai.types': MagicMock()}):
-            from unittest.mock import MagicMock as MM
-            mock_types = MM()
+            mock_types = MagicMock()
             mock_types.Content.return_value = "content"
             mock_types.Part.return_value = "part"
             mock_types.GenerateContentConfig.return_value = "config"
@@ -537,11 +543,10 @@ class TestLLMProviderInitSuccess:
         mock_openai_class = MagicMock()
         with patch.dict('sys.modules', {'openai': MagicMock(OpenAI=mock_openai_class)}):
             # Re-import to get the patched module
-            import importlib
             import blackreach.llm as llm_module
 
             # Call the method directly with mocked import
-            with patch.object(llm_module, 'LLM') as mock_llm:
+            with patch.object(llm_module, 'LLM'):
                 # Test that OpenAI provider path in _init_client is covered
                 llm2 = LLM.__new__(LLM)
                 llm2.config = LLMConfig(provider="openai", api_key="key")
@@ -761,7 +766,8 @@ class TestOllamaInitSuccess:
         with patch.dict('sys.modules', {'ollama': mock_ollama}):
             llm._init_ollama()
 
-        assert llm._client == mock_ollama
+        assert llm._client == mock_ollama.Client.return_value
+        mock_ollama.Client.assert_called_once_with(host=None, timeout=60.0)
         assert llm._provider_type == "ollama"
 
 
