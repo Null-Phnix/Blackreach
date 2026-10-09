@@ -187,66 +187,33 @@ class AgentProgress:
         console.print(f"      [{theme.error}]✗ Error: {error_short}[/]")
 
     def complete(self, success: bool, result: dict):
-        """Show completion status."""
+        """Use the same result contract as the command-line entry point."""
+        from blackreach.run_status import describe_run
+        from rich.markup import escape
+
+        description = describe_run(result)
         console.print()
-
+        result_text = result.get('result') or result.get('output') or result.get('summary')
+        if isinstance(result_text, str) and result_text.strip():
+            console.print(Panel(Text(result_text.strip()), title="Result", border_style="cyan"))
+        lines = [escape(description['reason'])]
+        if description['error']:
+            lines.append("Error: " + escape(description['error']))
+        lines.append("")
+        lines.append(f"Decisions: {result.get('steps_taken', 0)}  |  Actions: {result.get('actions_taken', 0)}")
+        lines.append(f"Pages: {result.get('pages_visited', 0)}  |  Failures: {result.get('failures', 0)}")
         downloads = result.get('downloads', [])
-        pages = result.get('pages_visited', 0)
-        steps = result.get('steps_taken', 0)
-        failures = result.get('failures', 0)
-
-        if success and steps > 0:
-            # Show result text if the agent produced one (research/summarization tasks)
-            result_text = result.get('result') or result.get('output') or result.get('summary')
-            if result_text and isinstance(result_text, str) and result_text.strip():
-                console.print(Panel(
-                    result_text.strip(),
-                    title="[bold cyan]Result[/bold cyan]",
-                    border_style="cyan"
-                ))
-                console.print()
-
-            # Build summary content
-            lines = [f"[{theme.success}]✓ Goal completed[/]", ""]
-
-            # Stats in a mini table format
-            stats = []
-            if downloads:
-                stats.append(f"📥 Downloads: {len(downloads)}")
-            stats.append(f"🌐 Pages: {pages}")
-            stats.append(f"📊 Steps: {steps}")
-            if failures > 0:
-                stats.append(f"[{theme.warning}]⚠ Retries: {failures}[/]")
-
-            lines.append("  ".join(stats))
-
-            # List downloads if any
-            if downloads:
-                lines.append("")
-                lines.append("[bold]Downloaded files:[/bold]")
-                for dl in downloads[:5]:
-                    if isinstance(dl, dict):
-                        lines.append(f"  • {dl.get('filename', 'unknown')}")
-                    else:
-                        lines.append(f"  • {dl}")
-                if len(downloads) > 5:
-                    lines.append(f"  [dim]... and {len(downloads) - 5} more[/dim]")
-
-            console.print(Panel(
-                "\n".join(lines),
-                title="[bold green]Success[/bold green]",
-                border_style=theme.success,
-                padding=(0, 2)
-            ))
-        else:
-            console.print(Panel(
-                f"[{theme.warning}]Agent stopped[/]\n\n"
-                f"📊 Steps: {steps}\n"
-                f"⚠️  Failures: {failures}",
-                title="[bold yellow]Incomplete[/bold yellow]",
-                border_style=theme.warning,
-                padding=(0, 2)
-            ))
+        if downloads:
+            lines.extend(["", f"Downloaded files ({len(downloads)}):"])
+            for item in downloads[:5]:
+                name = item.get('filename', 'unknown') if isinstance(item, dict) else str(item)
+                lines.append("  " + escape(str(name)))
+        if result.get('session_id') is not None:
+            lines.append(f"Session: #{result['session_id']}")
+        console.print(Panel("\n".join(lines), title=description['label'],
+                            border_style=description['color'], padding=(0, 2)))
+        if description['hint']:
+            console.print(Text(description['hint'], style="dim"))
 
 
 # ============================================================================
@@ -533,7 +500,7 @@ def print_thinking(message: str):
 def print_observation(message: str):
     """Print an observation message."""
     short = message[:100] + "..." if len(message) > 100 else message
-    console.print(f"  [{theme.muted}]👁 {short}[/]")
+    console.print(Text(f"  👁 {short}", style=theme.muted))
 
 
 def print_action(action: str, args: dict = None):
@@ -652,8 +619,8 @@ def show_provider_menu(current_provider: str = None) -> Optional[str]:
     options = [
         ("ollama", "Ollama - Local, free, private"),
         ("xai", "xAI - Grok-4, fast reasoning"),
-        ("openai", "OpenAI - GPT-4o, GPT-4"),
-        ("anthropic", "Anthropic - Claude 3.5"),
+        ("openai", "OpenAI - GPT-6 / GPT-5.6 and other API models"),
+        ("anthropic", "Anthropic - Claude"),
         ("google", "Google - Gemini 2.5"),
     ]
 
@@ -687,6 +654,7 @@ def show_model_menu(current_provider: str, current_model: str = None) -> Optiona
             options.append(((provider, model), label))
 
     console.print(f"\n[bold]Select Model[/bold]")
+    console.print("[dim]Model availability depends on your API account. Use /model <id> for a custom ID.[/dim]")
     console.print(f"[{theme.muted}]Current: {current_provider} / {current_model}[/]\n")
 
     for i, ((prov, mod), label) in enumerate(options, 1):

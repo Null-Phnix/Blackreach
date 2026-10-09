@@ -11,12 +11,14 @@ Handles:
 import logging
 import os
 import re
-import yaml
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Optional, Dict, Any, List
-from dataclasses import dataclass, field, asdict
+from typing import Any, Dict, List, Optional
+
+import yaml
 
 from blackreach.exceptions import InvalidConfigError
+from blackreach.provider_support import settings_errors
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,18 @@ class ProviderConfig:
     api_key: str = ""
     default_model: str = ""
     base_url: str = ""  # For custom endpoints
+    max_tokens: int = 4096
+    timeout_seconds: float = 60.0
+    max_retries: int = 3  # Total attempts, including the first
+    retry_delay: float = 1.0
+    reasoning_effort: str = "low"
+    api_mode: str = "auto"
+
+    def llm_settings(self) -> Dict[str, Any]:
+        """Request settings shared with LLMConfig; credentials are passed separately."""
+        return {name: getattr(self, name) for name in (
+            "max_tokens", "timeout_seconds", "max_retries", "retry_delay", "reasoning_effort", "api_mode",
+        )}
 
 
 @dataclass
@@ -92,6 +106,15 @@ AVAILABLE_MODELS = {
         "codellama:7b",
     ],
     "openai": [
+        "gpt-6-luna",
+        "gpt-6.1-sol",
+        "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-4.1",
+        "gpt-4.1-mini",
         "gpt-4o",
         "gpt-4o-mini",
         "gpt-4-turbo",
@@ -353,10 +376,12 @@ class ConfigManager:
         for name in ["ollama", "openai", "anthropic", "google", "xai"]:
             if name in providers:
                 p = providers[name]
+                defaults = getattr(config, name)
                 setattr(config, name, ProviderConfig(
                     api_key=p.get("api_key", ""),
-                    default_model=p.get("default_model", ""),
-                    base_url=p.get("base_url", "")
+                    default_model=p.get("default_model", defaults.default_model),
+                    base_url=p.get("base_url", ""),
+                    **{key: p.get(key, value) for key, value in defaults.llm_settings().items()},
                 ))
 
         agent = data.get("agent", {})
@@ -578,6 +603,13 @@ class ConfigValidator:
         # Validate model selection
         self._validate_model(config, result)
 
+        provider_config = getattr(config, config.default_provider, None)
+        if provider_config:
+            from types import SimpleNamespace
+            settings = SimpleNamespace(provider=config.default_provider, **provider_config.llm_settings())
+            for error in settings_errors(settings):
+                result.add_error(error)
+
         return result
 
     def _validate_provider(self, config: Config, result: ValidationResult) -> None:
@@ -737,6 +769,12 @@ class ConfigValidator:
                 f"No model specified for {use_provider}. "
                 f"Run 'blackreach config' to set a default model."
             )
+
+        if provider_config:
+            from types import SimpleNamespace
+            settings = SimpleNamespace(provider=use_provider, **provider_config.llm_settings())
+            for error in settings_errors(settings):
+                result.add_error(error)
 
         # Validate max_steps
         if config.max_steps < 1:

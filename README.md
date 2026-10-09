@@ -2,7 +2,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-7c3aed?style=flat-square&labelColor=07061a)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22d3ee?style=flat-square&labelColor=07061a)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v5.0.0--beta.2-9f6ff3?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Blackreach/releases)
+[![Version](https://img.shields.io/badge/version-v5.0.0--beta.3-9f6ff3?style=flat-square&labelColor=07061a)](https://github.com/Null-Phnix/Blackreach/releases)
 [![Tests](https://github.com/Null-Phnix/Blackreach/actions/workflows/tests.yml/badge.svg)](https://github.com/Null-Phnix/Blackreach/actions/workflows/tests.yml)
 
 **A local-first browser and research agent that preserves progress and verifies
@@ -48,6 +48,26 @@ The film labels its scripted decision path directly. It demonstrates the
 browser control and verification surface without claiming unrestricted
 autonomy or open-web reliability.
 
+## October engine candidate
+
+This revision adds explicit run outcomes, origin-preserving navigation, bounded
+provider retries, modern OpenAI Responses support, and resume accounting. It is
+a local development candidate, not a claim of broad autonomous reliability.
+
+A controlled recovery proof uses real Chromium, a local fixture site, and a
+fresh agent reading the saved SQLite checkpoint. Its decisions are scripted:
+
+```bash
+uv sync --locked --extra dev --extra server
+uv run python -m playwright install chromium
+uv run python examples/engine_recovery_demo.py
+```
+
+The script checks a one-action stop, fresh-agent resume without replaying that
+action, and a simulated provider rejection that stops after one request. No API
+key, external site, or paid model is involved. The real navigation regression
+also checks relative scripts and links. See [outcome semantics](docs/RUNTIME_OUTCOMES.md).
+
 ## Inspect it locally
 
 ### Download verification demo
@@ -83,13 +103,33 @@ Start with the public command surface:
 ```bash
 uv run blackreach --help
 uv run blackreach setup
-uv run blackreach doctor
+uv run blackreach doctor --offline
 ```
 
-Run the test suite:
+For OpenAI, install the optional SDK and choose a model your API account can use:
 
 ```bash
-uv run pytest tests/
+uv sync --locked --extra openai
+uv run blackreach models --provider openai
+uv run blackreach run "your goal" --provider openai --model gpt-6-luna
+```
+
+Listing an ID does not establish account access. Existing saved models are
+preserved. Interactive `/model` shows the choices; `/model <id>` also accepts a
+custom ID. Request budgets, timeouts, API modes, and troubleshooting are in
+[the provider guide](docs/PROVIDERS.md).
+
+`blackreach run --json` returns a machine-readable outcome. Exit codes are
+0 for success, 1 for error, 2 for a stopped/paused run, and 130 for interruption.
+A saved decision budget is cumulative: `blackreach run --resume 7 --steps 60`
+allows up to 60 decisions in total. Resume restores task progress, not logged-in
+browser cookies, and does not promise exactly-once side effects across a crash.
+
+Run offline unit tests and the loopback navigation integration test:
+
+```bash
+uv run pytest tests/ -m "not integration and not network"
+uv run pytest tests/test_runtime_navigation_integration.py
 ```
 
 ## Public boundary

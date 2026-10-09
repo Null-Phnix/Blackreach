@@ -33,7 +33,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from blackreach.api import ApiConfig, BlackreachAPI
+from blackreach.api import ApiConfig, BlackreachAPI, safe_browse_error
 
 app = Flask(__name__)
 logger = logging.getLogger(__name__)
@@ -290,7 +290,7 @@ def _worker_loop():
 
             with _jobs_lock:
                 _jobs[job_id].update({
-                    "status":        JobStatus.DONE,
+                    "status":        JobStatus.FAILED if result.status == "error" else JobStatus.DONE,
                     "finished_at":   time.time(),
                     "success":       result.success,
                     "pages_visited": result.pages_visited,
@@ -299,6 +299,14 @@ def _worker_loop():
                     "errors":        result.errors,
                     "session_id":    result.session_id,
                     "result":        result.result,
+                    "run_status":    result.status,
+                    "stop_reason":   result.stop_reason,
+                    "resumable":     result.resumable,
+                    "paused":        result.paused,
+                    "actions_taken": result.actions_taken,
+                    "actions_count_estimated": result.actions_count_estimated,
+                    "failures":      result.failures,
+                    "metadata":      result.metadata,
                 })
                 _persist_background_update_locked()
 
@@ -308,7 +316,11 @@ def _worker_loop():
                     _jobs[job_id].update({
                         "status":      JobStatus.FAILED,
                         "finished_at": time.time(),
-                        "errors":      [str(e)],
+                        "success":     False,
+                        "run_status":  "error",
+                        "stop_reason": "startup_error" if api is None else "permanent_error",
+                        "resumable":   False,
+                        "errors":      [safe_browse_error(e)],
                     })
                     _persist_background_update_locked()
         finally:

@@ -362,8 +362,8 @@ class TestSignalHandler:
         # Should not raise
         try:
             _signal_handler(signal.SIGINT, None)
-        except SystemExit:
-            pass  # Expected behavior
+        except KeyboardInterrupt:
+            pass  # Agent loop catches this and saves state
 
 
 class TestIsFirstRun:
@@ -391,37 +391,17 @@ class TestIsFirstRun:
 
 
 class TestCheckPlaywrightBrowsers:
-    """Tests for check_playwright_browsers function."""
+    """Check the installed SDK revision, not the install command's dry run."""
 
-    @patch('subprocess.run')
-    def test_returns_true_when_installed(self, mock_run):
-        """check_playwright_browsers returns True when browsers installed."""
-        mock_run.return_value = MagicMock(returncode=0)
+    def test_missing_browser_is_false(self, tmp_path):
+        with patch('playwright.sync_api.sync_playwright') as factory:
+            factory.return_value.__enter__.return_value.chromium.executable_path = str(tmp_path / 'missing')
+            from blackreach.cli import check_playwright_browsers
+            assert check_playwright_browsers() is False
 
+    def test_invalid_browser_is_false(self):
         from blackreach.cli import check_playwright_browsers
-        result = check_playwright_browsers()
-
-        assert result is True
-
-    @patch('subprocess.run')
-    def test_returns_false_when_not_installed(self, mock_run):
-        """check_playwright_browsers returns False when not installed."""
-        mock_run.return_value = MagicMock(returncode=1)
-
-        from blackreach.cli import check_playwright_browsers
-        result = check_playwright_browsers()
-
-        assert result is False
-
-    @patch('subprocess.run')
-    def test_handles_file_not_found(self, mock_run):
-        """check_playwright_browsers handles FileNotFoundError."""
-        mock_run.side_effect = FileNotFoundError("Command not found")
-
-        from blackreach.cli import check_playwright_browsers
-        result = check_playwright_browsers()
-
-        assert result is False
+        assert check_playwright_browsers('unknown') is False
 
 
 class TestInstallPlaywrightBrowsers:
@@ -1188,7 +1168,7 @@ class TestRunCommandBehavior:
         result = runner.invoke(cli, ['run', 'go to wikipedia'])
 
         assert result.exit_code == 0
-        mock_agent.run.assert_called_once_with('go to wikipedia')
+        mock_agent.run.assert_called_once_with('go to wikipedia', quiet=False)
 
     @patch('blackreach.cli.config_manager')
     @patch('blackreach.cli.console')
@@ -1209,7 +1189,7 @@ class TestRunCommandBehavior:
         result = runner.invoke(cli, ['run', 'go to wikipedia'])
 
         assert result.exit_code == 1
-        assert 'No API key configured' in result.output or 'API key' in mock_console.print.call_args_list[0][0][0]
+        assert any('No API key configured' in str(getattr(call.args[0], 'renderable', call.args[0])) for call in mock_console.print.call_args_list if call.args)
 
     @patch('blackreach.agent.Agent')
     @patch('blackreach.cli.config_manager')
@@ -1309,7 +1289,7 @@ class TestRunCommandBehavior:
         result = runner.invoke(cli, ['run', 'test goal'])
 
         # Should not raise, should handle gracefully
-        assert result.exit_code == 0
+        assert result.exit_code == 130
 
     @patch('blackreach.agent.Agent')
     @patch('blackreach.cli.config_manager')
@@ -1362,7 +1342,7 @@ class TestRunResumeCommand:
         result = runner.invoke(cli, ['run', '--resume', '42'])
 
         assert result.exit_code == 0
-        mock_agent.resume.assert_called_once_with(42)
+        mock_agent.resume.assert_called_once_with(42, quiet=False, max_steps=None)
 
     @patch('blackreach.agent.Agent')
     @patch('blackreach.cli.config_manager')

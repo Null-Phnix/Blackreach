@@ -188,7 +188,8 @@ class TestSessionLogger:
             lines = f.readlines()
             entry = json.loads(lines[-1])
             assert entry["event"] == "think"
-            assert entry["data"]["thought"] == "I should click the button"
+            assert "thought" not in entry["data"]
+            assert entry["data"]["stuck"] is False
 
     def test_act(self, tmp_path, monkeypatch):
         """act logs action."""

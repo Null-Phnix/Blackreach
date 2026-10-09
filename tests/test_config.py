@@ -4,18 +4,17 @@ Unit tests for blackreach/config.py
 Tests configuration loading, saving, and validation.
 """
 
+
 import pytest
-import tempfile
-from pathlib import Path
+
 from blackreach.config import (
-    Config,
-    ProviderConfig,
-    ConfigManager,
     AVAILABLE_MODELS,
-    ValidationResult,
+    Config,
+    ConfigManager,
     ConfigValidator,
+    ProviderConfig,
+    ValidationResult,
     validate_config,
-    validate_for_run,
 )
 
 
@@ -731,3 +730,46 @@ class TestValidateConfig:
         result = validate_config()
 
         assert isinstance(result, ValidationResult)
+
+
+class TestProviderRequestSettings:
+    def test_older_config_retains_values_and_gets_request_defaults(self):
+        manager = ConfigManager.__new__(ConfigManager)
+        config = manager._dict_to_config({
+            "default_provider": "openai",
+            "providers": {"openai": {"api_key": "fixture-key", "default_model": "custom-model", "base_url": "https://example.test/v1"}},
+        })
+        assert config.openai.default_model == "custom-model"
+        assert config.openai.api_key == "fixture-key"
+        assert config.openai.base_url == "https://example.test/v1"
+        assert config.openai.llm_settings() == dict(max_tokens=4096, timeout_seconds=60.0, max_retries=3, retry_delay=1.0, reasoning_effort="low", api_mode="auto")
+
+    def test_settings_round_trip_without_credentials_or_keyring(self, monkeypatch):
+        monkeypatch.setattr("blackreach.config.KEYRING_AVAILABLE", False)
+        manager = ConfigManager.__new__(ConfigManager)
+        config = Config()
+        config.openai = ProviderConfig(default_model="gpt-6-luna", max_tokens=8192, timeout_seconds=20, max_retries=2, retry_delay=0.25, reasoning_effort="medium", api_mode="responses")
+        result = manager._dict_to_config(manager._config_to_dict(config))
+        assert result.openai.llm_settings() == config.openai.llm_settings()
+        assert result.openai.default_model == "gpt-6-luna"
+
+    def test_missing_provider_model_uses_default_without_changing_explicit_empty(self):
+        manager = ConfigManager.__new__(ConfigManager)
+        assert manager._dict_to_config({"providers": {"openai": {}}}).openai.default_model == Config().openai.default_model
+        assert manager._dict_to_config({"providers": {"openai": {"default_model": ""}}}).openai.default_model == ""
+
+    @pytest.mark.parametrize("field,value", [("max_tokens", 0), ("max_retries", 0), ("timeout_seconds", float("nan")), ("retry_delay", -1), ("api_mode", "bogus"), ("reasoning_effort", "bogus")])
+    def test_validate_for_run_rejects_unbounded_or_invalid_settings(self, field, value):
+        config = Config()
+        setattr(config.ollama, field, value)
+        result = ConfigValidator().validate_for_run(config)
+        assert result.valid is False
+        assert any(field in message for message in result.errors)
+
+    def test_validate_override_checks_selected_provider_settings(self):
+        config = Config()
+        config.openai.api_key = "fixture-key"
+        config.openai.timeout_seconds = 0
+        result = ConfigValidator().validate_for_run(config, provider="openai")
+        assert result.valid is False
+        assert any("timeout_seconds" in message for message in result.errors)

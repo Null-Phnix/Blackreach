@@ -14,8 +14,9 @@ Start the HTTP server first in your terminal:
 
 Keep that terminal tab open, then use these tools normally.
 """
-import time
 import os
+import time
+
 import httpx
 from mcp.server.fastmcp import FastMCP
 
@@ -64,10 +65,24 @@ def _poll(job_id: str) -> str:
 
         if status in ("done", "failed"):
             lines = [
+                f"Job status: {status}",
                 f"Success: {job.get('success')}",
                 f"Pages visited: {job.get('pages_visited', 0)}",
                 f"Steps taken: {job.get('steps_taken', 0)}",
             ]
+            outcome = job.get("metadata") or {}
+            run_status = job.get("run_status") or outcome.get("status")
+            if run_status:
+                lines.append(f"Run status: {run_status}")
+            reason = job.get("stop_reason") or outcome.get("stop_reason")
+            if reason:
+                lines.append(f"Stop reason: {reason}")
+            lines.append(f"Actions taken: {job.get('actions_taken', outcome.get('actions_taken', 0))}")
+            if job.get("resumable", outcome.get("resumable", False)) and job.get("session_id") is not None:
+                hint = f"Resume with: blackreach run --resume {job['session_id']}"
+                if run_status == "max_steps":
+                    hint += f" --steps {int(job.get('steps_taken', 0)) + 20}"
+                lines.append(hint)
             # The actual extracted content
             extracted = job.get("result") or ""
             if extracted:
@@ -84,7 +99,7 @@ def _poll(job_id: str) -> str:
                 for e in errors:
                     lines.append(f"  {e}")
             elapsed = int((job.get("finished_at", time.time()) - job.get("created_at", time.time())))
-            lines.append(f"\nCompleted in ~{elapsed}s")
+            lines.append(f"\nJob finished in ~{elapsed}s")
             return "\n".join(lines)
 
         # Still pending/running — keep polling
