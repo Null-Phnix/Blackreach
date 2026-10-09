@@ -5,8 +5,9 @@ FastAPI wrapper around the Blackreach agent programmatic API.
 Provides HTTP endpoints for browse, search, download, and page fetch.
 
 Usage:
-    blackreach serve                    # Start server on default port
+    blackreach serve                    # Loopback only, default port
     blackreach serve --port 8080        # Custom port
+    # Listening beyond loopback requires BLACKREACH_API_KEY.
 
 Or programmatically:
     from blackreach.server import create_app
@@ -16,11 +17,15 @@ Or programmatically:
 from __future__ import annotations
 
 import asyncio
+import hmac
+import ipaddress
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from blackreach.api import (
@@ -38,6 +43,7 @@ from blackreach.api import (
 # ─── Config ─────────────────────────────────────────────────────────────────
 
 DEFAULT_PORT = int(os.getenv("BLACKREACH_PORT", "7433"))
+DEFAULT_HOST = "127.0.0.1"
 
 
 # ─── Pydantic Models ──────────────────────────────────────────────────────────
@@ -80,6 +86,48 @@ async def lifespan(app: FastAPI):
     # Cleanup handled by agent internals
 
 
+def _load_api_key() -> str:
+    """Return the configured bearer token, or empty when auth is not configured.
+
+    A configured key file that cannot be read fails closed. An unset key leaves
+    loopback use open, matching the local agent gateway.
+    """
+    direct = os.environ.get("BLACKREACH_API_KEY", "").strip()
+    if direct:
+        return direct
+    key_file = os.environ.get("BLACKREACH_API_KEY_FILE")
+    if not key_file:
+        return ""
+    try:
+        token = Path(key_file).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise RuntimeError(f"Cannot read BLACKREACH_API_KEY_FILE {key_file}: {exc}") from exc
+    if not token:
+        raise RuntimeError(f"BLACKREACH_API_KEY_FILE {key_file} is empty")
+    return token
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True only for hosts that cannot accept off-machine connections."""
+    normalized = host.strip().lower()
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def ensure_network_bind_requires_api_key(host: str) -> None:
+    """Refuse to expose the agent API on a routable address without a token."""
+    if _is_loopback_host(host):
+        return
+    if not _load_api_key():
+        raise RuntimeError(
+            "Refusing to listen on a non-loopback address without BLACKREACH_API_KEY"
+        )
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Blackreach API",
@@ -87,6 +135,27 @@ def create_app() -> FastAPI:
         version="5.0.0-beta.2",
         lifespan=lifespan,
     )
+
+    @app.middleware("http")
+    async def authenticate_request(request: Request, call_next):
+        """Health stays probeable; every data-bearing route requires a bearer token when one is configured."""
+        if request.url.path == "/health":
+            return await call_next(request)
+        try:
+            api_key = _load_api_key()
+        except RuntimeError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=503)
+        if not api_key:
+            return await call_next(request)
+        authorization = request.headers.get("authorization", "")
+        scheme, _, candidate = authorization.partition(" ")
+        if (
+            scheme.lower() != "bearer"
+            or not candidate
+            or not hmac.compare_digest(candidate, api_key)
+        ):
+            return JSONResponse({"detail": "unauthorized"}, status_code=401)
+        return await call_next(request)
 
     @app.get("/health")
     async def health() -> dict:
@@ -193,8 +262,9 @@ def create_app() -> FastAPI:
 
 # ─── CLI Entry ───────────────────────────────────────────────────────────────
 
-def main(host: str = "0.0.0.0", port: int = DEFAULT_PORT) -> None:
+def main(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
     import uvicorn
+    ensure_network_bind_requires_api_key(host)
     app = create_app()
     uvicorn.run(app, host=host, port=port)
 
