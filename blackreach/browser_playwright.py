@@ -26,6 +26,7 @@ import threading
 
 import logging
 
+from blackreach.ssrf import _is_ssrf_safe, urlopen_guarded
 from blackreach.stealth import Stealth, StealthConfig
 from blackreach.resilience import (
     SmartSelector, PopupHandler, WaitConditions,
@@ -131,77 +132,6 @@ def _reserve_unique_path(download_dir: Path, base_path: Path) -> Path:
             counter += 1
         save_path.touch()  # Reserve the name
     return save_path
-
-
-def _is_ssrf_safe(url: str) -> bool:
-    """
-    Validate URL is safe from SSRF attacks by checking against private IP ranges.
-
-    This prevents the browser/fetch from being used to access internal services.
-
-    Args:
-        url: URL to validate
-
-    Returns:
-        True if URL is safe to fetch, False if it targets private/internal networks
-
-    Raises:
-        ValueError: If URL is invalid or targets internal network
-    """
-    import socket
-    import ipaddress
-    from urllib.parse import urlparse
-
-    try:
-        parsed = urlparse(url)
-        hostname = parsed.hostname
-
-        if not hostname:
-            raise ValueError("URL has no hostname")
-
-        # Block localhost variants
-        if hostname.lower() in ('localhost', '127.0.0.1', '::1', '0.0.0.0'):
-            raise ValueError(f"SSRF blocked: localhost access not allowed")
-
-        # Resolve hostname to IP address(es)
-        try:
-            addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-        except socket.gaierror:
-            # Can't resolve - might be a DNS rebinding attempt, but allow for now
-            # as it will fail at the actual request time
-            return True
-
-        # Check each resolved IP against private ranges
-        private_ranges = [
-            ipaddress.ip_network('10.0.0.0/8'),       # Class A private
-            ipaddress.ip_network('172.16.0.0/12'),    # Class B private
-            ipaddress.ip_network('192.168.0.0/16'),   # Class C private
-            ipaddress.ip_network('127.0.0.0/8'),      # Loopback
-            ipaddress.ip_network('169.254.0.0/16'),   # Link-local
-            ipaddress.ip_network('fc00::/7'),         # IPv6 unique local
-            ipaddress.ip_network('fe80::/10'),        # IPv6 link-local
-            ipaddress.ip_network('::1/128'),          # IPv6 loopback
-        ]
-
-        for family, _, _, _, sockaddr in addr_info:
-            ip_str = sockaddr[0]
-            try:
-                ip = ipaddress.ip_address(ip_str)
-                for private_range in private_ranges:
-                    if ip in private_range:
-                        raise ValueError(f"SSRF blocked: {hostname} resolves to private IP {ip}")
-            except ValueError as e:
-                if "SSRF blocked" in str(e):
-                    raise
-                continue  # Invalid IP string, skip
-
-        return True
-
-    except ValueError:
-        raise
-    except Exception as e:
-        # On any parsing error, block as a safety measure
-        raise ValueError(f"SSRF validation failed: {e}")
 
 
 class ProxyType(Enum):
@@ -1722,8 +1652,9 @@ class Hand:
 
         Security: Validates URL against SSRF attacks before fetching.
         """
-        # P0-SEC: Validate URL is not targeting internal networks (SSRF protection)
-        _is_ssrf_safe(url)  # Raises ValueError if unsafe
+        # P0-SEC: Validate URL is not targeting internal networks (SSRF protection).
+        # Checked before a file is reserved so a blocked URL leaves nothing behind.
+        _is_ssrf_safe(url)
 
         # Get filename from URL (P0-SEC: sanitize to prevent path traversal)
         parsed = urlparse(url)
@@ -1733,12 +1664,13 @@ class Hand:
         base_path = self.download_dir / filename
         save_path = _reserve_unique_path(self.download_dir, base_path)
 
-        # Download the file with User-Agent to avoid 403 errors
+        # Download the file with User-Agent to avoid 403 errors.
+        # urlopen_guarded re-checks every redirect; a public URL can 302 to loopback.
         try:
             req = urllib.request.Request(url, headers={
                 'User-Agent': self.stealth.get_random_user_agent()
             })
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urlopen_guarded(req, timeout=30) as response:
                 content_type = response.headers.get('Content-Type', '')
                 data = response.read()
 
@@ -1763,6 +1695,10 @@ class Hand:
         except urllib.error.HTTPError as e:
             save_path.unlink(missing_ok=True)
             raise DownloadError(url, reason=e.reason, status_code=e.code)
+        except ValueError:
+            # Redirect target failed the SSRF check after the file was reserved.
+            save_path.unlink(missing_ok=True)
+            raise
         except (urllib.error.URLError, OSError) as e:
             save_path.unlink(missing_ok=True)
             raise DownloadError(url, reason=str(e))
