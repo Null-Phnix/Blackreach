@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
-from urllib.parse import urlparse, unquote
+from urllib.parse import urljoin, urlparse, unquote
 
 try:
     from starsearch import StarSearch
@@ -638,11 +638,39 @@ class Hand:
             raise InvalidActionArgsError("download", "Must provide either selector or url")
         if url:
             return self._fetch_file_directly(url)
-        # Click-triggered download — click then check for file via JS
+        # A click alone does not produce a file. Download the link target so the
+        # caller receives a real path and hash instead of crashing on a stub.
         self._ensure_session()
-        self._session.click(selector)
-        time.sleep(2)
-        return {"action": "download", "selector": selector, "note": "click-triggered"}
+        href = self._href_for_selector(selector)
+        if not href:
+            raise DownloadError(
+                selector,
+                reason="element has no direct file URL; use a url download instead",
+            )
+        absolute = urljoin(self.get_url() or "", href)
+        parsed = urlparse(absolute)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise DownloadError(absolute, reason="download URL is not an http(s) address")
+        return self._fetch_file_directly(absolute)
+
+    def _href_for_selector(self, selector: str) -> str:
+        """Return the absolute-or-relative href of a link control, or ""."""
+        selector_js = json.dumps(selector)
+        try:
+            href = self._session.evaluate(f"""
+            (() => {{
+                const el = document.querySelector({selector_js});
+                if (!el) return "";
+                const link = el.closest("a[href]");
+                if (!link) return "";
+                const attr = (link.getAttribute("href") || "").trim();
+                if (!attr || attr.startsWith("#")) return "";
+                return link.href || attr;
+            }})()
+            """)
+        except StarSearchError as exc:
+            raise DownloadError(selector, reason=str(exc)) from exc
+        return href if isinstance(href, str) else ""
 
     def download_link(self, href: str, timeout: int = DOWNLOAD_TIMEOUT_MS) -> dict:
         return self._fetch_file_directly(href)
