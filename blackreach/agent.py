@@ -46,7 +46,7 @@ from blackreach.content_verify import VerificationStatus, get_verifier
 from blackreach.timeout_manager import get_timeout_manager
 from blackreach.rate_limiter import get_rate_limiter
 
-from blackreach.adaptive_browser import BrowserMode, BrowserRouter
+from blackreach.adaptive_browser import BrowserMode, BrowserRouter, _require_web_url
 from blackreach.domain_skills import get_skill_manager
 from blackreach.agent_actions import AgentActionsMixin
 from blackreach.agent_format import AgentFormatMixin
@@ -262,6 +262,9 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
 
     def _navigate_with_scan(self, url: str, log=None) -> bool:
         """Navigates and returns True on success. Adapts to bot-protection."""
+        # Reject file: and other local schemes before the route probe. urllib
+        # will open file:///etc/passwd during that probe.
+        _require_web_url(url)
         if not self.config.use_adaptive or self._router is None:
             # Fallback: normal browser goto
             self.hand.goto(url)
