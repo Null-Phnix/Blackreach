@@ -566,6 +566,24 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
         self.nav_context = NavigationContext(self.persistent_memory)
         self.search_intel = SearchIntelligence(self.persistent_memory)
 
+    @staticmethod
+    def _navigable_http_url(url: object) -> str:
+        """Absolute http(s) page address. about:, data:, and other schemes are not resumable."""
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            return url
+        return ""
+
+    def _checkpoint_page_url(self, current_url: object = "") -> str:
+        """Pick a page a later resume can open: live URL, last recorded page, then start URL."""
+        chosen = self._navigable_http_url(current_url)
+        if chosen:
+            return chosen
+        for url in reversed(getattr(self, "_recent_urls", []) or []):
+            chosen = self._navigable_http_url(url)
+            if chosen:
+                return chosen
+        return self._navigable_http_url(getattr(self.config, "start_url", ""))
+
     def save_state(self, status: str = "paused") -> bool:
         """Save current session state for later resume."""
         if not self.session_id or not self._current_goal:
@@ -578,11 +596,8 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
             except Exception:
                 # Browser failure must not destroy an otherwise valid checkpoint.
                 pass
-        if not isinstance(current_url, str) or current_url.startswith(("about:", "data:")):
-            current_url = ""
-        if not current_url:
-            recent_urls = getattr(self, "_recent_urls", [])
-            current_url = recent_urls[-1] if recent_urls else self.config.start_url
+        # A blank or injected document must not replace the page this run actually opened.
+        current_url = self._checkpoint_page_url(current_url)
         self.persistent_memory.save_session_state(
             session_id=self.session_id,
             goal=self._current_goal,
@@ -659,8 +674,8 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
             if not self.ensure_browser():
                 return self._finish_run(self._current_goal, "error", "browser_start_failed",
                                         "Failed to start browser", preserve_checkpoint=True, resumable=True)
-            saved_url = state["current_url"] or self.config.start_url
-            if not isinstance(saved_url, str) or saved_url.startswith(("about:", "data:")):
+            saved_url = self._checkpoint_page_url(state["current_url"])
+            if not saved_url:
                 return self._finish_run(self._current_goal, "error", "navigation_failed",
                                         "Saved session has no navigable source URL", preserve_checkpoint=True)
             log(f"Navigating to saved URL: {saved_url}")
