@@ -589,6 +589,36 @@ class TestErrorPatternMatching:
 
         assert info.category == ErrorCategory.RESOURCE_ERROR
 
+    def test_download_url_words_are_not_fatal(self):
+        """A 404 for /resources/ or 401.pdf must stay recoverable."""
+        from blackreach.exceptions import DownloadError
+
+        recovery = ErrorRecovery()
+        cases = [
+            DownloadError("https://example.com/resources/report.pdf", reason="Not Found", status_code=404),
+            DownloadError("https://example.com/files/401.pdf", reason="Not Found", status_code=404),
+            DownloadError("https://cdn.example.com/memory-paper.pdf", reason="Not Found", status_code=404),
+        ]
+        for error in cases:
+            info = recovery.categorize(error)
+            assert info.recoverable is True, str(error)
+            assert info.category != ErrorCategory.RESOURCE_ERROR
+            assert info.category != ErrorCategory.AUTH_REQUIRED
+
+    def test_real_auth_and_memory_failures_stay_fatal(self):
+        """Tightening URL matching must still stop genuine exhaustion and auth."""
+        from blackreach.exceptions import DownloadError
+
+        recovery = ErrorRecovery()
+        memory = recovery.categorize(MemoryError("Out of memory"))
+        assert memory.category == ErrorCategory.RESOURCE_ERROR
+        assert memory.recoverable is False
+        denied = recovery.categorize(
+            DownloadError("https://example.com/secret.pdf", reason="Unauthorized", status_code=401)
+        )
+        assert denied.category == ErrorCategory.AUTH_REQUIRED
+        assert denied.recoverable is False
+
     def test_type_match_higher_confidence(self):
         """Error type matching should give higher confidence."""
         recovery = ErrorRecovery()
