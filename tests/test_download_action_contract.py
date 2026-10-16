@@ -110,6 +110,98 @@ def test_duplicate_content_is_not_recorded_twice(tmp_path):
     agent._record_download.assert_not_called()
 
 
+def test_missing_recorded_file_is_downloaded_again(tmp_path):
+    """A database row must not block replacing a file the user already deleted."""
+    path = tmp_path / "paper.pdf"
+    path.write_bytes(PDF)
+    agent = make_agent(path, PDF)
+    agent.config = SimpleNamespace(download_dir=tmp_path)
+    agent.persistent_memory.has_downloaded.side_effect = lambda **kw: True
+    agent.persistent_memory.find_downloads.side_effect = lambda **kw: [
+        {"filename": "paper.pdf", "url": "https://example.org/paper.pdf", "file_hash": "abc"}
+    ]
+    path.unlink()
+
+    def write_replacement(_url):
+        path.write_bytes(PDF)
+        return dict(
+            path=str(path),
+            filename=path.name,
+            size=len(PDF),
+            hash=hashlib.sha256(PDF).hexdigest(),
+            url="https://example.org/paper.pdf",
+        )
+
+    agent.hand.download_link = Mock(side_effect=write_replacement)
+
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "https://example.org/paper.pdf", "expected_type": "pdf"}
+    )
+
+    assert not result.get("skipped")
+    assert path.read_bytes() == PDF
+    agent._record_download.assert_called_once()
+
+
+def test_recorded_file_still_on_disk_is_not_fetched_again(tmp_path):
+    path = tmp_path / "paper.pdf"
+    path.write_bytes(PDF)
+    agent = make_agent(path, PDF)
+    agent.config = SimpleNamespace(download_dir=tmp_path)
+    agent.persistent_memory.has_downloaded.side_effect = lambda **kw: "url" in kw
+    agent.persistent_memory.find_downloads.side_effect = lambda **kw: [
+        {"filename": "paper.pdf", "url": "https://example.org/paper.pdf", "file_hash": "abc"}
+    ]
+
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "https://example.org/paper.pdf", "expected_type": "pdf"}
+    )
+
+    assert result["reason"] == "already downloaded"
+    agent.hand.download_link.assert_not_called()
+    assert path.read_bytes() == PDF
+
+
+def test_same_hash_keeps_replacement_when_original_is_gone(tmp_path):
+    original = tmp_path / "original.pdf"
+    replacement = tmp_path / "mirror.pdf"
+    replacement.write_bytes(PDF)
+    agent = make_agent(replacement, PDF, duplicate=True)
+    agent.config = SimpleNamespace(download_dir=tmp_path)
+    agent.persistent_memory.find_downloads.side_effect = lambda **kw: [
+        {"filename": original.name, "url": "https://mirror.example/original.pdf", "file_hash": "abc"}
+    ]
+
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "https://mirror.example/original.pdf", "expected_type": "pdf"}
+    )
+
+    assert not result.get("skipped")
+    assert replacement.read_bytes() == PDF
+    agent._record_download.assert_called_once()
+
+
+def test_same_hash_still_drops_a_second_copy(tmp_path):
+    original = tmp_path / "original.pdf"
+    original.write_bytes(PDF)
+    replacement = tmp_path / "mirror.pdf"
+    replacement.write_bytes(PDF)
+    agent = make_agent(replacement, PDF, duplicate=True)
+    agent.config = SimpleNamespace(download_dir=tmp_path)
+    agent.persistent_memory.find_downloads.side_effect = lambda **kw: [
+        {"filename": original.name, "url": "https://mirror.example/original.pdf", "file_hash": "abc"}
+    ]
+
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "https://mirror.example/copy.pdf", "expected_type": "pdf"}
+    )
+
+    assert result["reason"] == "duplicate content"
+    assert not replacement.exists()
+    assert original.read_bytes() == PDF
+    agent._record_download.assert_not_called()
+
+
 @pytest.mark.parametrize("expected", ["pfd", "", "unknown", 123, []])
 def test_invalid_expectation_fails_before_transport(tmp_path, expected):
     agent = make_agent(tmp_path / "page.html")
