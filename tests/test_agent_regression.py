@@ -61,6 +61,38 @@ class TestStepRecordsOnFailure:
         assert agent.session_memory.actions_taken[0]["success"] is True
 
 
+class TestDownloadUrlDoesNotAbortRun:
+    """A failed download whose URL merely contains 'resources' or '401' must not end the run."""
+
+    def test_resources_404_is_not_fatal(self, tmp_path):
+        from blackreach.exceptions import DownloadError
+
+        agent = Agent(
+            llm_config=LLMConfig(provider="ollama", model="qwen2.5:14b"),
+            agent_config=AgentConfig(max_steps=3, memory_db=tmp_path / "test.db"),
+        )
+        agent.hand = MagicMock()
+        agent.hand.get_url.return_value = "https://example.com/resources"
+        agent.hand.get_html.return_value = "<html><body><a data-br-id='1'>hi</a></body></html>"
+        agent.hand.get_title.return_value = "Example"
+        agent.detector = MagicMock()
+        agent.detector.detect_challenge.return_value = MagicMock(detected=False)
+        agent.stuck_detector = MagicMock()
+        agent.stuck_detector.check.return_value = MagicMock(is_stuck=False)
+        agent.llm.generate = MagicMock(
+            return_value='{"thought":"download the report","action":"download","args":{"url":"https://example.com/resources/report.pdf"}}'
+        )
+        agent._execute_action = MagicMock(side_effect=DownloadError(
+            "https://example.com/resources/report.pdf", reason="Not Found", status_code=404,
+        ))
+
+        result = agent._step("download the annual report", step_num=1, quiet=True)
+
+        assert result["done"] is False
+        assert result.get("fatal") is not True
+        assert result.get("recoverable") is not False
+
+
 class TestGoalNegationNotDownload:
     """Goals like 'don't download anything' must NOT be blocked as download tasks."""
 
