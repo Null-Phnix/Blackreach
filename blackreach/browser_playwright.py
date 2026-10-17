@@ -1742,21 +1742,27 @@ class Hand:
                 content_type = response.headers.get('Content-Type', '')
                 data = response.read()
 
-            # Add extension based on Content-Type if filename has none
+            # Add extension based on Content-Type if filename has none.
+            # Check epub before zip: the standard type is application/epub+zip.
             if not save_path.suffix:
+                content_type_lower = content_type.lower()
                 ext = ''
-                if 'pdf' in content_type:
+                if 'epub' in content_type_lower:
+                    ext = '.epub'
+                elif 'pdf' in content_type_lower:
                     ext = '.pdf'
-                elif 'zip' in content_type:
+                elif 'zip' in content_type_lower:
                     ext = '.zip'
-                elif 'jpeg' in content_type or 'jpg' in content_type:
+                elif 'jpeg' in content_type_lower or 'jpg' in content_type_lower:
                     ext = '.jpg'
-                elif 'png' in content_type:
+                elif 'png' in content_type_lower:
                     ext = '.png'
-                elif 'html' in content_type:
+                elif 'html' in content_type_lower:
                     ext = '.html'
                 if ext:
-                    save_path = _reserve_unique_path(self.download_dir, save_path.with_suffix(ext))
+                    renamed = _reserve_unique_path(self.download_dir, save_path.with_suffix(ext))
+                    save_path.unlink(missing_ok=True)
+                    save_path = renamed
 
             with open(save_path, 'wb') as f:
                 f.write(data)
