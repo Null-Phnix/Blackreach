@@ -664,10 +664,17 @@ class Hand:
                 data = response.read()
 
             if not save_path.suffix:
-                ext_map = {'pdf': '.pdf', 'zip': '.zip', 'jpeg': '.jpg', 'jpg': '.jpg', 'png': '.png', 'html': '.html'}
-                for key, ext in ext_map.items():
-                    if key in content_type:
-                        save_path = _reserve_unique_path(self.download_dir, save_path.with_suffix(ext))
+                # gzip before zip: application/gzip contains the substring "zip".
+                content_type_lower = content_type.lower()
+                ext_map = (
+                    ('gzip', '.gz'), ('pdf', '.pdf'), ('zip', '.zip'),
+                    ('jpeg', '.jpg'), ('jpg', '.jpg'), ('png', '.png'), ('html', '.html'),
+                )
+                for key, ext in ext_map:
+                    if key in content_type_lower:
+                        renamed = _reserve_unique_path(self.download_dir, save_path.with_suffix(ext))
+                        save_path.unlink(missing_ok=True)
+                        save_path = renamed
                         break
 
             with open(save_path, 'wb') as f:
