@@ -1215,7 +1215,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
 
                     goal = self._current_goal
                     if goal:
-                        failover = self.source_manager.get_failover(failed_domain, content_type="ebook")
+                        failover = self.source_manager.get_failover(failed_domain, content_type=goal)
                         if failover:
                             source, next_url = failover
                             log(f"  [SMART FAILOVER: {source.name} at {next_url}]")

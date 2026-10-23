@@ -1891,6 +1891,45 @@ class TestChallengeDetection:
 
         assert len(agent._failed_urls) == 0
 
+    def _step_on_challenge(self, agent, goal):
+        """Run one step while the current page stays on an unresolved challenge."""
+        mock_hand = MagicMock()
+        mock_hand.get_url.return_value = "https://example.com/blocked"
+        mock_hand.get_title.return_value = "Just a moment"
+        mock_hand.get_html.return_value = "<html><body>checking your browser</body></html>"
+        mock_hand.is_healthy.return_value = True
+        agent.hand = mock_hand
+        agent._current_goal = goal
+        agent._consecutive_challenges = 1
+        challenge = MagicMock(detected=True, details="cloudflare")
+        clear = MagicMock(detected=False)
+        with patch("blackreach.agent.time.sleep"):
+            with patch.object(agent.llm, "generate", return_value='{"thought":"stop","action":"done","args":{"reason":"stop"}}'):
+                with patch.object(agent.detector, "detect_challenge", return_value=challenge):
+                    with patch.object(agent.detector, "detect_search_block", return_value=clear):
+                        with patch.object(agent.detector, "detect_download_landing", return_value=clear):
+                            agent._step(goal, 1, quiet=True)
+        return [call.args[0] for call in mock_hand.goto.call_args_list if call.args]
+
+    def test_challenge_failover_does_not_open_an_ebook_site_for_a_summary(self, tmp_path):
+        """Two unresolved challenges must not send an information goal to an ebook library."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        opened = self._step_on_challenge(agent, "summarize the Python GIL debate")
+        assert not any(
+            host in url
+            for url in opened
+            for host in ("annas-archive", "gutenberg.org", "libgen.", "archive.org")
+        )
+
+    def test_challenge_failover_follows_a_wallpaper_goal(self, tmp_path):
+        """A wallpaper download leaves a challenged page for Wallhaven, not GitHub or an ebook library."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        opened = self._step_on_challenge(agent, "download 3 mountain wallpapers")
+        assert any("wallhaven.cc" in url for url in opened)
+        assert not any("github.com" in url or "annas-archive" in url for url in opened)
+
 
 # =============================================================================
 # Tests for Download Failure Tracking

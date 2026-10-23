@@ -102,6 +102,28 @@ class TestContentTypeDetection:
         types = detect_content_type("find a video editing software")
         assert "software" in types
 
+    def test_download_verb_is_not_a_software_request(self):
+        """The verb download must not send ebook, paper, or wallpaper goals to GitHub."""
+        ebooks = detect_content_type("download 3 ebooks about cooking")
+        assert "ebook" in ebooks
+        assert "software" not in ebooks
+
+        papers = detect_content_type("download papers about transformers")
+        assert "paper" in papers
+        assert "software" not in papers
+
+        wallpapers = detect_content_type("download 3 mountain wallpapers")
+        assert "wallpaper" in wallpapers
+        assert "software" not in wallpapers
+
+        novels = detect_content_type("download novels by le guin")
+        assert "book" in novels
+        assert "software" not in novels
+
+    def test_explicit_software_download_still_matches(self):
+        types = detect_content_type("download the video editing software")
+        assert "software" in types
+
     def test_detect_8k_wallpaper(self):
         types = detect_content_type("get an 8k wallpaper")
         assert "wallpaper" in types
@@ -194,6 +216,24 @@ class TestReasonAboutGoal:
         result = reason_about_goal("get the llama cpp github repo")
         assert result["best_source"] is not None
         assert result["best_source"].name == "GitHub"
+
+    def test_plural_ebook_download_opens_an_ebook_library(self):
+        result = reason_about_goal("download 3 ebooks about cooking")
+        assert result["best_source"] is not None
+        assert result["best_source"].name == "Anna's Archive"
+        assert "annas-archive" in result["start_url"]
+
+    def test_plural_paper_download_opens_a_paper_source(self):
+        result = reason_about_goal("download papers about transformers")
+        assert result["best_source"] is not None
+        assert result["best_source"].name in ["arXiv", "Semantic Scholar", "Google Scholar"]
+        assert "github.com" not in result["start_url"]
+
+    def test_plural_wallpaper_download_opens_wallhaven(self):
+        result = reason_about_goal("download 3 mountain wallpapers")
+        assert result["best_source"] is not None
+        assert result["best_source"].name == "Wallhaven"
+        assert "wallhaven.cc" in result["start_url"]
 
     def test_reason_provides_alternates(self):
         result = reason_about_goal("find epub for some book")
