@@ -185,8 +185,14 @@ class ContentVerifier:
             }
             expected_type = ext_map.get(extension, FileType.UNKNOWN)
 
-        # Check for HTML masquerading as something else (common issue)
-        if detected_type == FileType.HTML and expected_type not in (FileType.HTML, FileType.TEXT, FileType.UNKNOWN):
+        # A page is a real download only when the caller asked for HTML/text or
+        # the filename is a page. Other names (.zip, .php, no suffix) are
+        # landing pages and must not count as the requested file.
+        page_extensions = {'.html', '.htm', '.xhtml', '.xml', '.txt', '.text'}
+        html_was_requested = expected_type in (FileType.HTML, FileType.TEXT) or (
+            expected_type == FileType.UNKNOWN and extension in page_extensions
+        )
+        if detected_type == FileType.HTML and not html_was_requested:
             return VerificationResult(
                 status=VerificationStatus.WRONG_FORMAT,
                 file_type=expected_type,

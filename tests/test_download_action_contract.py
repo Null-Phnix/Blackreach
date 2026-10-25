@@ -99,6 +99,36 @@ def test_explicit_html_download_still_allowed(tmp_path):
     agent._record_download.assert_called_once()
 
 
+@pytest.mark.parametrize("name", ["book.zip", "report.docx", "download"])
+def test_html_landing_page_with_non_page_name_is_not_recorded(tmp_path, name):
+    path = tmp_path / name
+    agent = make_agent(path)
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": f"https://example.org/files/{name}"}
+    )
+    assert result["skipped"] and result["reason"] == "wrong_format"
+    assert not path.exists()
+    agent._record_download.assert_not_called()
+    agent.persistent_memory.add_download.assert_not_called()
+
+
+def test_html_page_filename_without_expected_type_is_kept(tmp_path):
+    agent = make_agent(tmp_path / "page.html")
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "https://example.org/page.html"}
+    )
+    assert not result.get("skipped")
+    agent._record_download.assert_called_once()
+
+
+def test_real_zip_extension_stays_valid():
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr("readme.txt", "archive content " * 200)
+    result = ContentVerifier().verify_data(stream.getvalue(), extension=".zip")
+    assert result.status == VerificationStatus.VALID
+
+
 def test_duplicate_content_is_not_recorded_twice(tmp_path):
     path = tmp_path / "copy.pdf"
     agent = make_agent(path, PDF, duplicate=True)
