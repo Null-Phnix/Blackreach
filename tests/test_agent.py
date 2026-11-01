@@ -6,6 +6,7 @@ Note: Full integration tests require browser fixtures.
 """
 
 import pytest
+from urllib.parse import urlparse
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 from dataclasses import asdict
@@ -1963,8 +1964,9 @@ class TestChallengeDetection:
         config = AgentConfig(memory_db=tmp_path / "test.db")
         agent = Agent(agent_config=config)
         opened = self._step_on_challenge(agent, "download 3 mountain wallpapers")
-        assert any("wallhaven.cc" in url for url in opened)
-        assert not any("github.com" in url or "annas-archive" in url for url in opened)
+        hosts = {urlparse(url).hostname or "" for url in opened}
+        assert "wallhaven.cc" in hosts
+        assert not any(h == "github.com" or "annas-archive" in h for h in hosts)
 
 
 # =============================================================================
