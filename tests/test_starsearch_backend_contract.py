@@ -104,7 +104,7 @@ def test_selector_download_saves_the_link_target(monkeypatch, tmp_path):
     response.__enter__ = Mock(return_value=response)
     response.__exit__ = Mock(return_value=False)
     opened = Mock(return_value=response)
-    monkeypatch.setattr(browser_starsearch.urllib.request, "urlopen", opened)
+    monkeypatch.setattr(browser_starsearch, "urlopen_guarded", opened)
     _public_dns(monkeypatch)
 
     hand = Hand(download_dir=tmp_path)

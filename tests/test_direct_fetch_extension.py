@@ -40,7 +40,7 @@ def _fetch(hand, tmp_path: Path, payload: bytes, content_type: str):
     module = hand.__class__.__module__
     response = _Response(payload, content_type)
     with patch(f"{module}._is_ssrf_safe", return_value=True), patch(
-        "urllib.request.urlopen", return_value=response
+        f"{module}.urlopen_guarded", return_value=response
     ):
         return hand._fetch_file_directly("https://example.org/download/42")
 

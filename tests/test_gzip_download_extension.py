@@ -56,7 +56,7 @@ def test_extensionless_gzip_is_saved_as_gzip(tmp_path, monkeypatch, request, con
     payload = _gzip_payload()
     hand = request.getfixturevalue(hand_fixture)
     monkeypatch.setattr(
-        f"{module}.urllib.request.urlopen",
+        f"{module}.urlopen_guarded",
         lambda req, timeout=30: _Response(payload, content_type),
     )
     hand.download_dir = tmp_path
@@ -75,7 +75,7 @@ def test_extensionless_gzip_is_saved_as_gzip(tmp_path, monkeypatch, request, con
 def test_extensionless_zip_is_still_zip(tmp_path, monkeypatch, playwright_hand):
     payload = b"PK\x03\x04" + os.urandom(200)
     monkeypatch.setattr(
-        "blackreach.browser_playwright.urllib.request.urlopen",
+        "blackreach.browser_playwright.urlopen_guarded",
         lambda req, timeout=30: _Response(payload, "application/zip"),
     )
     playwright_hand.download_dir = tmp_path
