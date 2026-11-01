@@ -9,7 +9,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 from dataclasses import asdict
-from blackreach.agent import Agent, AgentConfig, AgentCallbacks
+from blackreach.agent import Agent, AgentConfig, AgentCallbacks, download_quota
 from blackreach.exceptions import SessionNotFoundError, LLMError, BrowserError
 
 
@@ -2410,6 +2410,58 @@ class TestAutoCompletion:
         # Should auto-complete since we have 2 files
         assert result["done"] is True
         assert "Downloaded 2 files" in result.get("reason", "")
+
+    def test_step_does_not_auto_complete_range_after_one_file(self, tmp_path):
+        """A leading range number is not the download quota."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        goal = "Download chapters 1-10 of the manual"
+        agent._current_goal = goal
+        agent.session_memory.add_download("chapter1.pdf", "https://example.com/1.pdf")
+
+        mock_hand = MagicMock()
+        mock_hand.get_url.return_value = "https://example.com"
+        mock_hand.get_title.return_value = "Test"
+        mock_hand.get_html.return_value = "<html><body>Test</body></html>"
+        mock_hand.is_healthy.return_value = True
+        agent.hand = mock_hand
+
+        llm_response = '{"thought": "open the next chapter", "action": "navigate", "args": {"url": "https://example.com/chapter2"}}'
+        debug_html_mock = {
+            "has_meaningful_content": True,
+            "empty_root": False,
+            "html_length": 100,
+            "text_length": 50,
+            "raw_links": 5,
+            "raw_inputs": 2
+        }
+
+        with patch.object(agent, 'check_browser_health', return_value=True):
+            with patch.object(agent.llm, 'generate', return_value=llm_response):
+                with patch.object(agent.eyes, 'debug_html', return_value=debug_html_mock):
+                    with patch.object(agent.eyes, 'see', return_value={"links": []}):
+                        with patch.object(agent.detector, 'detect_challenge', return_value=MagicMock(detected=False)):
+                            with patch.object(agent.detector, 'detect_download_landing', return_value=MagicMock(detected=False)):
+                                with patch.object(agent, '_execute_action', return_value={"action": "navigate"}) as execute:
+                                    result = agent._step(goal, 1, quiet=True)
+
+        assert result.get("done") is not True
+        execute.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("goal", "expected"),
+    [
+        ("download 2 files", 2),
+        ("Download the top 5 PDFs", 5),
+        ("download the paper", 1),
+        ("Download chapters 1-10 of the manual", None),
+        ("Download volumes 1 to 5", None),
+        ("download the 2024 annual report", None),
+    ],
+)
+def test_download_quota_ignores_identifiers_and_ranges(goal, expected):
+    assert download_quota(goal) == expected
 
 
 # =============================================================================
