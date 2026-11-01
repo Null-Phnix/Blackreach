@@ -163,8 +163,14 @@ class ContentVerifier:
             text_sample = data[:1024].decode('utf-8', errors='ignore')
             if '<html' in text_sample.lower() or '<!doctype html' in text_sample.lower():
                 return FileType.HTML
-            if text_sample.isprintable():
-                return FileType.TEXT
+            # str.isprintable() rejects newlines, tabs, and a leading BOM.
+            # Ordinary .txt files then look unknown and the download handler deletes them.
+            if text_sample.startswith('\ufeff'):
+                text_sample = text_sample[1:]
+            if '\x00' not in text_sample:
+                collapsed = ''.join(text_sample.split())
+                if text_sample.strip() and collapsed.isprintable():
+                    return FileType.TEXT
         except Exception:
             pass
 
