@@ -143,3 +143,81 @@ def test_epub_exception_requires_epub_structure(epub):
 def test_valid_pdf_cannot_satisfy_requested_zip():
     result = ContentVerifier().verify_data(PDF, expected_type=FileType.ZIP)
     assert result.status == VerificationStatus.WRONG_FORMAT
+
+
+def palm_mobi():
+    """Palm database with the MOBI type/creator pair at offset 60."""
+    header = bytearray(68)
+    header[0:4] = b"Book"
+    header[60:68] = b"BOOKMOBI"
+    return bytes(header) + b"Chapter text of a Kindle book. " * 200
+
+
+def test_palm_mobi_is_recorded(tmp_path):
+    path = tmp_path / "book.bin"
+    agent = make_agent(path, palm_mobi())
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/download", "expected_type": "mobi"}
+    )
+    assert not result.get("skipped")
+    assert path.exists()
+    agent._record_download.assert_called_once()
+
+
+def test_azw3_request_accepts_palm_mobi_container(tmp_path):
+    path = tmp_path / "book.azw3"
+    agent = make_agent(path, palm_mobi())
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/download", "expected_type": "azw3"}
+    )
+    assert not result.get("skipped")
+    assert path.exists()
+    agent._record_download.assert_called_once()
+
+
+def test_mobi_extension_uses_palm_header(tmp_path):
+    path = tmp_path / "book.mobi"
+    agent = make_agent(path, palm_mobi())
+    result = AgentActionsMixin._execute_action(agent, "download", {"url": "/download"})
+    assert not result.get("skipped")
+    assert path.exists()
+    agent._record_download.assert_called_once()
+
+
+def test_html_cannot_satisfy_requested_mobi(tmp_path):
+    path = tmp_path / "book.mobi"
+    agent = make_agent(path)
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/download", "expected_type": "mobi"}
+    )
+    assert result["skipped"] and result["reason"] == "wrong_format"
+    assert not path.exists()
+    agent._record_download.assert_not_called()
+
+
+def test_pdf_prose_is_not_a_placeholder():
+    data = (
+        b"%PDF-1.7\n/Catalog /Pages\n"
+        + b"Not found. Please wait and try again. "
+        + b" " * 1500
+        + b"\n%%EOF"
+    )
+    result = ContentVerifier().verify_data(data, expected_type=FileType.PDF)
+    assert result.status == VerificationStatus.VALID
+
+
+def test_stub_error_page_is_still_a_placeholder():
+    data = b"<!DOCTYPE html><html><body><h1>Not found</h1></body></html>"
+    result = ContentVerifier().verify_data(data, expected_type=FileType.HTML)
+    assert result.status == VerificationStatus.PLACEHOLDER
+
+
+def test_article_mentioning_not_found_is_kept():
+    data = (
+        b"<!DOCTYPE html><html><body><p>"
+        + b"The HTTP status called Not found is documented here. " * 30
+        + b"</p></body></html>"
+    )
+    assert len(data) > 1024
+    result = ContentVerifier().verify_data(data, expected_type=FileType.HTML)
+    assert result.status == VerificationStatus.VALID

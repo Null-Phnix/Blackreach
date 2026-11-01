@@ -82,6 +82,40 @@ MIN_SIZES = {
     FileType.IMAGE: 500,     # Real images are at least 500B (thumbnails excluded)
 }
 
+# AZW/AZW3 is a MOBI/Palm container, not a distinct magic-byte format.
+_KINDLE_TYPES = {FileType.MOBI, FileType.AZW3}
+
+# Substring scans of these formats false-positive on real document text.
+_BINARY_TYPES = {
+    FileType.PDF,
+    FileType.EPUB,
+    FileType.ZIP,
+    FileType.IMAGE,
+    FileType.MOBI,
+    FileType.DJVU,
+}
+
+# Common prose. These only identify a stub error page, not an article
+# that happens to mention them.
+_GENERIC_PLACEHOLDERS = {
+    b"not found",
+    b"please wait",
+    b"try again",
+    b"captcha",
+    b"dmca",
+}
+_GENERIC_PLACEHOLDER_MAX_BYTES = 1024
+
+
+def _formats_compatible(expected: FileType, detected: FileType) -> bool:
+    """Return whether detected bytes can satisfy the requested format."""
+    if expected == detected:
+        return True
+    if expected in _KINDLE_TYPES and detected in _KINDLE_TYPES:
+        return True
+    # EPUB is a ZIP container; the EPUB structure check still runs afterward.
+    return expected == FileType.EPUB and detected == FileType.ZIP
+
 
 class ContentVerifier:
     """Verifies downloaded content integrity and validity."""
@@ -118,6 +152,11 @@ class ContentVerifier:
             except Exception:
                 pass
             return FileType.ZIP
+
+        # MOBI and AZW3 are Palm databases. "BOOKMOBI" is the type/creator
+        # pair at offset 60, not a header at byte 0.
+        if len(data) >= 68 and data[60:68] == b"BOOKMOBI":
+            return FileType.MOBI
 
         # Check for text/HTML in first 1KB
         try:
@@ -196,7 +235,7 @@ class ContentVerifier:
             )
 
         # Check for placeholder content
-        placeholder_result = self._check_placeholder(data)
+        placeholder_result = self._check_placeholder(data, detected_type)
         if placeholder_result:
             return placeholder_result
 
@@ -212,15 +251,16 @@ class ContentVerifier:
             )
 
         # Check the requested type BEFORE accepting a valid but different format.
-        if expected_type != FileType.UNKNOWN and expected_type != detected_type:
-            # Some flexibility - ZIP can be EPUB
-            if not (expected_type == FileType.EPUB and detected_type == FileType.ZIP):
-                return VerificationResult(
-                    status=VerificationStatus.WRONG_FORMAT,
-                    file_type=expected_type,
-                    detected_type=detected_type,
-                    message=f"Expected {expected_type.value} but got {detected_type.value}"
-                )
+        if (
+            expected_type != FileType.UNKNOWN
+            and not _formats_compatible(expected_type, detected_type)
+        ):
+            return VerificationResult(
+                status=VerificationStatus.WRONG_FORMAT,
+                file_type=expected_type,
+                detected_type=detected_type,
+                message=f"Expected {expected_type.value} but got {detected_type.value}"
+            )
 
         # Type-specific verification
         if detected_type == FileType.PDF:
@@ -241,24 +281,33 @@ class ContentVerifier:
             details={"size": len(data)}
         )
 
-    def _check_placeholder(self, data: bytes) -> Optional[VerificationResult]:
+    def _check_placeholder(
+        self,
+        data: bytes,
+        detected_type: FileType = FileType.UNKNOWN,
+    ) -> Optional[VerificationResult]:
         """Check if file contains placeholder/error content."""
-        # Only check text-like content
-        if len(data) > 50000:  # Large files unlikely to be placeholders
+        # Structural validators handle recognized binaries. Scanning their
+        # bytes deletes valid PDFs and books that mention ordinary phrases.
+        if detected_type in _BINARY_TYPES or len(data) > 50000:
             return None
 
         # Check beginning of file
         check_data = data[:5000].lower()
 
         for pattern in self.placeholder_patterns:
-            if pattern.lower() in check_data:
-                return VerificationResult(
-                    status=VerificationStatus.PLACEHOLDER,
-                    file_type=FileType.UNKNOWN,
-                    detected_type=FileType.HTML if b'<html' in check_data else FileType.TEXT,
-                    message=f"File appears to be a placeholder or error page",
-                    details={"matched_pattern": pattern.decode('utf-8', errors='ignore')}
-                )
+            lowered = pattern.lower()
+            if lowered not in check_data:
+                continue
+            if lowered in _GENERIC_PLACEHOLDERS and len(data) > _GENERIC_PLACEHOLDER_MAX_BYTES:
+                continue
+            return VerificationResult(
+                status=VerificationStatus.PLACEHOLDER,
+                file_type=FileType.UNKNOWN,
+                detected_type=FileType.HTML if b'<html' in check_data else FileType.TEXT,
+                message=f"File appears to be a placeholder or error page",
+                details={"matched_pattern": pattern.decode('utf-8', errors='ignore')}
+            )
 
         return None
 
