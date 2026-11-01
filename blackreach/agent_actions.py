@@ -235,11 +235,13 @@ class AgentActionsMixin:
             if expected_type is None and url and urlparse(url).path.lower().endswith(".pdf"):
                 expected_type = FileType.PDF
 
-            # Check if we've already downloaded this URL
+            # Skip only when a previous copy is still on disk. A database row
+            # whose file was removed must not block replacing it.
             if url and self.persistent_memory.has_downloaded(url=url):
-                logger.info("SKIP: Already downloaded %s", url[:50])
-                self.session_memory.add_failure(f"Already downloaded {url[:50]}... Try a different item!")
-                return {"action": "download", "skipped": True, "reason": "already downloaded"}
+                if AgentActionsMixin._recorded_copy_exists(self, url=url):
+                    logger.info("SKIP: Already downloaded %s", url[:50])
+                    self.session_memory.add_failure(f"Already downloaded {url[:50]}... Try a different item!")
+                    return {"action": "download", "skipped": True, "reason": "already downloaded"}
 
             # Check if this URL previously failed
             if url and url in self._failed_download_urls:
@@ -261,12 +263,15 @@ class AgentActionsMixin:
                 download_time = time.time() - download_start
                 logger.info("Download completed in %.1fs", download_time)
 
-                # Check if we already have this file (by hash)
+                # Check if we already have this file (by hash) and still have the bytes.
+                saved_path = Path(result["path"])
                 if self.persistent_memory.has_downloaded(file_hash=result["hash"]):
-                    # Delete the duplicate
-                    Path(result["path"]).unlink()
-                    logger.info("SKIP: Duplicate content (same hash)")
-                    return {"action": "download", "skipped": True, "reason": "duplicate content"}
+                    if AgentActionsMixin._recorded_copy_exists(
+                        self, file_hash=result["hash"], excluding=saved_path
+                    ):
+                        saved_path.unlink(missing_ok=True)
+                        logger.info("SKIP: Duplicate content (same hash)")
+                        return {"action": "download", "skipped": True, "reason": "duplicate content"}
 
                 # Use centralized content verification
                 file_path = Path(result["path"])
@@ -357,4 +362,43 @@ class AgentActionsMixin:
 
         else:
             raise UnknownActionError(action)
+
+    def _recorded_copy_exists(
+        self,
+        url: str = "",
+        file_hash: str = "",
+        excluding: Optional[Path] = None,
+    ) -> bool:
+        """True when a matching download record still points at a file on disk.
+
+        Callers that cannot list records keep the historical skip. A definitive
+        empty result means the bytes are gone and the download should proceed.
+        """
+        download_dir = getattr(getattr(self, "config", None), "download_dir", None)
+        finder = getattr(self.persistent_memory, "find_downloads", None)
+        if download_dir is None or not callable(finder):
+            return True
+        try:
+            records = finder(url=url, file_hash=file_hash)
+        except TypeError:
+            return True
+        if not isinstance(records, list):
+            return True
+
+        root = Path(download_dir).resolve()
+        excluded = excluding.resolve() if excluding is not None else None
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            name = Path(str(record.get("filename") or "")).name
+            if name in ("", ".", ".."):
+                continue
+            candidate = (root / name).resolve()
+            if root != candidate and root not in candidate.parents:
+                continue
+            if excluded is not None and candidate == excluded:
+                continue
+            if candidate.is_file():
+                return True
+        return False
 

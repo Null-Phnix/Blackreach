@@ -99,6 +99,36 @@ def test_explicit_html_download_still_allowed(tmp_path):
     agent._record_download.assert_called_once()
 
 
+@pytest.mark.parametrize("name", ["book.zip", "report.docx", "download"])
+def test_html_landing_page_with_non_page_name_is_not_recorded(tmp_path, name):
+    path = tmp_path / name
+    agent = make_agent(path)
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": f"https://example.org/files/{name}"}
+    )
+    assert result["skipped"] and result["reason"] == "wrong_format"
+    assert not path.exists()
+    agent._record_download.assert_not_called()
+    agent.persistent_memory.add_download.assert_not_called()
+
+
+def test_html_page_filename_without_expected_type_is_kept(tmp_path):
+    agent = make_agent(tmp_path / "page.html")
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "https://example.org/page.html"}
+    )
+    assert not result.get("skipped")
+    agent._record_download.assert_called_once()
+
+
+def test_real_zip_extension_stays_valid():
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr("readme.txt", "archive content " * 200)
+    result = ContentVerifier().verify_data(stream.getvalue(), extension=".zip")
+    assert result.status == VerificationStatus.VALID
+
+
 def test_duplicate_content_is_not_recorded_twice(tmp_path):
     path = tmp_path / "copy.pdf"
     agent = make_agent(path, PDF, duplicate=True)
@@ -107,6 +137,98 @@ def test_duplicate_content_is_not_recorded_twice(tmp_path):
     )
     assert result["reason"] == "duplicate content"
     assert not path.exists()
+    agent._record_download.assert_not_called()
+
+
+def test_missing_recorded_file_is_downloaded_again(tmp_path):
+    """A database row must not block replacing a file the user already deleted."""
+    path = tmp_path / "paper.pdf"
+    path.write_bytes(PDF)
+    agent = make_agent(path, PDF)
+    agent.config = SimpleNamespace(download_dir=tmp_path)
+    agent.persistent_memory.has_downloaded.side_effect = lambda **kw: True
+    agent.persistent_memory.find_downloads.side_effect = lambda **kw: [
+        {"filename": "paper.pdf", "url": "https://example.org/paper.pdf", "file_hash": "abc"}
+    ]
+    path.unlink()
+
+    def write_replacement(_url):
+        path.write_bytes(PDF)
+        return dict(
+            path=str(path),
+            filename=path.name,
+            size=len(PDF),
+            hash=hashlib.sha256(PDF).hexdigest(),
+            url="https://example.org/paper.pdf",
+        )
+
+    agent.hand.download_link = Mock(side_effect=write_replacement)
+
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "https://example.org/paper.pdf", "expected_type": "pdf"}
+    )
+
+    assert not result.get("skipped")
+    assert path.read_bytes() == PDF
+    agent._record_download.assert_called_once()
+
+
+def test_recorded_file_still_on_disk_is_not_fetched_again(tmp_path):
+    path = tmp_path / "paper.pdf"
+    path.write_bytes(PDF)
+    agent = make_agent(path, PDF)
+    agent.config = SimpleNamespace(download_dir=tmp_path)
+    agent.persistent_memory.has_downloaded.side_effect = lambda **kw: "url" in kw
+    agent.persistent_memory.find_downloads.side_effect = lambda **kw: [
+        {"filename": "paper.pdf", "url": "https://example.org/paper.pdf", "file_hash": "abc"}
+    ]
+
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "https://example.org/paper.pdf", "expected_type": "pdf"}
+    )
+
+    assert result["reason"] == "already downloaded"
+    agent.hand.download_link.assert_not_called()
+    assert path.read_bytes() == PDF
+
+
+def test_same_hash_keeps_replacement_when_original_is_gone(tmp_path):
+    original = tmp_path / "original.pdf"
+    replacement = tmp_path / "mirror.pdf"
+    replacement.write_bytes(PDF)
+    agent = make_agent(replacement, PDF, duplicate=True)
+    agent.config = SimpleNamespace(download_dir=tmp_path)
+    agent.persistent_memory.find_downloads.side_effect = lambda **kw: [
+        {"filename": original.name, "url": "https://mirror.example/original.pdf", "file_hash": "abc"}
+    ]
+
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "https://mirror.example/original.pdf", "expected_type": "pdf"}
+    )
+
+    assert not result.get("skipped")
+    assert replacement.read_bytes() == PDF
+    agent._record_download.assert_called_once()
+
+
+def test_same_hash_still_drops_a_second_copy(tmp_path):
+    original = tmp_path / "original.pdf"
+    original.write_bytes(PDF)
+    replacement = tmp_path / "mirror.pdf"
+    replacement.write_bytes(PDF)
+    agent = make_agent(replacement, PDF, duplicate=True)
+    agent.config = SimpleNamespace(download_dir=tmp_path)
+    agent.persistent_memory.find_downloads.side_effect = lambda **kw: [
+        {"filename": original.name, "url": "https://mirror.example/original.pdf", "file_hash": "abc"}
+    ]
+
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "https://mirror.example/copy.pdf", "expected_type": "pdf"}
+    )
+
+    assert result["reason"] == "duplicate content"
+    assert not replacement.exists()
+    assert original.read_bytes() == PDF
     agent._record_download.assert_not_called()
 
 
@@ -143,3 +265,226 @@ def test_epub_exception_requires_epub_structure(epub):
 def test_valid_pdf_cannot_satisfy_requested_zip():
     result = ContentVerifier().verify_data(PDF, expected_type=FileType.ZIP)
     assert result.status == VerificationStatus.WRONG_FORMAT
+
+
+def palm_mobi():
+    """Palm database with the MOBI type/creator pair at offset 60."""
+    header = bytearray(68)
+    header[0:4] = b"Book"
+    header[60:68] = b"BOOKMOBI"
+    return bytes(header) + b"Chapter text of a Kindle book. " * 200
+
+
+def test_palm_mobi_is_recorded(tmp_path):
+    path = tmp_path / "book.bin"
+    agent = make_agent(path, palm_mobi())
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/download", "expected_type": "mobi"}
+    )
+    assert not result.get("skipped")
+    assert path.exists()
+    agent._record_download.assert_called_once()
+
+
+def test_azw3_request_accepts_palm_mobi_container(tmp_path):
+    path = tmp_path / "book.azw3"
+    agent = make_agent(path, palm_mobi())
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/download", "expected_type": "azw3"}
+    )
+    assert not result.get("skipped")
+    assert path.exists()
+    agent._record_download.assert_called_once()
+
+
+def test_mobi_extension_uses_palm_header(tmp_path):
+    path = tmp_path / "book.mobi"
+    agent = make_agent(path, palm_mobi())
+    result = AgentActionsMixin._execute_action(agent, "download", {"url": "/download"})
+    assert not result.get("skipped")
+    assert path.exists()
+    agent._record_download.assert_called_once()
+
+
+def test_html_cannot_satisfy_requested_mobi(tmp_path):
+    path = tmp_path / "book.mobi"
+    agent = make_agent(path)
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/download", "expected_type": "mobi"}
+    )
+    assert result["skipped"] and result["reason"] == "wrong_format"
+    assert not path.exists()
+    agent._record_download.assert_not_called()
+
+
+def test_pdf_prose_is_not_a_placeholder():
+    data = (
+        b"%PDF-1.7\n/Catalog /Pages\n"
+        + b"Not found. Please wait and try again. "
+        + b" " * 1500
+        + b"\n%%EOF"
+    )
+    result = ContentVerifier().verify_data(data, expected_type=FileType.PDF)
+    assert result.status == VerificationStatus.VALID
+
+
+def test_stub_error_page_is_still_a_placeholder():
+    data = b"<!DOCTYPE html><html><body><h1>Not found</h1></body></html>"
+    result = ContentVerifier().verify_data(data, expected_type=FileType.HTML)
+    assert result.status == VerificationStatus.PLACEHOLDER
+
+
+def test_article_mentioning_not_found_is_kept():
+    data = (
+        b"<!DOCTYPE html><html><body><p>"
+        + b"The HTTP status called Not found is documented here. " * 30
+        + b"</p></body></html>"
+    )
+    assert len(data) > 1024
+    result = ContentVerifier().verify_data(data, expected_type=FileType.HTML)
+    assert result.status == VerificationStatus.VALID
+
+
+# qpdf --object-streams=generate leaves /Root in the trailer and compresses
+# /Catalog and /Pages. A structural check that requires those literals deletes it.
+OBJECT_STREAM_PDF = (
+    b"%PDF-1.5\n"
+    b"1 0 obj\n<< /Type /XRef /Root 2 0 R /Size 3 /Filter /FlateDecode >>\n"
+    b"stream\n" + (b"\x00" * 1100) + b"\nendstream\nendobj\nstartxref\n9\n%%EOF\n"
+)
+
+
+def test_object_stream_pdf_is_kept(tmp_path):
+    assert b"/Catalog" not in OBJECT_STREAM_PDF
+    assert b"/Pages" not in OBJECT_STREAM_PDF
+    path = tmp_path / "paper.pdf"
+    agent = make_agent(path, OBJECT_STREAM_PDF)
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/download", "expected_type": "pdf"}
+    )
+    assert not result.get("skipped")
+    assert path.exists()
+    agent._record_download.assert_called_once()
+
+
+def test_pdf_without_root_or_page_tree_is_still_rejected():
+    data = b"%PDF-1.7\n" + (b"\x00" * 1200) + b"\n%%EOF"
+    result = ContentVerifier().verify_data(data, expected_type=FileType.PDF)
+    assert result.status == VerificationStatus.CORRUPTED
+
+
+def test_multiline_text_is_recorded(tmp_path):
+    """Newlines and a BOM are normal in text downloads and must not delete the file."""
+    data = "\ufeffNotes from the archive.\n".encode() + (
+        "Second line of the article.\n".encode() * 8
+    )
+    path = tmp_path / "notes.txt"
+    agent = make_agent(path, data)
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/download", "expected_type": "text"}
+    )
+    assert not result.get("skipped")
+    assert path.exists()
+    assert path.read_bytes() == data
+    agent._record_download.assert_called_once()
+    agent.persistent_memory.add_download.assert_called_once()
+
+
+def test_txt_extension_accepts_multiline_text():
+    data = ("Plain article paragraph.\n" * 12).encode()
+    result = ContentVerifier().verify_data(data, extension=".txt")
+    assert result.status == VerificationStatus.VALID
+    assert result.detected_type == FileType.TEXT
+
+
+def test_binary_payload_cannot_satisfy_requested_text():
+    data = b"\x00\x01\x02binary payload\xff" * 40
+    result = ContentVerifier().verify_data(data, expected_type=FileType.TEXT)
+    assert result.status == VerificationStatus.WRONG_FORMAT
+
+
+def _jpeg(*, close=True, trailing=b""):
+    """Minimal marker layout: comment padding, one scan, optional EOI."""
+    comment = b"x" * 520
+    segment = b"\xff\xfe" + (len(comment) + 2).to_bytes(2, "big") + comment
+    scan_header = b"\x01\x01\x00\x00\x3f\x00"
+    scan = b"\xff\xda" + (len(scan_header) + 2).to_bytes(2, "big") + scan_header
+    entropy = b"\x12\x34\xff\x00\x56"
+    eoi = b"\xff\xd9" if close else b""
+    return b"\xff\xd8" + segment + scan + entropy + eoi + trailing
+
+
+def _png(*, iend=True, trailing=b""):
+    signature = b"\x89PNG\r\n\x1a\n"
+    image_data = b"\x00" * 512
+    idat = (
+        len(image_data).to_bytes(4, "big")
+        + b"IDAT"
+        + image_data
+        + b"\x00\x00\x00\x00"
+    )
+    ending = b"\x00\x00\x00\x00IEND\xaeB`\x82" if iend else b""
+    return signature + idat + ending + trailing
+
+
+def test_jpeg_with_trailing_metadata_is_kept(tmp_path):
+    """Extended XMP sits after EOI. That file is complete and must be kept."""
+    data = _jpeg(trailing=b'\n<?xpacket begin="W5M0MpCehiHzreSzNTczkc9d"?>' + b"<x:xmpmeta/>")
+    path = tmp_path / "photo.jpg"
+    agent = make_agent(path, data)
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/photo.jpg", "expected_type": "image"}
+    )
+    assert not result.get("skipped")
+    assert path.read_bytes() == data
+    agent._record_download.assert_called_once()
+
+
+def test_jpeg_that_ends_on_eoi_is_kept():
+    result = ContentVerifier().verify_data(_jpeg(), extension=".jpg")
+    assert result.status == VerificationStatus.VALID
+
+
+def test_jpeg_restart_markers_and_trailing_bytes_are_kept():
+    """Restart markers are inside the scan, and bytes after EOI stay with the file."""
+    base = _jpeg(close=False)
+    data = base + b"\xff\xd0\x11\xff\xd7\x22\xff\xd9" + b"\n" * 24
+    result = ContentVerifier().verify_data(data, extension=".jpg")
+    assert result.status == VerificationStatus.VALID
+
+
+def test_truncated_jpeg_is_still_deleted(tmp_path):
+    """A scan that never reaches EOI is still rejected, even if a thumbnail has one."""
+    thumb = b"\xff\xd8" + b"\x00" * 16 + b"\xff\xd9"
+    app1 = b"\xff\xe1" + (len(thumb) + 2).to_bytes(2, "big") + thumb
+    data = b"\xff\xd8" + app1 + _jpeg(close=False)[2:]
+    assert b"\xff\xd9" in data
+    path = tmp_path / "photo.jpg"
+    agent = make_agent(path, data)
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/photo.jpg", "expected_type": "image"}
+    )
+    assert result["reason"] == "corrupted"
+    assert not path.exists()
+    agent._record_download.assert_not_called()
+
+
+def test_png_with_trailing_bytes_is_kept(tmp_path):
+    data = _png(trailing=b"\n" * 32 + b"camera-padding")
+    path = tmp_path / "photo.png"
+    agent = make_agent(path, data)
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/photo.png", "expected_type": "image"}
+    )
+    assert not result.get("skipped")
+    assert path.read_bytes() == data
+
+
+def test_truncated_png_is_still_deleted(tmp_path):
+    path = tmp_path / "photo.png"
+    agent = make_agent(path, _png(iend=False))
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/photo.png", "expected_type": "image"}
+    )
+    assert result["reason"] == "corrupted"
+    assert not path.exists()

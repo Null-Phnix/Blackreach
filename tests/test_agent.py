@@ -6,10 +6,11 @@ Note: Full integration tests require browser fixtures.
 """
 
 import pytest
+from urllib.parse import urlparse
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 from dataclasses import asdict
-from blackreach.agent import Agent, AgentConfig, AgentCallbacks
+from blackreach.agent import Agent, AgentConfig, AgentCallbacks, download_quota
 from blackreach.exceptions import SessionNotFoundError, LLMError, BrowserError
 
 
@@ -1583,8 +1584,44 @@ class TestStepMethod:
                             with patch.object(agent.detector, 'detect_download_landing', return_value=MagicMock(detected=False)):
                                 result = agent._step("download files", 1, quiet=True)
 
-        # Should have incremented refusal count
+        # Should have incremented refusal count and left the page
         assert agent._refusal_count >= 1
+        mock_hand.goto.assert_called()
+        assert result.get("override") is True
+
+    def test_step_keeps_download_plan_that_says_cannot_find(self, tmp_path):
+        """Planning text is not a refusal when the model still names a page action."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        agent._current_goal = "download the report pdf"
+
+        mock_hand = MagicMock()
+        mock_hand.get_url.return_value = "https://example.com/report"
+        mock_hand.get_title.return_value = "Report"
+        mock_hand.get_html.return_value = "<html><body><a>PDF</a></body></html>"
+        mock_hand.is_healthy.return_value = True
+        locator = MagicMock()
+        locator.count.return_value = 1
+        mock_hand.page.locator.return_value = locator
+        agent.hand = mock_hand
+
+        llm_response = (
+            '{"thought": "I cannot find a labeled button, so I will click the PDF link",'
+            ' "action": "click", "element": 4}'
+        )
+
+        with patch.object(agent, 'check_browser_health', return_value=True):
+            with patch.object(agent.llm, 'generate', return_value=llm_response):
+                with patch.object(agent.detector, 'detect_challenge', return_value=MagicMock(detected=False)):
+                    with patch.object(agent.detector, 'detect_download_landing', return_value=MagicMock(detected=False)):
+                        with patch.object(agent.detector, 'detect_search_block', return_value=MagicMock(detected=False)):
+                            result = agent._step("download the report pdf", 1, quiet=True)
+
+        assert agent._refusal_count == 0
+        assert result.get("override") is not True
+        assert result.get("action") == "click"
+        assert result.get("element") == 4
+        mock_hand.goto.assert_not_called()
 
     def test_step_blocks_premature_done_without_downloads(self, tmp_path):
         """_step blocks premature done action when downloads are needed but not completed."""
@@ -1890,6 +1927,46 @@ class TestChallengeDetection:
         agent = Agent(agent_config=config)
 
         assert len(agent._failed_urls) == 0
+
+    def _step_on_challenge(self, agent, goal):
+        """Run one step while the current page stays on an unresolved challenge."""
+        mock_hand = MagicMock()
+        mock_hand.get_url.return_value = "https://example.com/blocked"
+        mock_hand.get_title.return_value = "Just a moment"
+        mock_hand.get_html.return_value = "<html><body>checking your browser</body></html>"
+        mock_hand.is_healthy.return_value = True
+        agent.hand = mock_hand
+        agent._current_goal = goal
+        agent._consecutive_challenges = 1
+        challenge = MagicMock(detected=True, details="cloudflare")
+        clear = MagicMock(detected=False)
+        with patch("blackreach.agent.time.sleep"):
+            with patch.object(agent.llm, "generate", return_value='{"thought":"stop","action":"done","args":{"reason":"stop"}}'):
+                with patch.object(agent.detector, "detect_challenge", return_value=challenge):
+                    with patch.object(agent.detector, "detect_search_block", return_value=clear):
+                        with patch.object(agent.detector, "detect_download_landing", return_value=clear):
+                            agent._step(goal, 1, quiet=True)
+        return [call.args[0] for call in mock_hand.goto.call_args_list if call.args]
+
+    def test_challenge_failover_does_not_open_an_ebook_site_for_a_summary(self, tmp_path):
+        """Two unresolved challenges must not send an information goal to an ebook library."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        opened = self._step_on_challenge(agent, "summarize the Python GIL debate")
+        assert not any(
+            host in url
+            for url in opened
+            for host in ("annas-archive", "gutenberg.org", "libgen.", "archive.org")
+        )
+
+    def test_challenge_failover_follows_a_wallpaper_goal(self, tmp_path):
+        """A wallpaper download leaves a challenged page for Wallhaven, not GitHub or an ebook library."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        opened = self._step_on_challenge(agent, "download 3 mountain wallpapers")
+        hosts = {urlparse(url).hostname or "" for url in opened}
+        assert "wallhaven.cc" in hosts
+        assert not any(h == "github.com" or "annas-archive" in h for h in hosts)
 
 
 # =============================================================================
@@ -2327,6 +2404,75 @@ class TestLLMResponseParsing:
 
         assert result["done"] is True
 
+    def test_step_uses_first_object_in_bare_action_list(self, tmp_path):
+        """A top-level JSON array is the first action, not a fatal parse crash."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        agent._current_goal = "summarize the page"
+
+        mock_hand = MagicMock()
+        mock_hand.get_url.return_value = "https://example.com"
+        mock_hand.get_title.return_value = "Test"
+        mock_hand.get_html.return_value = "<html><body>Test</body></html>"
+        mock_hand.is_healthy.return_value = True
+        agent.hand = mock_hand
+
+        llm_response = '[{"thought": "found it", "action": "done", "args": {"reason": "complete", "result": "the summary"}}]'
+
+        debug_html_mock = {
+            "has_meaningful_content": True,
+            "empty_root": False,
+            "html_length": 100,
+            "text_length": 50,
+            "raw_links": 5,
+            "raw_inputs": 2
+        }
+
+        with patch.object(agent, 'check_browser_health', return_value=True):
+            with patch.object(agent.llm, 'generate', return_value=llm_response):
+                with patch.object(agent.eyes, 'debug_html', return_value=debug_html_mock):
+                    with patch.object(agent.eyes, 'see', return_value={"links": []}):
+                        with patch.object(agent.detector, 'detect_challenge', return_value=MagicMock(detected=False)):
+                            with patch.object(agent.detector, 'detect_download_landing', return_value=MagicMock(detected=False)):
+                                result = agent._step("summarize the page", 1, quiet=True)
+
+        assert result["done"] is True
+        assert result["result"] == "the summary"
+
+    def test_step_non_object_json_stays_recoverable(self, tmp_path):
+        """A JSON number or string must not abort the run."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        agent._current_goal = "summarize the page"
+
+        mock_hand = MagicMock()
+        mock_hand.get_url.return_value = "https://example.com"
+        mock_hand.get_title.return_value = "Test"
+        mock_hand.get_html.return_value = "<html><body>Test</body></html>"
+        mock_hand.is_healthy.return_value = True
+        agent.hand = mock_hand
+
+        debug_html_mock = {
+            "has_meaningful_content": True,
+            "empty_root": False,
+            "html_length": 100,
+            "text_length": 50,
+            "raw_links": 5,
+            "raw_inputs": 2
+        }
+
+        with patch.object(agent, 'check_browser_health', return_value=True):
+            with patch.object(agent.llm, 'generate', return_value="42"):
+                with patch.object(agent.eyes, 'debug_html', return_value=debug_html_mock):
+                    with patch.object(agent.eyes, 'see', return_value={"links": []}):
+                        with patch.object(agent.detector, 'detect_challenge', return_value=MagicMock(detected=False)):
+                            with patch.object(agent.detector, 'detect_download_landing', return_value=MagicMock(detected=False)):
+                                result = agent._step("summarize the page", 1, quiet=True)
+
+        assert result["done"] is False
+        assert result["recoverable"] is True
+        assert "JSON" in result["error"]
+
     def test_step_handles_done_status_format(self, tmp_path):
         """_step handles {\"done\": true} format."""
         config = AgentConfig(memory_db=tmp_path / "test.db")
@@ -2410,6 +2556,58 @@ class TestAutoCompletion:
         # Should auto-complete since we have 2 files
         assert result["done"] is True
         assert "Downloaded 2 files" in result.get("reason", "")
+
+    def test_step_does_not_auto_complete_range_after_one_file(self, tmp_path):
+        """A leading range number is not the download quota."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        goal = "Download chapters 1-10 of the manual"
+        agent._current_goal = goal
+        agent.session_memory.add_download("chapter1.pdf", "https://example.com/1.pdf")
+
+        mock_hand = MagicMock()
+        mock_hand.get_url.return_value = "https://example.com"
+        mock_hand.get_title.return_value = "Test"
+        mock_hand.get_html.return_value = "<html><body>Test</body></html>"
+        mock_hand.is_healthy.return_value = True
+        agent.hand = mock_hand
+
+        llm_response = '{"thought": "open the next chapter", "action": "navigate", "args": {"url": "https://example.com/chapter2"}}'
+        debug_html_mock = {
+            "has_meaningful_content": True,
+            "empty_root": False,
+            "html_length": 100,
+            "text_length": 50,
+            "raw_links": 5,
+            "raw_inputs": 2
+        }
+
+        with patch.object(agent, 'check_browser_health', return_value=True):
+            with patch.object(agent.llm, 'generate', return_value=llm_response):
+                with patch.object(agent.eyes, 'debug_html', return_value=debug_html_mock):
+                    with patch.object(agent.eyes, 'see', return_value={"links": []}):
+                        with patch.object(agent.detector, 'detect_challenge', return_value=MagicMock(detected=False)):
+                            with patch.object(agent.detector, 'detect_download_landing', return_value=MagicMock(detected=False)):
+                                with patch.object(agent, '_execute_action', return_value={"action": "navigate"}) as execute:
+                                    result = agent._step(goal, 1, quiet=True)
+
+        assert result.get("done") is not True
+        execute.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("goal", "expected"),
+    [
+        ("download 2 files", 2),
+        ("Download the top 5 PDFs", 5),
+        ("download the paper", 1),
+        ("Download chapters 1-10 of the manual", None),
+        ("Download volumes 1 to 5", None),
+        ("download the 2024 annual report", None),
+    ],
+)
+def test_download_quota_ignores_identifiers_and_ranges(goal, expected):
+    assert download_quota(goal) == expected
 
 
 # =============================================================================

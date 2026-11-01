@@ -397,6 +397,76 @@ class TestBatchProcessor:
         assert summary["success_rate"] == 2/3
 
 
+class TestDownloadResolution:
+    """download() must point at the file the agent actually saved."""
+
+    def test_basename_resolves_inside_download_dir(self, tmp_path, monkeypatch):
+        download_dir = tmp_path / "downloads"
+        download_dir.mkdir()
+        saved = download_dir / "paper.pdf"
+        saved.write_bytes(b"%PDF-real")
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        (cwd / "paper.pdf").write_bytes(b"wrong-file")
+        monkeypatch.chdir(cwd)
+
+        api = BlackreachAPI(ApiConfig(download_dir=download_dir))
+        api.browse = lambda goal: BrowseResult(
+            success=True, goal=goal, downloads=["paper.pdf"], status="success",
+        )
+
+        results = api.download("a paper", count=1)
+
+        assert len(results) == 1
+        assert results[0].success is True
+        assert Path(results[0].path) == saved
+        assert results[0].filename == "paper.pdf"
+        assert results[0].size == len(b"%PDF-real")
+
+    def test_absolute_recorded_path_is_kept(self, tmp_path):
+        saved = tmp_path / "paper.pdf"
+        saved.write_bytes(b"pdf")
+        api = BlackreachAPI(ApiConfig(download_dir=tmp_path / "other"))
+        api.browse = lambda goal: BrowseResult(
+            success=True, goal=goal, downloads=[str(saved)], status="success",
+        )
+
+        results = api.download("a paper")
+
+        assert results[0].success is True
+        assert Path(results[0].path) == saved
+        assert results[0].size == 3
+
+    def test_missing_file_is_not_a_successful_empty_download(self, tmp_path):
+        api = BlackreachAPI(ApiConfig(download_dir=tmp_path))
+        api.browse = lambda goal: BrowseResult(
+            success=True, goal=goal, downloads=["gone.pdf"], status="success",
+        )
+
+        results = api.download("a paper")
+
+        assert results[0].success is False
+        assert results[0].size == 0
+        assert "not on disk" in results[0].error
+
+    def test_no_files_is_a_failure_even_when_browse_returns_nothing(self, tmp_path):
+        api = BlackreachAPI(ApiConfig(download_dir=tmp_path))
+        api.browse = lambda goal: BrowseResult(
+            success=False,
+            goal=goal,
+            downloads=[],
+            errors=["navigation failed"],
+            status="error",
+        )
+
+        results = api.download("a paper")
+
+        assert len(results) == 1
+        assert results[0].success is False
+        assert "navigation failed" in results[0].error
+        assert all(item.success for item in results) is False
+
+
 class TestConvenienceFunctions:
     """Tests for module-level convenience functions."""
 

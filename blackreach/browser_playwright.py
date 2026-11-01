@@ -846,9 +846,21 @@ class Hand:
 
     # === Navigation ===
 
-    @retry_with_backoff()
     def goto(self, url: str, handle_popups: bool = True, wait_for_content: bool = True) -> dict:
         """Navigate to a URL with retry logic and smart content waiting.
+
+        Non-web schemes are rejected before the retry loop so a file: URL
+        cannot be opened and cannot burn retry delays.
+        """
+        from blackreach.adaptive_browser import _require_web_url
+        _require_web_url(url)
+        return self._goto_with_retry(
+            url, handle_popups=handle_popups, wait_for_content=wait_for_content
+        )
+
+    @retry_with_backoff()
+    def _goto_with_retry(self, url: str, handle_popups: bool = True, wait_for_content: bool = True) -> dict:
+        """Navigate to an already-validated http(s) URL.
 
         Uses adaptive timeouts based on site characteristics - static sites like
         Wikipedia get much shorter timeouts than SPAs.
@@ -1589,6 +1601,8 @@ class Hand:
         self._pending_downloads.clear()
 
         if url:
+            from blackreach.adaptive_browser import _require_web_url
+            _require_web_url(url)
             # Direct download via navigation
             # Note: page.goto() will throw "Download is starting" for direct file URLs
             # We catch this and wait for the download
@@ -1674,21 +1688,30 @@ class Hand:
                 content_type = response.headers.get('Content-Type', '')
                 data = response.read()
 
-            # Add extension based on Content-Type if filename has none
+            # Add extension based on Content-Type if filename has none.
+            # Order matters: epub and gzip types contain "zip" (application/epub+zip,
+            # application/gzip), so check them before the generic zip match.
             if not save_path.suffix:
+                content_type_lower = content_type.lower()
                 ext = ''
-                if 'pdf' in content_type:
+                if 'epub' in content_type_lower:
+                    ext = '.epub'
+                elif 'gzip' in content_type_lower:
+                    ext = '.gz'
+                elif 'pdf' in content_type_lower:
                     ext = '.pdf'
-                elif 'zip' in content_type:
+                elif 'zip' in content_type_lower:
                     ext = '.zip'
-                elif 'jpeg' in content_type or 'jpg' in content_type:
+                elif 'jpeg' in content_type_lower or 'jpg' in content_type_lower:
                     ext = '.jpg'
-                elif 'png' in content_type:
+                elif 'png' in content_type_lower:
                     ext = '.png'
-                elif 'html' in content_type:
+                elif 'html' in content_type_lower:
                     ext = '.html'
                 if ext:
-                    save_path = _reserve_unique_path(self.download_dir, save_path.with_suffix(ext))
+                    renamed = _reserve_unique_path(self.download_dir, save_path.with_suffix(ext))
+                    save_path.unlink(missing_ok=True)
+                    save_path = renamed
 
             with open(save_path, 'wb') as f:
                 f.write(data)

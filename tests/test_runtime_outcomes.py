@@ -152,6 +152,59 @@ def test_source_less_page_cannot_reach_model(agent, url):
     agent.llm.generate.assert_not_called()
 
 
+def test_pause_keeps_recorded_page_when_browser_is_blank(agent):
+    agent.hand.get_url.return_value = "about:blank"
+    agent._recent_urls = ["https://example.org/article", "data:text/html,injected"]
+    assert agent.save_state() is True
+    assert agent.persistent_memory.save_session_state.call_args.kwargs["current_url"] == "https://example.org/article"
+
+
+def test_resume_blank_checkpoint_reopens_last_recorded_page(agent, monkeypatch):
+    memory = SessionMemory(visited_urls=["https://example.org/start", "https://example.org/article"])
+    agent.persistent_memory.load_session_state.return_value = {
+        "session_id": 7, "goal": "read source", "current_step": 2,
+        "session_memory": memory, "start_url": "https://example.org/start",
+        "max_steps": 5, "current_url": "about:blank",
+    }
+    agent.ensure_browser = MagicMock(return_value=True)
+    agent._step.return_value = {"done": True, "result": "Summary"}
+    monkeypatch.setattr("blackreach.agent.SessionLogger", lambda *a, **k: agent._logger)
+    result = agent.resume(7, quiet=True)
+    agent.hand.goto.assert_called_once_with("https://example.org/article")
+    assert result["status"] == "success"
+    assert result["result"] == "Summary"
+
+
+def test_resume_data_url_checkpoint_uses_start_url(agent, monkeypatch):
+    agent.persistent_memory.load_session_state.return_value = {
+        "session_id": 7, "goal": "read source", "current_step": 2,
+        "session_memory": SessionMemory(visited_urls=["about:blank"]),
+        "start_url": "https://example.org/start",
+        "max_steps": 5, "current_url": "data:text/html,blank",
+    }
+    agent.ensure_browser = MagicMock(return_value=True)
+    agent._step.return_value = {"done": True}
+    monkeypatch.setattr("blackreach.agent.SessionLogger", lambda *a, **k: agent._logger)
+    result = agent.resume(7, quiet=True)
+    agent.hand.goto.assert_called_once_with("https://example.org/start")
+    assert result["status"] == "success"
+
+
+def test_resume_without_any_http_url_keeps_checkpoint(agent, monkeypatch):
+    agent.persistent_memory.load_session_state.return_value = {
+        "session_id": 7, "goal": "read source", "current_step": 2,
+        "session_memory": SessionMemory(visited_urls=["about:blank", "data:text/html,blank"]),
+        "start_url": "about:blank", "max_steps": 5, "current_url": "about:blank",
+    }
+    agent.ensure_browser = MagicMock(return_value=True)
+    monkeypatch.setattr("blackreach.agent.SessionLogger", lambda *a, **k: agent._logger)
+    result = agent.resume(7, quiet=True)
+    assert result["status"] == "error"
+    assert result["stop_reason"] == "navigation_failed"
+    agent.hand.goto.assert_not_called()
+    agent.persistent_memory.delete_session_state.assert_not_called()
+
+
 def test_resume_clears_pause_and_retains_progress_on_navigation_failure(agent, monkeypatch):
     memory = SessionMemory(downloaded_files=["saved.pdf"], visited_urls=["https://example.org/source"])
     agent.persistent_memory.load_session_state.return_value = {

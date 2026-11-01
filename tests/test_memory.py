@@ -238,6 +238,19 @@ class TestPersistentMemory:
         assert mem.has_downloaded(file_hash="abc123")
         mem.close()
 
+    def test_find_downloads_returns_matching_filename(self, memory_db):
+        """find_downloads lists the stored filename for a URL or hash."""
+        mem = PersistentMemory(db_path=memory_db)
+        mem.add_download("paper.pdf", url="https://example.com/paper.pdf", file_hash="abc123")
+
+        by_url = mem.find_downloads(url="https://example.com/paper.pdf")
+        by_hash = mem.find_downloads(file_hash="abc123")
+
+        assert by_url[0]["filename"] == "paper.pdf"
+        assert by_hash[0]["filename"] == "paper.pdf"
+        assert mem.find_downloads() == []
+        mem.close()
+
     def test_has_downloaded_no_params(self, memory_db):
         """has_downloaded returns False when no params given."""
         mem = PersistentMemory(memory_db)

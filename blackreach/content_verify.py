@@ -82,6 +82,96 @@ MIN_SIZES = {
     FileType.IMAGE: 500,     # Real images are at least 500B (thumbnails excluded)
 }
 
+# AZW/AZW3 is a MOBI/Palm container, not a distinct magic-byte format.
+_KINDLE_TYPES = {FileType.MOBI, FileType.AZW3}
+
+# Substring scans of these formats false-positive on real document text.
+_BINARY_TYPES = {
+    FileType.PDF,
+    FileType.EPUB,
+    FileType.ZIP,
+    FileType.IMAGE,
+    FileType.MOBI,
+    FileType.DJVU,
+}
+
+# Common prose. These only identify a stub error page, not an article
+# that happens to mention them.
+_GENERIC_PLACEHOLDERS = {
+    b"not found",
+    b"please wait",
+    b"try again",
+    b"captcha",
+    b"dmca",
+}
+_GENERIC_PLACEHOLDER_MAX_BYTES = 1024
+
+
+def _formats_compatible(expected: FileType, detected: FileType) -> bool:
+    """Return whether detected bytes can satisfy the requested format."""
+    if expected == detected:
+        return True
+    if expected in _KINDLE_TYPES and detected in _KINDLE_TYPES:
+        return True
+    # EPUB is a ZIP container; the EPUB structure check still runs afterward.
+    return expected == FileType.EPUB and detected == FileType.ZIP
+
+
+def _jpeg_has_image_eoi(data: bytes) -> bool:
+    """Return True when a top-level JPEG scan is closed by an EOI marker.
+
+    Extended XMP and other metadata are stored after that marker, so a
+    complete file does not have to end on it. An EOI inside an EXIF
+    thumbnail lives in an APP segment and does not count.
+    """
+    if len(data) < 4 or not data.startswith(b"\xff\xd8"):
+        return False
+    index = 2
+    size = len(data)
+    saw_scan = False
+    while index < size:
+        if data[index] != 0xFF:
+            return False
+        index += 1
+        while index < size and data[index] == 0xFF:
+            index += 1
+        if index >= size:
+            return False
+        marker = data[index]
+        index += 1
+        if marker == 0xD9:
+            return saw_scan
+        # TEM and restart markers have no length field.
+        if marker == 0x01 or 0xD0 <= marker <= 0xD7:
+            continue
+        if marker == 0x00 or index + 1 >= size:
+            return False
+        segment_length = int.from_bytes(data[index:index + 2], "big")
+        if segment_length < 2 or index + segment_length > size:
+            return False
+        index += segment_length
+        if marker != 0xDA:
+            continue
+        saw_scan = True
+        while index < size:
+            if data[index] != 0xFF:
+                index += 1
+                continue
+            marker_at = index + 1
+            while marker_at < size and data[marker_at] == 0xFF:
+                marker_at += 1
+            if marker_at >= size:
+                return False
+            # FF 00 is a stuffed data byte. Restart markers stay inside the scan.
+            if data[marker_at] == 0x00 or 0xD0 <= data[marker_at] <= 0xD7:
+                index = marker_at + 1
+                continue
+            index = marker_at - 1
+            break
+        else:
+            return False
+    return False
+
 
 class ContentVerifier:
     """Verifies downloaded content integrity and validity."""
@@ -119,13 +209,24 @@ class ContentVerifier:
                 pass
             return FileType.ZIP
 
+        # MOBI and AZW3 are Palm databases. "BOOKMOBI" is the type/creator
+        # pair at offset 60, not a header at byte 0.
+        if len(data) >= 68 and data[60:68] == b"BOOKMOBI":
+            return FileType.MOBI
+
         # Check for text/HTML in first 1KB
         try:
             text_sample = data[:1024].decode('utf-8', errors='ignore')
             if '<html' in text_sample.lower() or '<!doctype html' in text_sample.lower():
                 return FileType.HTML
-            if text_sample.isprintable():
-                return FileType.TEXT
+            # str.isprintable() rejects newlines, tabs, and a leading BOM.
+            # Ordinary .txt files then look unknown and the download handler deletes them.
+            if text_sample.startswith('\ufeff'):
+                text_sample = text_sample[1:]
+            if '\x00' not in text_sample:
+                collapsed = ''.join(text_sample.split())
+                if text_sample.strip() and collapsed.isprintable():
+                    return FileType.TEXT
         except Exception:
             pass
 
@@ -185,8 +286,14 @@ class ContentVerifier:
             }
             expected_type = ext_map.get(extension, FileType.UNKNOWN)
 
-        # Check for HTML masquerading as something else (common issue)
-        if detected_type == FileType.HTML and expected_type not in (FileType.HTML, FileType.TEXT, FileType.UNKNOWN):
+        # A page is a real download only when the caller asked for HTML/text or
+        # the filename is a page. Other names (.zip, .php, no suffix) are
+        # landing pages and must not count as the requested file.
+        page_extensions = {'.html', '.htm', '.xhtml', '.xml', '.txt', '.text'}
+        html_was_requested = expected_type in (FileType.HTML, FileType.TEXT) or (
+            expected_type == FileType.UNKNOWN and extension in page_extensions
+        )
+        if detected_type == FileType.HTML and not html_was_requested:
             return VerificationResult(
                 status=VerificationStatus.WRONG_FORMAT,
                 file_type=expected_type,
@@ -196,7 +303,7 @@ class ContentVerifier:
             )
 
         # Check for placeholder content
-        placeholder_result = self._check_placeholder(data)
+        placeholder_result = self._check_placeholder(data, detected_type)
         if placeholder_result:
             return placeholder_result
 
@@ -212,15 +319,16 @@ class ContentVerifier:
             )
 
         # Check the requested type BEFORE accepting a valid but different format.
-        if expected_type != FileType.UNKNOWN and expected_type != detected_type:
-            # Some flexibility - ZIP can be EPUB
-            if not (expected_type == FileType.EPUB and detected_type == FileType.ZIP):
-                return VerificationResult(
-                    status=VerificationStatus.WRONG_FORMAT,
-                    file_type=expected_type,
-                    detected_type=detected_type,
-                    message=f"Expected {expected_type.value} but got {detected_type.value}"
-                )
+        if (
+            expected_type != FileType.UNKNOWN
+            and not _formats_compatible(expected_type, detected_type)
+        ):
+            return VerificationResult(
+                status=VerificationStatus.WRONG_FORMAT,
+                file_type=expected_type,
+                detected_type=detected_type,
+                message=f"Expected {expected_type.value} but got {detected_type.value}"
+            )
 
         # Type-specific verification
         if detected_type == FileType.PDF:
@@ -241,24 +349,33 @@ class ContentVerifier:
             details={"size": len(data)}
         )
 
-    def _check_placeholder(self, data: bytes) -> Optional[VerificationResult]:
+    def _check_placeholder(
+        self,
+        data: bytes,
+        detected_type: FileType = FileType.UNKNOWN,
+    ) -> Optional[VerificationResult]:
         """Check if file contains placeholder/error content."""
-        # Only check text-like content
-        if len(data) > 50000:  # Large files unlikely to be placeholders
+        # Structural validators handle recognized binaries. Scanning their
+        # bytes deletes valid PDFs and books that mention ordinary phrases.
+        if detected_type in _BINARY_TYPES or len(data) > 50000:
             return None
 
         # Check beginning of file
         check_data = data[:5000].lower()
 
         for pattern in self.placeholder_patterns:
-            if pattern.lower() in check_data:
-                return VerificationResult(
-                    status=VerificationStatus.PLACEHOLDER,
-                    file_type=FileType.UNKNOWN,
-                    detected_type=FileType.HTML if b'<html' in check_data else FileType.TEXT,
-                    message=f"File appears to be a placeholder or error page",
-                    details={"matched_pattern": pattern.decode('utf-8', errors='ignore')}
-                )
+            lowered = pattern.lower()
+            if lowered not in check_data:
+                continue
+            if lowered in _GENERIC_PLACEHOLDERS and len(data) > _GENERIC_PLACEHOLDER_MAX_BYTES:
+                continue
+            return VerificationResult(
+                status=VerificationStatus.PLACEHOLDER,
+                file_type=FileType.UNKNOWN,
+                detected_type=FileType.HTML if b'<html' in check_data else FileType.TEXT,
+                message=f"File appears to be a placeholder or error page",
+                details={"matched_pattern": pattern.decode('utf-8', errors='ignore')}
+            )
 
         return None
 
@@ -284,16 +401,19 @@ class ContentVerifier:
                 confidence=0.7
             )
 
-        # Check for basic PDF structure
+        # Check for basic PDF structure. PDF 1.5+ object streams compress
+        # the catalog and page tree, so /Catalog and /Pages are often absent
+        # from the raw bytes. The trailer or xref dictionary still names /Root.
+        has_root = b'/Root' in data
         has_catalog = b'/Catalog' in data or b'/catalog' in data.lower()
         has_pages = b'/Pages' in data or b'/pages' in data.lower()
 
-        if not has_catalog or not has_pages:
+        if not (has_root or (has_catalog and has_pages)):
             return VerificationResult(
                 status=VerificationStatus.CORRUPTED,
                 file_type=FileType.PDF,
                 detected_type=FileType.PDF,
-                message="PDF missing essential structure (Catalog or Pages)",
+                message="PDF missing essential structure (Root, or Catalog and Pages)",
                 confidence=0.6
             )
 
@@ -407,8 +527,9 @@ class ContentVerifier:
         """Verify image file integrity."""
         # JPEG check
         if data.startswith(b'\xff\xd8\xff'):
-            # Check for JPEG end marker
-            if not data.endswith(b'\xff\xd9'):
+            # EOI closes the scan. Metadata after it, including extended XMP,
+            # is normal; only a scan that never reaches EOI is truncated.
+            if not data.endswith(b'\xff\xd9') and not _jpeg_has_image_eoi(data):
                 return VerificationResult(
                     status=VerificationStatus.CORRUPTED,
                     file_type=FileType.IMAGE,
@@ -419,8 +540,10 @@ class ContentVerifier:
 
         # PNG check
         elif data.startswith(b'\x89PNG\r\n\x1a\n'):
-            # Check for IEND chunk
-            if b'IEND' not in data[-20:]:
+            # IEND is 12 bytes. Allow metadata after the chunk; a file that
+            # never wrote IEND is truncated.
+            iend = data.rfind(b'\x00\x00\x00\x00IEND')
+            if b'IEND' not in data[-20:] and (iend == -1 or iend + 12 > len(data)):
                 return VerificationResult(
                     status=VerificationStatus.CORRUPTED,
                     file_type=FileType.IMAGE,

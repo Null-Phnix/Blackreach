@@ -291,18 +291,38 @@ class BlackreachAPI:
         result = self.browse(goal)
 
         downloads = []
-        for path in result.downloads:
-            from pathlib import Path
-            p = Path(path)
+        for recorded in result.downloads:
+            path = Path(recorded)
+            # The agent records basenames. The file lives in the download
+            # directory, not the process working directory.
+            if not path.is_absolute():
+                path = self.config.download_dir / path
+            try:
+                size = path.stat().st_size if path.is_file() else None
+            except OSError:
+                size = None
+            if size is None:
+                downloads.append(DownloadResult(
+                    success=False,
+                    url="",
+                    filename=path.name,
+                    path=str(path),
+                    error="Downloaded file is not on disk",
+                ))
+                continue
             downloads.append(DownloadResult(
                 success=True,
                 url="",  # URL not tracked in current implementation
-                filename=p.name,
-                path=str(p),
-                size=p.stat().st_size if p.exists() else 0
+                filename=path.name,
+                path=str(path),
+                size=size,
             ))
 
-        return downloads
+        if downloads:
+            return downloads
+
+        error = "; ".join(result.errors) if result.errors else "No files were downloaded"
+        return [DownloadResult(success=False, url="", error=error)]
 
     def search(
         self,

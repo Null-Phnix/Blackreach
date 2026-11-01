@@ -46,7 +46,7 @@ from blackreach.content_verify import VerificationStatus, get_verifier
 from blackreach.timeout_manager import get_timeout_manager
 from blackreach.rate_limiter import get_rate_limiter
 
-from blackreach.adaptive_browser import BrowserMode, BrowserRouter
+from blackreach.adaptive_browser import BrowserMode, BrowserRouter, _require_web_url
 from blackreach.domain_skills import get_skill_manager
 from blackreach.agent_actions import AgentActionsMixin
 from blackreach.agent_format import AgentFormatMixin
@@ -79,6 +79,15 @@ RE_DOMAIN = re.compile(r'\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}\b')
 RE_JSON_BLOCK = re.compile(r'```json\s*')
 RE_CODE_BLOCK = re.compile(r'```\s*')
 RE_NUMBER = re.compile(r'\b(\d+)\b')
+# A quota is a number tied to the request ("download 5", "5 files").
+# Other numbers are identifiers or ranges, not a file count.
+RE_DOWNLOAD_COUNT = re.compile(
+    r"\b(?:download|fetch|save|get|grab|need|want)\s+(\d+)\b"
+    r"|\b(\d+)\s+(?:files?|pdfs?|epubs?|mobis?|images?|photos?|pictures?"
+    r"|wallpapers?|papers?|books?|ebooks?|documents?|chapters?|volumes?"
+    r"|copies|items?)\b",
+    re.IGNORECASE,
+)
 RE_QUOTED_TEXT = re.compile(r"['\"]([^'\"]+)['\"]")
 RE_ARXIV_ID = re.compile(r'arxiv\.org/(?:abs|pdf)/(\d+\.\d+)')
 RE_CLICK_PATTERN = re.compile(
@@ -89,6 +98,46 @@ RE_SLOW_DOWNLOAD = re.compile(r'(slow\s+download)', re.IGNORECASE)
 RE_FAST_DOWNLOAD = re.compile(r'(fast\s+download)', re.IGNORECASE)
 RE_SLOW_PARTNER = re.compile(r'(slow\s+partner\s+server)', re.IGNORECASE)
 RE_FAST_PARTNER = re.compile(r'(fast\s+partner\s+server)', re.IGNORECASE)
+
+# "not" inside "notes"/"another" is not a refusal to download. "no" must not
+# match "no." (number abbreviation) or "nothing" except as its own word.
+_GOAL_NEGATION = re.compile(r"\b(?:dont|never|not|nothing|without|cannot)\b|\bno(?=\s)")
+_GOAL_OBTAIN = re.compile(r"\b(?:download|fetch|save)\b")
+_GOAL_FILE_REQUEST = re.compile(r"\b(?:epubs?|pdfs?|wallpapers?|pictures?|photos?)\b")
+_GOAL_INFO_ONLY = re.compile(r"\bdownloaded\b|\bdownload counts?\b|\bmost downloaded\b")
+_GOAL_INFO_VERB = re.compile(r"\b(?:list|find|search|show)\b|\bget the\b")
+
+
+def goal_needs_download(goal: str) -> bool:
+    """Return whether finishing with zero files would miss the goal.
+
+    An explicit obtain verb still counts when the goal also says "find" or
+    "search". Queries about download statistics stay informational.
+    """
+    text = goal.lower().replace("'", "")
+    if _GOAL_NEGATION.search(text):
+        return False
+    if _GOAL_INFO_ONLY.search(text):
+        return False
+    if _GOAL_OBTAIN.search(text):
+        return True
+    if _GOAL_INFO_VERB.search(text):
+        return False
+    return _GOAL_FILE_REQUEST.search(text) is not None
+
+
+def download_quota(goal: str) -> Optional[int]:
+    """How many saved files allow a download goal to auto-complete.
+
+    Returns None when the goal contains numbers that are not a file count.
+    "Download chapters 1-10" must not succeed after a single file.
+    """
+    match = RE_DOWNLOAD_COUNT.search(goal)
+    if match:
+        return int(next(group for group in match.groups() if group))
+    if RE_NUMBER.search(goal):
+        return None
+    return 1
 
 
 @dataclass
@@ -262,6 +311,9 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
 
     def _navigate_with_scan(self, url: str, log=None) -> bool:
         """Navigates and returns True on success. Adapts to bot-protection."""
+        # Reject file: and other local schemes before the route probe. urllib
+        # will open file:///etc/passwd during that probe.
+        _require_web_url(url)
         if not self.config.use_adaptive or self._router is None:
             # Fallback: normal browser goto
             self.hand.goto(url)
@@ -566,6 +618,24 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
         self.nav_context = NavigationContext(self.persistent_memory)
         self.search_intel = SearchIntelligence(self.persistent_memory)
 
+    @staticmethod
+    def _navigable_http_url(url: object) -> str:
+        """Absolute http(s) page address. about:, data:, and other schemes are not resumable."""
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            return url
+        return ""
+
+    def _checkpoint_page_url(self, current_url: object = "") -> str:
+        """Pick a page a later resume can open: live URL, last recorded page, then start URL."""
+        chosen = self._navigable_http_url(current_url)
+        if chosen:
+            return chosen
+        for url in reversed(getattr(self, "_recent_urls", []) or []):
+            chosen = self._navigable_http_url(url)
+            if chosen:
+                return chosen
+        return self._navigable_http_url(getattr(self.config, "start_url", ""))
+
     def save_state(self, status: str = "paused") -> bool:
         """Save current session state for later resume."""
         if not self.session_id or not self._current_goal:
@@ -578,11 +648,8 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
             except Exception:
                 # Browser failure must not destroy an otherwise valid checkpoint.
                 pass
-        if not isinstance(current_url, str) or current_url.startswith(("about:", "data:")):
-            current_url = ""
-        if not current_url:
-            recent_urls = getattr(self, "_recent_urls", [])
-            current_url = recent_urls[-1] if recent_urls else self.config.start_url
+        # A blank or injected document must not replace the page this run actually opened.
+        current_url = self._checkpoint_page_url(current_url)
         self.persistent_memory.save_session_state(
             session_id=self.session_id,
             goal=self._current_goal,
@@ -659,8 +726,8 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
             if not self.ensure_browser():
                 return self._finish_run(self._current_goal, "error", "browser_start_failed",
                                         "Failed to start browser", preserve_checkpoint=True, resumable=True)
-            saved_url = state["current_url"] or self.config.start_url
-            if not isinstance(saved_url, str) or saved_url.startswith(("about:", "data:")):
+            saved_url = self._checkpoint_page_url(state["current_url"])
+            if not saved_url:
                 return self._finish_run(self._current_goal, "error", "navigation_failed",
                                         "Saved session has no navigable source URL", preserve_checkpoint=True)
             log(f"Navigating to saved URL: {saved_url}")
@@ -1215,7 +1282,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
 
                     goal = self._current_goal
                     if goal:
-                        failover = self.source_manager.get_failover(failed_domain, content_type="ebook")
+                        failover = self.source_manager.get_failover(failed_domain, content_type=goal)
                         if failover:
                             source, next_url = failover
                             log(f"  [SMART FAILOVER: {source.name} at {next_url}]")
@@ -1494,6 +1561,13 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                     except json.JSONDecodeError:
                         continue
 
+        # A bare list is one action object, not a reason to abort the run.
+        # Numbers, strings, and null are not actions either.
+        if isinstance(data, list):
+            data = next((item for item in data if isinstance(item, dict) and item), {})
+        if not isinstance(data, dict):
+            data = {}
+
         if not data:
             log(f"No valid JSON found in response: {response_clean[:200]}...")
             self._record_failure(url, "parse", "No JSON in LLM response")
@@ -1531,6 +1605,8 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
         if isinstance(action_val, str):
             action = action_val
             args = data.get("args", {})
+            if not isinstance(args, dict):
+                args = {}
             # Element ID can also be in args
             if element_id is None and "element" in args:
                 try:
@@ -1541,6 +1617,8 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
             # Format 2: {"action": {"type": "click", "args": {...}}}
             action = action_val.get("type", action_val.get("action", ""))
             args = action_val.get("args", {})
+            if not isinstance(args, dict):
+                args = {}
 
         # Format 3: {"done": true} or {"status": "done"}
         if not action:
@@ -1562,11 +1640,25 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                     args = val if isinstance(val, dict) else {"value": val}
                     break
 
-        # Also extract text/submit from top-level data (LLMs sometimes put these at root)
-        if "text" in data and "text" not in args:
-            args["text"] = data["text"]
-        if "submit" in data and "submit" not in args:
-            args["submit"] = data["submit"]
+        # Click/type examples are flat, while navigate/download/done nest fields
+        # under args. Models mix the two. Leaving url or result only at the top
+        # level navigates nowhere and reports a successful run with an empty answer.
+        if isinstance(args, dict):
+            for field in (
+                "text",
+                "submit",
+                "url",
+                "selector",
+                "result",
+                "reason",
+                "expected_type",
+                "direction",
+                "amount",
+                "seconds",
+                "key",
+            ):
+                if field in data and field not in args:
+                    args[field] = data[field]
 
         # Inject element_id into args for _execute_action
         if element_id is not None:
@@ -1577,8 +1669,12 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
             if action in {"finish", "complete"}:
                 action = "done"
 
-        # CRITICAL: Handle refusal - don't let LLM quit just because it doesn't want to help
-        if is_refusal:
+        # A policy refusal is the model stopping. Planning language such as
+        # "I cannot find the button" still names a click, navigation, or download
+        # and must be executed. Overriding those abandons the page that has the file.
+        normalized_action = (action or "").strip().lower()
+        refusing_to_act = is_refusal and normalized_action in {"", "done"}
+        if refusing_to_act:
             self._refusal_count += 1
             log(f"  [REFUSAL #{self._refusal_count} DETECTED - forcing continue]")
             download_count = len(self.session_memory.downloaded_files)
@@ -1638,25 +1734,10 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
         if action == "done":
             reason = args.get("reason", thought or "Goal complete")
             download_count = len(self.session_memory.downloaded_files)
-            goal_lower = goal.lower()
 
-            # Check if goal requires actual file downloads (not just listing info)
-            # ALSO: negative goals like "don't download anything" are NOT download tasks
-            download_words = ['download', 'fetch', 'save', 'epub', 'pdf',
-                'wallpaper', 'picture', 'photo']
-            negation_words = ["don't", "dont", "never", "not", "no ", "without"]
-            info_words = ['list', 'find', 'search', 'get the', 'show',
-                'downloaded', 'download count', 'most download']
-
-            has_download = any(w in goal_lower for w in download_words)
-            # Strip contractions to catch "don't" before word matching
-            goal_normalized = goal_lower.replace("'", "")
-            is_negated = any(w in f" {goal_normalized} " for w in negation_words)
-            is_info_task = any(w in goal_lower for w in info_words)
-            needs_download = has_download and not is_negated and not is_info_task
-
-            # Don't allow "done" if goal needs downloads but we have 0
-            if needs_download and download_count == 0:
+            # Don't allow "done" if the goal still needs a file and we have 0.
+            # Word boundaries: "notes" and "find and download" must not slip through.
+            if goal_needs_download(goal) and download_count == 0:
                 log(f"  [BLOCKED: Goal needs downloads but have 0 - continuing search]")
                 self._record_failure(url, "premature_done", f"LLM tried to quit: {reason}")
                 # Return a non-done result to force loop to continue
@@ -1670,10 +1751,10 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
         download_count = len(self.session_memory.downloaded_files)
         goal_lower = goal.lower()
         if download_count > 0 and any(word in goal_lower for word in ['download', 'wallpaper', 'image', 'file', 'picture', 'photo']):
-            # Check if we've met a numeric goal
-            numbers = RE_NUMBER.findall(goal)
-            target = int(numbers[0]) if numbers else 1
-            if download_count >= target:
+            # Only an explicit count is a quota. The first integer in the goal
+            # is often a chapter, volume, or year.
+            target = download_quota(goal)
+            if target is not None and download_count >= target:
                 log(f" [AUTO-COMPLETE: Downloaded {download_count}/{target}]")
                 return {"done": True, "reason": f"Downloaded {download_count} files"}
 
