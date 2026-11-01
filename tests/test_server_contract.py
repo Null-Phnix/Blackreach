@@ -295,3 +295,20 @@ async def test_keyed_api_accepts_any_host_with_bearer(monkeypatch):
         )
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_unreadable_key_file_fails_closed_without_leaking_path(monkeypatch, tmp_path):
+    """A broken key file returns 503 and does not reveal the file path to clients."""
+    missing = tmp_path / "secret-dir" / "api-key"
+    monkeypatch.delenv("BLACKREACH_API_KEY", raising=False)
+    monkeypatch.setenv("BLACKREACH_API_KEY_FILE", str(missing))
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://127.0.0.1:7433"
+    ) as client:
+        response = await client.post("/v1/search", json={"query": "test"})
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "API key unavailable"}
+    assert "secret-dir" not in response.text

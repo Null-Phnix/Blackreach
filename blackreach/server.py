@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import ipaddress
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -41,6 +42,8 @@ from blackreach.api import (
 )
 
 # ─── Config ─────────────────────────────────────────────────────────────────
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = int(os.getenv("BLACKREACH_PORT", "7433"))
 DEFAULT_HOST = "127.0.0.1"
@@ -156,7 +159,9 @@ def create_app() -> FastAPI:
         try:
             api_key = _load_api_key()
         except RuntimeError as exc:
-            return JSONResponse({"detail": str(exc)}, status_code=503)
+            # The reason names a server-side path; keep it in the log only.
+            logger.error("API key unavailable: %s", exc)
+            return JSONResponse({"detail": "API key unavailable"}, status_code=503)
         if not api_key:
             # Without a key the only protection is that the server is bound to
             # loopback. A web page can still reach 127.0.0.1 by pointing its
