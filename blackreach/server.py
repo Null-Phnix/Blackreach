@@ -23,11 +23,13 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from blackreach import __version__
 from blackreach.api import (
     ApiConfig,
     BlackreachAPI,
@@ -116,6 +118,17 @@ def _is_loopback_host(host: str) -> bool:
         return False
 
 
+def _is_loopback_host_header(host_header: str) -> bool:
+    """True when an HTTP Host header names this machine (``host[:port]``)."""
+    if not host_header:
+        return False
+    try:
+        hostname = urlsplit(f"//{host_header}").hostname
+    except ValueError:
+        return False
+    return bool(hostname) and _is_loopback_host(hostname)
+
+
 def ensure_network_bind_requires_api_key(host: str) -> None:
     """Refuse to expose the agent API on a routable address without a token."""
     if _is_loopback_host(host):
@@ -136,7 +149,8 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def authenticate_request(request: Request, call_next):
-        """Health stays probeable; every data-bearing route requires a bearer token when one is configured."""
+        """Health stays probeable. With a key, data routes need the bearer token;
+        without one, they only answer requests addressed to a loopback Host."""
         if request.url.path == "/health":
             return await call_next(request)
         try:
@@ -144,6 +158,15 @@ def create_app() -> FastAPI:
         except RuntimeError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=503)
         if not api_key:
+            # Without a key the only protection is that the server is bound to
+            # loopback. A web page can still reach 127.0.0.1 by pointing its
+            # own domain there (DNS rebinding); its requests then carry that
+            # domain in Host, so only loopback Host names are accepted.
+            if not _is_loopback_host_header(request.headers.get("host", "")):
+                return JSONResponse(
+                    {"detail": "Host not allowed without BLACKREACH_API_KEY"},
+                    status_code=421,
+                )
             return await call_next(request)
         authorization = request.headers.get("authorization", "")
         scheme, _, candidate = authorization.partition(" ")
@@ -157,7 +180,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict:
-        return {"status": "ok", "version": "5.0.0-beta.2"}
+        return {"status": "ok", "version": __version__}
 
     @app.post("/v1/browse", response_model=ApiResponse)
     async def browse_endpoint(req: BrowseRequest) -> ApiResponse:

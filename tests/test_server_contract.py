@@ -154,7 +154,7 @@ async def test_browse_endpoint_forwards_start_url_and_runtime_config(monkeypatch
     monkeypatch.setattr("blackreach.server.BlackreachAPI", FakeAPI)
     app = create_app()
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app), base_url="http://127.0.0.1:7433"
     ) as client:
         response = await client.post("/v1/browse", json={
             "goal": "Inspect this page",
@@ -181,7 +181,7 @@ async def test_search_endpoint_forwards_num_results(monkeypatch):
     monkeypatch.setattr("blackreach.server.search", search)
     app = create_app()
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app), base_url="http://127.0.0.1:7433"
     ) as client:
         response = await client.post(
             "/v1/search", json={"query": "test", "num_results": 23}
@@ -239,3 +239,59 @@ def test_non_loopback_bind_requires_api_key(monkeypatch):
 
     monkeypatch.setenv("BLACKREACH_API_KEY", "rest-secret")
     ensure_network_bind_requires_api_key("0.0.0.0")
+
+
+@pytest.mark.asyncio
+async def test_keyless_api_rejects_foreign_host_header(monkeypatch):
+    """DNS rebinding: a page whose domain resolves to 127.0.0.1 must not drive the agent."""
+    search = MagicMock(return_value=SearchResult(
+        query="test", results=[], source="huginn-starsearch", total_found=0
+    ))
+    monkeypatch.delenv("BLACKREACH_API_KEY", raising=False)
+    monkeypatch.delenv("BLACKREACH_API_KEY_FILE", raising=False)
+    monkeypatch.setattr("blackreach.server.search", search)
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://127.0.0.1:7433"
+    ) as client:
+        rebound = await client.post(
+            "/v1/search", json={"query": "test"},
+            headers={"Host": "attacker.example:7433"},
+        )
+        missing = await client.post(
+            "/v1/search", json={"query": "test"}, headers={"Host": ""},
+        )
+        allowed = []
+        for host in ("127.0.0.1:7433", "localhost:7433", "[::1]:7433", "LOCALHOST"):
+            response = await client.post(
+                "/v1/search", json={"query": "test"}, headers={"Host": host},
+            )
+            allowed.append(response.status_code)
+        health = await client.get("/health", headers={"Host": "attacker.example"})
+
+    assert rebound.status_code == 421
+    assert missing.status_code == 421
+    assert allowed == [200, 200, 200, 200]
+    assert search.call_count == 4
+    assert health.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_keyed_api_accepts_any_host_with_bearer(monkeypatch):
+    """With a key, the bearer token is the check, so LAN hostnames keep working."""
+    search = MagicMock(return_value=SearchResult(
+        query="test", results=[], source="huginn-starsearch", total_found=0
+    ))
+    monkeypatch.setenv("BLACKREACH_API_KEY", "rest-secret")
+    monkeypatch.delenv("BLACKREACH_API_KEY_FILE", raising=False)
+    monkeypatch.setattr("blackreach.server.search", search)
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://blackreach.lan:7433"
+    ) as client:
+        response = await client.post(
+            "/v1/search", json={"query": "test"},
+            headers={"Authorization": "Bearer rest-secret"},
+        )
+
+    assert response.status_code == 200
