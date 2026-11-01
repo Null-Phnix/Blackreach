@@ -253,7 +253,7 @@ def create_app() -> FastAPI:
             results = await asyncio.to_thread(download, req.query, req.count)
             elapsed = int((time.time() - start) * 1000)
             return ApiResponse(
-                success=all(r.success for r in results),
+                success=bool(results) and all(r.success for r in results),
                 data={
                     "query": req.query,
                     "downloads": [
