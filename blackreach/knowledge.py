@@ -44,12 +44,12 @@ _RE_PREPOSITIONS = re.compile(r'\b(for|about|of|on|the|a|an)\s+', re.I)
 
 # P0-PERF: Pre-compiled content type detection patterns (for detect_content_type())
 _CONTENT_TYPE_PATTERNS = {
-    "ebook": [re.compile(p, re.I) for p in [r'\bepub\b', r'\bebook\b', r'\be-book\b', r'\bkindle\b', r'\bmobi\b']],
-    "book": [re.compile(p, re.I) for p in [r'\bbook\b', r'\bnovel\b', r'\bread\b', r'\bstory\b', r'\bfiction\b', r'\btextbook\b']],
-    "paper": [re.compile(p, re.I) for p in [r'\bpaper\b', r'\bresearch\b', r'\bjournal\b', r'\barticle\b', r'\bstudy\b', r'\bpreprint\b']],
+    "ebook": [re.compile(p, re.I) for p in [r'\bepub\b', r'\be-?books?\b', r'\bkindle\b', r'\bmobi\b']],
+    "book": [re.compile(p, re.I) for p in [r'\bbooks?\b', r'\bnovels?\b', r'\bread\b', r'\bstor(?:y|ies)\b', r'\bfiction\b', r'\btextbooks?\b']],
+    "paper": [re.compile(p, re.I) for p in [r'\bpapers?\b', r'\bresearch\b', r'\bjournal\b', r'\barticles?\b', r'\bstud(?:y|ies)\b', r'\bpreprints?\b']],
     "code": [re.compile(p, re.I) for p in [r'\bcode\b', r'\brepo\b', r'\brepository\b', r'\bgithub\b', r'\bsource\b', r'\bproject\b']],
     "image": [re.compile(p, re.I) for p in [r'\bimages?\b', r'\bpictures?\b', r'\bphotos?\b', r'\bjpg\b', r'\bpng\b']],
-    "wallpaper": [re.compile(p, re.I) for p in [r'\bwallpaper\b', r'\bdesktop\b', r'\bbackground\b', r'\b4k\b', r'\bhd\b', r'\b8k\b', r'\bultra\s*hd\b']],
+    "wallpaper": [re.compile(p, re.I) for p in [r'\bwallpapers?\b', r'\bdesktop\b', r'\bbackground\b', r'\b4k\b', r'\bhd\b', r'\b8k\b', r'\bultra\s*hd\b']],
     "video": [re.compile(p, re.I) for p in [r'\bvideo\b', r'\bmovie\b', r'\bfilm\b', r'\bdocumentary\b', r'\bmp4\b']],
     "audio": [re.compile(p, re.I) for p in [r'\baudio\b', r'\bmusic\b', r'\bsong\b', r'\bmp3\b', r'\bpodcast\b', r'\balbum\b']],
     "dataset": [re.compile(p, re.I) for p in [r'\bdataset\b', r'\bdata\b', r'\bcsv\b', r'\btraining data\b']],
@@ -60,7 +60,9 @@ _CONTENT_TYPE_PATTERNS = {
     "font": [re.compile(p, re.I) for p in [r'\bfont\b', r'\bfonts\b', r'\btypeface\b', r'\bttf\b', r'\botf\b', r'\btypography\b']],
     "icon": [re.compile(p, re.I) for p in [r'\bicon\b', r'\bicons\b', r'\bsvg\b', r'\bemoji\b']],
     "3d": [re.compile(p, re.I) for p in [r'\b3d\b', r'\bstl\b', r'\bmodel\b', r'\bfbx\b', r'\bobj\b', r'\bblender\b', r'\b3d\s*print\b']],
-    "software": [re.compile(p, re.I) for p in [r'\bsoftware\b', r'\bapp\b', r'\bapplication\b', r'\bprogram\b', r'\btool\b', r'\bdownload\b']],
+    # "download" is the verb on almost every file goal. It is not evidence
+    # that the user wants a software project.
+    "software": [re.compile(p, re.I) for p in [r'\bsoftware\b', r'\bapps?\b', r'\bapplications?\b', r'\bprograms?\b', r'\btools?\b']],
 }
 
 
