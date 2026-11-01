@@ -27,7 +27,6 @@ from urllib.parse import urljoin, urlparse, unquote
 
 from blackreach.ssrf import _is_ssrf_safe, urlopen_guarded
 
-from blackreach.ssrf import _is_ssrf_safe, urlopen_guarded
 
 try:
     from starsearch import StarSearch
