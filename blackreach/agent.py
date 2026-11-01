@@ -1546,6 +1546,13 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                     except json.JSONDecodeError:
                         continue
 
+        # A bare list is one action object, not a reason to abort the run.
+        # Numbers, strings, and null are not actions either.
+        if isinstance(data, list):
+            data = next((item for item in data if isinstance(item, dict) and item), {})
+        if not isinstance(data, dict):
+            data = {}
+
         if not data:
             log(f"No valid JSON found in response: {response_clean[:200]}...")
             self._record_failure(url, "parse", "No JSON in LLM response")
@@ -1583,6 +1590,8 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
         if isinstance(action_val, str):
             action = action_val
             args = data.get("args", {})
+            if not isinstance(args, dict):
+                args = {}
             # Element ID can also be in args
             if element_id is None and "element" in args:
                 try:
@@ -1593,6 +1602,8 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
             # Format 2: {"action": {"type": "click", "args": {...}}}
             action = action_val.get("type", action_val.get("action", ""))
             args = action_val.get("args", {})
+            if not isinstance(args, dict):
+                args = {}
 
         # Format 3: {"done": true} or {"status": "done"}
         if not action:

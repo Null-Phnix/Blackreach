@@ -2402,6 +2402,75 @@ class TestLLMResponseParsing:
 
         assert result["done"] is True
 
+    def test_step_uses_first_object_in_bare_action_list(self, tmp_path):
+        """A top-level JSON array is the first action, not a fatal parse crash."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        agent._current_goal = "summarize the page"
+
+        mock_hand = MagicMock()
+        mock_hand.get_url.return_value = "https://example.com"
+        mock_hand.get_title.return_value = "Test"
+        mock_hand.get_html.return_value = "<html><body>Test</body></html>"
+        mock_hand.is_healthy.return_value = True
+        agent.hand = mock_hand
+
+        llm_response = '[{"thought": "found it", "action": "done", "args": {"reason": "complete", "result": "the summary"}}]'
+
+        debug_html_mock = {
+            "has_meaningful_content": True,
+            "empty_root": False,
+            "html_length": 100,
+            "text_length": 50,
+            "raw_links": 5,
+            "raw_inputs": 2
+        }
+
+        with patch.object(agent, 'check_browser_health', return_value=True):
+            with patch.object(agent.llm, 'generate', return_value=llm_response):
+                with patch.object(agent.eyes, 'debug_html', return_value=debug_html_mock):
+                    with patch.object(agent.eyes, 'see', return_value={"links": []}):
+                        with patch.object(agent.detector, 'detect_challenge', return_value=MagicMock(detected=False)):
+                            with patch.object(agent.detector, 'detect_download_landing', return_value=MagicMock(detected=False)):
+                                result = agent._step("summarize the page", 1, quiet=True)
+
+        assert result["done"] is True
+        assert result["result"] == "the summary"
+
+    def test_step_non_object_json_stays_recoverable(self, tmp_path):
+        """A JSON number or string must not abort the run."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        agent._current_goal = "summarize the page"
+
+        mock_hand = MagicMock()
+        mock_hand.get_url.return_value = "https://example.com"
+        mock_hand.get_title.return_value = "Test"
+        mock_hand.get_html.return_value = "<html><body>Test</body></html>"
+        mock_hand.is_healthy.return_value = True
+        agent.hand = mock_hand
+
+        debug_html_mock = {
+            "has_meaningful_content": True,
+            "empty_root": False,
+            "html_length": 100,
+            "text_length": 50,
+            "raw_links": 5,
+            "raw_inputs": 2
+        }
+
+        with patch.object(agent, 'check_browser_health', return_value=True):
+            with patch.object(agent.llm, 'generate', return_value="42"):
+                with patch.object(agent.eyes, 'debug_html', return_value=debug_html_mock):
+                    with patch.object(agent.eyes, 'see', return_value={"links": []}):
+                        with patch.object(agent.detector, 'detect_challenge', return_value=MagicMock(detected=False)):
+                            with patch.object(agent.detector, 'detect_download_landing', return_value=MagicMock(detected=False)):
+                                result = agent._step("summarize the page", 1, quiet=True)
+
+        assert result["done"] is False
+        assert result["recoverable"] is True
+        assert "JSON" in result["error"]
+
     def test_step_handles_done_status_format(self, tmp_path):
         """_step handles {\"done\": true} format."""
         config = AgentConfig(memory_db=tmp_path / "test.db")
