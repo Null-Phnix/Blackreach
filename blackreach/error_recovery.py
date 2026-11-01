@@ -85,6 +85,11 @@ class RecoveryResult:
     new_context: Dict[str, Any] = field(default_factory=dict)
 
 
+# Target URLs are part of download and navigation errors. They must not be
+# classified as the failure itself.
+_URL_IN_ERROR = re.compile(r"https?://\S+")
+
+
 # Error patterns for categorization
 ERROR_PATTERNS = {
     ErrorCategory.NETWORK: [
@@ -139,7 +144,8 @@ ERROR_PATTERNS = {
         r"login required",
         r"log in",
         r"sign in",
-        r"401",
+        # Do not match 401 inside a longer id. URLs are removed before matching.
+        r"(?<!\d)401(?!\d)",
         r"unauthorized",
         r"authentication",
         r"not logged in",
@@ -159,10 +165,12 @@ ERROR_PATTERNS = {
     ErrorCategory.RESOURCE_ERROR: [
         r"out of memory",
         r"disk full",
+        r"no space left",
         r"no space",
-        r"resource",
-        r"memory",
-        r"MemoryError",
+        r"enospc",
+        r"cannot allocate memory",
+        r"insufficient memory",
+        r"memoryerror",
     ],
 }
 
@@ -227,7 +235,10 @@ class ErrorRecovery:
         Returns:
             ErrorInfo with category, recoverability, and suggested action
         """
-        error_str = str(error).lower()
+        # Download and navigation errors embed the target URL. Matching the raw
+        # text treats "/resources/..." or "401.pdf" as an unrecoverable failure
+        # and the agent aborts the run.
+        error_str = _URL_IN_ERROR.sub(" ", str(error).lower())
         error_type = type(error).__name__
 
         # Try to match against known patterns
