@@ -1614,11 +1614,25 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                     args = val if isinstance(val, dict) else {"value": val}
                     break
 
-        # Also extract text/submit from top-level data (LLMs sometimes put these at root)
-        if "text" in data and "text" not in args:
-            args["text"] = data["text"]
-        if "submit" in data and "submit" not in args:
-            args["submit"] = data["submit"]
+        # Click/type examples are flat, while navigate/download/done nest fields
+        # under args. Models mix the two. Leaving url or result only at the top
+        # level navigates nowhere and reports a successful run with an empty answer.
+        if isinstance(args, dict):
+            for field in (
+                "text",
+                "submit",
+                "url",
+                "selector",
+                "result",
+                "reason",
+                "expected_type",
+                "direction",
+                "amount",
+                "seconds",
+                "key",
+            ):
+                if field in data and field not in args:
+                    args[field] = data[field]
 
         # Inject element_id into args for _execute_action
         if element_id is not None:

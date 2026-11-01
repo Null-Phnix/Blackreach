@@ -112,6 +112,84 @@ class TestDownloadUrlDoesNotAbortRun:
         assert result.get("recoverable") is not False
 
 
+class TestFlatActionFields:
+    """A flat action must keep the same url and result as the nested args form."""
+
+    @pytest.fixture
+    def agent(self, tmp_path):
+        agent = Agent(
+            llm_config=LLMConfig(provider="ollama", model="qwen2.5:14b"),
+            agent_config=AgentConfig(max_steps=3, memory_db=tmp_path / "test.db"),
+        )
+        agent.hand = MagicMock()
+        agent.hand.get_url.return_value = "https://example.com/paper"
+        agent.hand.get_html.return_value = "<html><body><a data-br-id='1'>pdf</a></body></html>"
+        agent.hand.get_title.return_value = "Paper"
+        agent.detector = MagicMock()
+        agent.detector.detect_challenge.return_value = MagicMock(detected=False)
+        agent.stuck_detector = MagicMock()
+        agent.stuck_detector.check.return_value = MagicMock(is_stuck=False)
+        return agent
+
+    def test_flat_done_keeps_the_answer(self, agent):
+        agent.llm.generate = MagicMock(
+            return_value=(
+                '{"thought":"I read the page","action":"done",'
+                '"reason":"summarized","result":"Attention is all you need."}'
+            )
+        )
+
+        result = agent._step("summarize the paper", step_num=1, quiet=True)
+
+        assert result["done"] is True
+        assert result["result"] == "Attention is all you need."
+        assert result["reason"] == "summarized"
+
+    def test_nested_result_wins_over_a_flat_one(self, agent):
+        agent.llm.generate = MagicMock(
+            return_value=(
+                '{"thought":"done","action":"done","result":"ignored",'
+                '"args":{"reason":"ok","result":"kept"}}'
+            )
+        )
+
+        result = agent._step("summarize the paper", step_num=1, quiet=True)
+
+        assert result["result"] == "kept"
+
+    def test_flat_download_uses_the_url(self, agent):
+        target = "https://example.com/files/paper.pdf"
+        agent.llm.generate = MagicMock(
+            return_value=(
+                '{"thought":"this is the file","action":"download",'
+                f'"url":"{target}","expected_type":"pdf"}}'
+            )
+        )
+        agent._execute_action = MagicMock(
+            return_value={"action": "download", "filename": "paper.pdf"}
+        )
+
+        agent._step("download the pdf", step_num=1, quiet=True)
+
+        action, args = agent._execute_action.call_args[0]
+        assert action == "download"
+        assert args["url"] == target
+        assert args["expected_type"] == "pdf"
+
+    def test_flat_navigate_uses_the_url(self, agent):
+        target = "https://arxiv.org/pdf/1706.03762"
+        agent.llm.generate = MagicMock(
+            return_value='{"thought":"open the pdf","action":"navigate","url":"https://arxiv.org/pdf/1706.03762"}'
+        )
+        agent._execute_action = MagicMock(return_value={"action": "navigate", "url": target})
+
+        agent._step("open the paper", step_num=1, quiet=True)
+
+        action, args = agent._execute_action.call_args[0]
+        assert action == "navigate"
+        assert args["url"] == target
+
+
 class TestGoalNegationNotDownload:
     """Goals like 'don't download anything' must NOT be blocked as download tasks."""
 
