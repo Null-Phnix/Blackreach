@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 from urllib.parse import urlparse, unquote
 
+from blackreach.ssrf import _is_ssrf_safe, urlopen_guarded
+
 try:
     from starsearch import StarSearch
     from starsearch.session import StarSearchSession
@@ -93,50 +95,6 @@ def _reserve_unique_path(download_dir: Path, base_path: Path) -> Path:
             counter += 1
         save_path.touch()
     return save_path
-
-
-def _is_ssrf_safe(url: str) -> bool:
-    import socket
-    import ipaddress
-
-    parsed = urlparse(url)
-    hostname = parsed.hostname
-
-    if not hostname:
-        raise ValueError("URL has no hostname")
-
-    if hostname.lower() in ('localhost', '127.0.0.1', '::1', '0.0.0.0'):
-        raise ValueError(f"SSRF blocked: localhost access not allowed")
-
-    try:
-        addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-    except socket.gaierror:
-        return True
-
-    private_ranges = [
-        ipaddress.ip_network('10.0.0.0/8'),
-        ipaddress.ip_network('172.16.0.0/12'),
-        ipaddress.ip_network('192.168.0.0/16'),
-        ipaddress.ip_network('127.0.0.0/8'),
-        ipaddress.ip_network('169.254.0.0/16'),
-        ipaddress.ip_network('fc00::/7'),
-        ipaddress.ip_network('fe80::/10'),
-        ipaddress.ip_network('::1/128'),
-    ]
-
-    for family, _, _, _, sockaddr in addr_info:
-        ip_str = sockaddr[0]
-        try:
-            ip = ipaddress.ip_address(ip_str)
-            for private_range in private_ranges:
-                if ip in private_range:
-                    raise ValueError(f"SSRF blocked: {hostname} resolves to private IP {ip}")
-        except ValueError as e:
-            if "SSRF blocked" in str(e):
-                raise
-            continue
-
-    return True
 
 
 # ── Exceptions (match Blackreach's) ──
@@ -659,7 +617,7 @@ class Hand:
             req = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             })
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urlopen_guarded(req, timeout=30) as response:
                 content_type = response.headers.get('Content-Type', '')
                 data = response.read()
 
@@ -675,6 +633,9 @@ class Hand:
         except urllib.error.HTTPError as e:
             save_path.unlink(missing_ok=True)
             raise DownloadError(url, reason=e.reason, status_code=e.code)
+        except ValueError:
+            save_path.unlink(missing_ok=True)
+            raise
         except (urllib.error.URLError, OSError) as e:
             save_path.unlink(missing_ok=True)
             raise DownloadError(url, reason=str(e))

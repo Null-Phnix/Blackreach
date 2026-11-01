@@ -2021,14 +2021,18 @@ def show_help():
 
 
 @cli.command()
-@click.option("--host", default="0.0.0.0", help="Host to bind")
+@click.option("--host", default="127.0.0.1", help="Host to bind")
 @click.option("--port", default=7433, type=int, help="Port to listen on")
 def serve(host: str, port: int):
     """Start the REST API server."""
     from blackreach.server import main as server_main
     console.print(BANNER)
     console.print(f"[bold]Starting API server on {host}:{port}[/bold]\n")
-    server_main(host=host, port=port)
+    try:
+        server_main(host=host, port=port)
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
 
 
 def main():
