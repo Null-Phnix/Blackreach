@@ -93,7 +93,7 @@ async def test_rest_browse_forwards_error_and_outcome():
     real_api._get_agent = lambda: agent
     with patch("blackreach.server.BlackreachAPI") as factory:
         factory.return_value.__enter__.return_value = real_api
-        async with AsyncClient(transport=ASGITransport(app=create_app()), base_url="http://fixture.test") as client:
+        async with AsyncClient(transport=ASGITransport(app=create_app()), base_url="http://127.0.0.1:7433") as client:
             response = await client.post("/v1/browse", json={"goal": "fixture"})
     data = response.json()["data"]
     assert data["errors"] == ["fixture provider error"]

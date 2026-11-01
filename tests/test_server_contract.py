@@ -6,7 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from blackreach.api import BrowseResult, SearchResult
-from blackreach.server import create_app
+from blackreach.server import create_app, ensure_network_bind_requires_api_key
 
 
 def test_async_gateway_requires_configured_api_key(monkeypatch, tmp_path):
@@ -149,10 +149,12 @@ async def test_browse_endpoint_forwards_start_url_and_runtime_config(monkeypatch
             seen["start_url"] = start_url
             return BrowseResult(success=True, goal=goal, result="done")
 
+    monkeypatch.delenv("BLACKREACH_API_KEY", raising=False)
+    monkeypatch.delenv("BLACKREACH_API_KEY_FILE", raising=False)
     monkeypatch.setattr("blackreach.server.BlackreachAPI", FakeAPI)
     app = create_app()
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app), base_url="http://127.0.0.1:7433"
     ) as client:
         response = await client.post("/v1/browse", json={
             "goal": "Inspect this page",
@@ -174,10 +176,12 @@ async def test_search_endpoint_forwards_num_results(monkeypatch):
     search = MagicMock(return_value=SearchResult(
         query="test", results=[], source="huginn-starsearch", total_found=0
     ))
+    monkeypatch.delenv("BLACKREACH_API_KEY", raising=False)
+    monkeypatch.delenv("BLACKREACH_API_KEY_FILE", raising=False)
     monkeypatch.setattr("blackreach.server.search", search)
     app = create_app()
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app), base_url="http://127.0.0.1:7433"
     ) as client:
         response = await client.post(
             "/v1/search", json={"query": "test", "num_results": 23}
@@ -185,3 +189,126 @@ async def test_search_endpoint_forwards_num_results(monkeypatch):
 
     assert response.status_code == 200
     search.assert_called_once_with("test", max_results=23)
+
+
+@pytest.mark.asyncio
+async def test_rest_api_requires_bearer_when_key_configured(monkeypatch):
+    """A configured API key locks every data route, including on loopback."""
+    search = MagicMock(return_value=SearchResult(
+        query="test", results=[], source="huginn-starsearch", total_found=0
+    ))
+    monkeypatch.setenv("BLACKREACH_API_KEY", "rest-secret")
+    monkeypatch.delenv("BLACKREACH_API_KEY_FILE", raising=False)
+    monkeypatch.setattr("blackreach.server.search", search)
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        health = await client.get("/health")
+        denied = await client.post("/v1/search", json={"query": "test"})
+        wrong = await client.post(
+            "/v1/search",
+            json={"query": "test"},
+            headers={"Authorization": "Bearer wrong-secret"},
+        )
+        allowed = await client.post(
+            "/v1/search",
+            json={"query": "test"},
+            headers={"Authorization": "Bearer rest-secret"},
+        )
+
+    assert health.status_code == 200
+    assert denied.status_code == 401
+    assert wrong.status_code == 401
+    assert allowed.status_code == 200
+    search.assert_called_once_with("test", max_results=10)
+
+
+def test_non_loopback_bind_requires_api_key(monkeypatch):
+    """blackreach serve must not open the agent on the network without a token."""
+    monkeypatch.delenv("BLACKREACH_API_KEY", raising=False)
+    monkeypatch.delenv("BLACKREACH_API_KEY_FILE", raising=False)
+
+    ensure_network_bind_requires_api_key("127.0.0.1")
+    ensure_network_bind_requires_api_key("localhost")
+    ensure_network_bind_requires_api_key("::1")
+    with pytest.raises(RuntimeError, match="non-loopback"):
+        ensure_network_bind_requires_api_key("0.0.0.0")
+    with pytest.raises(RuntimeError, match="non-loopback"):
+        ensure_network_bind_requires_api_key("192.168.1.10")
+
+    monkeypatch.setenv("BLACKREACH_API_KEY", "rest-secret")
+    ensure_network_bind_requires_api_key("0.0.0.0")
+
+
+@pytest.mark.asyncio
+async def test_keyless_api_rejects_foreign_host_header(monkeypatch):
+    """DNS rebinding: a page whose domain resolves to 127.0.0.1 must not drive the agent."""
+    search = MagicMock(return_value=SearchResult(
+        query="test", results=[], source="huginn-starsearch", total_found=0
+    ))
+    monkeypatch.delenv("BLACKREACH_API_KEY", raising=False)
+    monkeypatch.delenv("BLACKREACH_API_KEY_FILE", raising=False)
+    monkeypatch.setattr("blackreach.server.search", search)
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://127.0.0.1:7433"
+    ) as client:
+        rebound = await client.post(
+            "/v1/search", json={"query": "test"},
+            headers={"Host": "attacker.example:7433"},
+        )
+        missing = await client.post(
+            "/v1/search", json={"query": "test"}, headers={"Host": ""},
+        )
+        allowed = []
+        for host in ("127.0.0.1:7433", "localhost:7433", "[::1]:7433", "LOCALHOST"):
+            response = await client.post(
+                "/v1/search", json={"query": "test"}, headers={"Host": host},
+            )
+            allowed.append(response.status_code)
+        health = await client.get("/health", headers={"Host": "attacker.example"})
+
+    assert rebound.status_code == 421
+    assert missing.status_code == 421
+    assert allowed == [200, 200, 200, 200]
+    assert search.call_count == 4
+    assert health.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_keyed_api_accepts_any_host_with_bearer(monkeypatch):
+    """With a key, the bearer token is the check, so LAN hostnames keep working."""
+    search = MagicMock(return_value=SearchResult(
+        query="test", results=[], source="huginn-starsearch", total_found=0
+    ))
+    monkeypatch.setenv("BLACKREACH_API_KEY", "rest-secret")
+    monkeypatch.delenv("BLACKREACH_API_KEY_FILE", raising=False)
+    monkeypatch.setattr("blackreach.server.search", search)
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://blackreach.lan:7433"
+    ) as client:
+        response = await client.post(
+            "/v1/search", json={"query": "test"},
+            headers={"Authorization": "Bearer rest-secret"},
+        )
+
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_unreadable_key_file_fails_closed_without_leaking_path(monkeypatch, tmp_path):
+    """A broken key file returns 503 and does not reveal the file path to clients."""
+    missing = tmp_path / "secret-dir" / "api-key"
+    monkeypatch.delenv("BLACKREACH_API_KEY", raising=False)
+    monkeypatch.setenv("BLACKREACH_API_KEY_FILE", str(missing))
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://127.0.0.1:7433"
+    ) as client:
+        response = await client.post("/v1/search", json={"query": "test"})
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "API key unavailable"}
+    assert "secret-dir" not in response.text
