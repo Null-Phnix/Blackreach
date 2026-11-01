@@ -11,24 +11,29 @@ import urllib.parse
 import urllib.request
 
 
-def _ip_is_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """Return True when connecting to ``ip`` can reach a non-public network.
+_NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")
 
-    IPv4-mapped IPv6 addresses are classified by the embedded IPv4 address.
-    ``is_reserved`` is true for every mapped address, including public ones,
-    so it must not be applied to the IPv6 form itself.
+
+def _ip_is_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Return True unless ``ip`` is a globally routable unicast address.
+
+    IPv4-mapped and NAT64 IPv6 addresses are classified by the embedded IPv4
+    address.
+    Older Pythons classify the ``::ffff:0:0/96`` block as a whole, which would
+    wrongly block public addresses written in mapped form.
     """
     mapped = getattr(ip, "ipv4_mapped", None)
     if mapped is not None:
         return _ip_is_blocked(mapped)
-    return bool(
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    )
+    if ip.version == 6 and ip in _NAT64_WELL_KNOWN:
+        # 64:ff9b::/96 counts as global, but a NAT64 gateway forwards it to
+        # the IPv4 address in the low 32 bits, so judge that address instead.
+        return _ip_is_blocked(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
+    # ``is_global`` is False for every special-purpose range, including the
+    # ones ``is_private`` misses: CGNAT 100.64.0.0/10 (Tailscale assigns
+    # tailnet addresses from it), benchmarking, documentation and NAT64.
+    # Multicast is listed separately because some global multicast passes it.
+    return not ip.is_global or ip.is_multicast
 
 
 def _is_ssrf_safe(url: str) -> bool:
