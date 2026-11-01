@@ -1,7 +1,7 @@
 # Regression tests for action-tracking and goal-negation bugs (2026-05-08)
 import pytest
 from unittest.mock import MagicMock, patch
-from blackreach.agent import Agent, AgentConfig
+from blackreach.agent import Agent, AgentConfig, goal_needs_download
 from blackreach.llm import LLMConfig
 from blackreach.exceptions import BrowserError
 
@@ -60,6 +60,25 @@ class TestStepRecordsOnFailure:
         assert len(agent.session_memory.actions_taken) == 1
         assert agent.session_memory.actions_taken[0]["success"] is True
 
+    def test_done_without_files_is_blocked_for_notes(self, agent):
+        agent.llm.generate = MagicMock(
+            return_value='{"thought":"nothing here","action":"done","args":{"reason":"complete"}}'
+        )
+        result = agent._step("download the lecture notes", step_num=1, quiet=True)
+        assert result["done"] is False
+        assert result.get("blocked") is True
+
+    def test_done_is_allowed_when_goal_forbids_downloads(self, agent):
+        agent.llm.generate = MagicMock(
+            return_value='{"thought":"done","action":"done","args":{"reason":"complete"}}'
+        )
+        result = agent._step(
+            "find info on the hantavirus, don't download anything",
+            step_num=1,
+            quiet=True,
+        )
+        assert result.get("done") is True
+
 
 class TestDownloadUrlDoesNotAbortRun:
     """A failed download whose URL merely contains 'resources' or '401' must not end the run."""
@@ -96,31 +115,29 @@ class TestDownloadUrlDoesNotAbortRun:
 class TestGoalNegationNotDownload:
     """Goals like 'don't download anything' must NOT be blocked as download tasks."""
 
-    def _is_download_task(self, goal: str) -> bool:
-        """Mirror the inline logic from agent.py _step() around the done action."""
-        goal_lower = goal.lower()
-        download_words = ['download', 'fetch', 'save', 'epub', 'pdf',
-                           'wallpaper', 'picture', 'photo']
-        negation_words = ["don't", "dont", "never", "not", "no ", "without"]
-        info_words = ['list', 'find', 'search', 'get the', 'show',
-                       'downloaded', 'download count', 'most download']
-        has_download = any(w in goal_lower for w in download_words)
-        goal_normalized = goal_lower.replace("'", "")
-        is_negated = any(w in f" {goal_normalized} " for w in negation_words)
-        is_info_task = any(w in goal_lower for w in info_words)
-        return has_download and not is_negated and not is_info_task
-
     def test_dont_download_is_not_download(self):
-        assert self._is_download_task("find info on the hantavirus, don't download anything") is False
+        assert goal_needs_download("find info on the hantavirus, don't download anything") is False
 
     def test_never_save_is_not_download(self):
-        assert self._is_download_task("never save this file") is False
+        assert goal_needs_download("never save this file") is False
 
     def test_plain_download_is_download(self):
-        assert self._is_download_task("download cat pictures") is True
+        assert goal_needs_download("download cat pictures") is True
 
     def test_list_download_counts_not_blocked(self):
-        assert self._is_download_task("list most downloaded programs") is False
+        assert goal_needs_download("list most downloaded programs") is False
+
+    def test_notes_and_another_are_still_downloads(self):
+        """Substring 'not' must not cancel a real file request."""
+        assert goal_needs_download("download the lecture notes") is True
+        assert goal_needs_download("save another pdf") is True
+        assert goal_needs_download("download file no. 3") is True
+
+    def test_find_and_download_still_requires_a_file(self):
+        assert goal_needs_download("find and download the annual report pdf") is True
+
+    def test_download_statistics_stay_informational(self):
+        assert goal_needs_download("what is the download count") is False
 
 
 class TestRunLoopErrorDisplay:
