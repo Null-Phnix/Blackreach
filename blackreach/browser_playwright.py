@@ -846,9 +846,21 @@ class Hand:
 
     # === Navigation ===
 
-    @retry_with_backoff()
     def goto(self, url: str, handle_popups: bool = True, wait_for_content: bool = True) -> dict:
         """Navigate to a URL with retry logic and smart content waiting.
+
+        Non-web schemes are rejected before the retry loop so a file: URL
+        cannot be opened and cannot burn retry delays.
+        """
+        from blackreach.adaptive_browser import _require_web_url
+        _require_web_url(url)
+        return self._goto_with_retry(
+            url, handle_popups=handle_popups, wait_for_content=wait_for_content
+        )
+
+    @retry_with_backoff()
+    def _goto_with_retry(self, url: str, handle_popups: bool = True, wait_for_content: bool = True) -> dict:
+        """Navigate to an already-validated http(s) URL.
 
         Uses adaptive timeouts based on site characteristics - static sites like
         Wikipedia get much shorter timeouts than SPAs.
@@ -1589,6 +1601,8 @@ class Hand:
         self._pending_downloads.clear()
 
         if url:
+            from blackreach.adaptive_browser import _require_web_url
+            _require_web_url(url)
             # Direct download via navigation
             # Note: page.goto() will throw "Download is starting" for direct file URLs
             # We catch this and wait for the download

@@ -422,6 +422,8 @@ class Hand:
     # ── navigation ──
 
     def goto(self, url: str, handle_popups: bool = True, wait_for_content: bool = True, **kwargs) -> dict:
+        from blackreach.adaptive_browser import _require_web_url
+        _require_web_url(url)
         self._ensure_session()
         self._session.navigate(url, timeout=GOTO_TIMEOUT_MS // 1000)
         if wait_for_content:

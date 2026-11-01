@@ -2,13 +2,15 @@
 
 import json
 import os
+import urllib.request
 from urllib.parse import urlparse
 import pytest
 
 from blackreach.adaptive_browser import (
     BrowserRouter, BrowserMode, RoutePlan, get_router, scan_url,
-    _KNOWN_HARD_SITES, _KNOWN_LIGHT_SITES,
+    _KNOWN_HARD_SITES, _KNOWN_LIGHT_SITES, _require_web_url,
 )
+from blackreach.exceptions import NavigationError
 
 
 class TestBrowserRouterInit:
@@ -82,6 +84,26 @@ class TestScoreBoundaries:
         router = BrowserRouter()
         assert router._estimate_cost(BrowserMode.LIGHTWEIGHT) < router._estimate_cost(BrowserMode.HEADLESS)
         assert router._estimate_cost(BrowserMode.HEADLESS) < router._estimate_cost(BrowserMode.FULL_STEALTH)
+
+
+class TestNonWebUrls:
+    def test_file_and_javascript_urls_are_rejected(self):
+        with pytest.raises(NavigationError, match="Only http and https"):
+            _require_web_url("file:///etc/passwd")
+        with pytest.raises(NavigationError, match="Only http and https"):
+            _require_web_url("javascript:alert(1)")
+        _require_web_url("https://example.com/paper.pdf")
+
+    def test_header_probe_does_not_read_local_files(self, tmp_path, monkeypatch):
+        """file:// used to be opened by urllib during the route probe."""
+        def refuse_open(*args, **kwargs):
+            raise AssertionError(f"probe opened {args!r}")
+
+        monkeypatch.setattr(urllib.request, "urlopen", refuse_open)
+        router = BrowserRouter(cache_path=tmp_path / "route_cache.json")
+        score, reasons = router._probe_headers("file:///etc/passwd")
+        assert score == 0.5
+        assert reasons == ["unsupported-scheme"]
 
 
 class TestBulkFetcherImport:

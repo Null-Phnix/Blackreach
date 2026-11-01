@@ -26,6 +26,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse
+
+from blackreach.exceptions import NavigationError
 
 
 class BrowserMode(Enum):
@@ -80,9 +83,21 @@ _KNOWN_LIGHT_SITES = {
 }
 
 
+def _require_web_url(url: str) -> None:
+    """Reject schemes that can read this machine.
+
+    ``file:///etc/passwd`` is a local path. urllib and the browser will open
+    it, so navigation and header probes must stay on http(s).
+    """
+    if not isinstance(url, str) or not url.strip():
+        raise NavigationError(str(url), reason="Only http and https URLs can be opened")
+    scheme = (urlparse(url.strip()).scheme or "").lower()
+    if scheme not in ("http", "https"):
+        raise NavigationError(url, reason="Only http and https URLs can be opened")
+
+
 def _domain_only(url: str) -> str:
     try:
-        from urllib.parse import urlparse
         return urlparse(url).netloc.lower()
     except Exception:
         return ""
@@ -90,7 +105,6 @@ def _domain_only(url: str) -> str:
 
 def _url_path(url: str) -> str:
     try:
-        from urllib.parse import urlparse
         return urlparse(url).path.lower()
     except Exception:
         return ""
@@ -202,6 +216,11 @@ class BrowserRouter:
 
     def _probe_headers(self, url: str) -> Tuple[float, List[str]]:
         """Lightweight HEAD request. Returns (risk_delta, reasons)."""
+        try:
+            _require_web_url(url)
+        except NavigationError:
+            return 0.5, ["unsupported-scheme"]
+
         try:
             req = urllib.request.Request(url, method="HEAD", headers={
                 "User-Agent": (
