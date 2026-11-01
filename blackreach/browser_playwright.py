@@ -1689,12 +1689,15 @@ class Hand:
                 data = response.read()
 
             # Add extension based on Content-Type if filename has none.
-            # Check epub before zip: the standard type is application/epub+zip.
+            # Order matters: epub and gzip types contain "zip" (application/epub+zip,
+            # application/gzip), so check them before the generic zip match.
             if not save_path.suffix:
                 content_type_lower = content_type.lower()
                 ext = ''
                 if 'epub' in content_type_lower:
                     ext = '.epub'
+                elif 'gzip' in content_type_lower:
+                    ext = '.gz'
                 elif 'pdf' in content_type_lower:
                     ext = '.pdf'
                 elif 'zip' in content_type_lower:

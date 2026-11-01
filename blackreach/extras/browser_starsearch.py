@@ -623,11 +623,12 @@ class Hand:
                 content_type = response.headers.get('Content-Type', '')
                 data = response.read()
 
-            # Check epub before zip: the standard type is application/epub+zip.
+            # Order matters: epub and gzip types contain "zip" (application/epub+zip,
+            # application/gzip), so check them before the generic zip match.
             if not save_path.suffix:
                 content_type_lower = content_type.lower()
                 ext_map = (
-                    ('epub', '.epub'), ('pdf', '.pdf'), ('zip', '.zip'),
+                    ('epub', '.epub'), ('gzip', '.gz'), ('pdf', '.pdf'), ('zip', '.zip'),
                     ('jpeg', '.jpg'), ('jpg', '.jpg'), ('png', '.png'), ('html', '.html'),
                 )
                 for key, ext in ext_map:
