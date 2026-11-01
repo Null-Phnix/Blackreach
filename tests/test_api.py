@@ -221,6 +221,68 @@ class TestBlackreachAPI:
         assert result.results[0]["description"] == "A useful result"
 
 
+class TestGetAgentBrainSelection:
+    """Tests for _get_agent()'s reasoning-brain provider selection.
+
+    The saved CLI provider decides the brain. Grok is selected by saving xai as
+    the default provider; DeepSeek's environment shortcut applies only while the
+    saved default is Ollama. No live network calls.
+    """
+
+    def _fake_config_manager(self, monkeypatch, default_provider="ollama", xai_api_key=""):
+        from blackreach.config import Config, ConfigManager
+
+        monkeypatch.setattr("blackreach.config.KEYRING_AVAILABLE", False)
+        monkeypatch.delenv("XAI_API_KEY", raising=False)
+        manager = ConfigManager.__new__(ConfigManager)
+        manager._config = Config()
+        manager._config.default_provider = default_provider
+        manager._config.xai.api_key = xai_api_key
+        manager.load = lambda: manager._config
+        monkeypatch.setattr("blackreach.config.config_manager", manager)
+        return manager
+
+    def _selected_llm_config(self):
+        captured = {}
+
+        class FakeAgent:
+            def __init__(self, agent_config=None, llm_config=None):
+                captured["llm_config"] = llm_config
+
+        with patch("blackreach.agent.Agent", FakeAgent):
+            BlackreachAPI()._get_agent()
+        return captured["llm_config"]
+
+    def test_saved_xai_default_uses_grok_4_5(self, monkeypatch):
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        self._fake_config_manager(monkeypatch, default_provider="xai", xai_api_key="test-xai-key")
+
+        llm_config = self._selected_llm_config()
+        assert llm_config.provider == "xai"
+        assert llm_config.model == "grok-4.5"
+        assert llm_config.api_key == "test-xai-key"
+
+    def test_saved_xai_default_ignores_deepseek_shortcut(self, monkeypatch):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+        self._fake_config_manager(monkeypatch, default_provider="xai", xai_api_key="test-xai-key")
+
+        assert self._selected_llm_config().provider == "xai"
+
+    def test_ollama_default_keeps_deepseek_shortcut(self, monkeypatch):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+        self._fake_config_manager(monkeypatch, default_provider="ollama")
+
+        llm_config = self._selected_llm_config()
+        assert llm_config.provider == "openai"
+        assert llm_config.api_base == "https://api.deepseek.com"
+
+    def test_xai_key_alone_does_not_override_saved_provider(self, monkeypatch):
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        self._fake_config_manager(monkeypatch, default_provider="ollama", xai_api_key="test-xai-key")
+
+        assert self._selected_llm_config().provider == "ollama"
+
+
 class TestApiConfigValidation:
     """Tests for config validation."""
 

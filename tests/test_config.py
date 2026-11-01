@@ -206,6 +206,16 @@ class TestConfigValidation:
         assert hasattr(config, 'xai')
         assert isinstance(config.xai, ProviderConfig)
 
+    def test_xai_default_model_is_grok_4_5(self):
+        """xai provider's default_model is grok-4.5 (the sanctioned reasoning brain)."""
+        config = Config()
+        assert config.xai.default_model == "grok-4.5"
+
+    def test_default_provider_code_default_is_ollama(self):
+        """Top-level default_provider code default stays 'ollama' (sovereign default)."""
+        config = Config()
+        assert config.default_provider == "ollama"
+
     def test_provider_config_has_base_url(self):
         """ProviderConfig has base_url field."""
         config = ProviderConfig()
@@ -234,6 +244,31 @@ class TestAvailableModelsContent:
     def test_has_xai(self):
         """AVAILABLE_MODELS includes xAI."""
         assert "xai" in AVAILABLE_MODELS
+
+    def test_xai_has_grok_4_5(self):
+        """AVAILABLE_MODELS['xai'] includes grok-4.5, listed first."""
+        models = AVAILABLE_MODELS.get("xai", [])
+        assert "grok-4.5" in models
+        assert models[0] == "grok-4.5"
+
+    def test_xai_has_grok_4_3(self):
+        """AVAILABLE_MODELS['xai'] includes grok-4.3."""
+        models = AVAILABLE_MODELS.get("xai", [])
+        assert "grok-4.3" in models
+
+    def test_xai_retains_existing_models(self):
+        """AVAILABLE_MODELS['xai'] keeps the pre-existing grok entries."""
+        models = AVAILABLE_MODELS.get("xai", [])
+        for existing in [
+            "grok-4-1-fast-reasoning",
+            "grok-4-1-fast-non-reasoning",
+            "grok-4-fast-reasoning",
+            "grok-4-fast-non-reasoning",
+            "grok-code-fast-1",
+            "grok-3-mini",
+            "grok-3",
+        ]:
+            assert existing in models
 
     def test_anthropic_has_claude_models(self):
         """Anthropic has Claude models."""
