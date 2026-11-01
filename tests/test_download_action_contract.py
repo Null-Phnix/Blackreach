@@ -279,3 +279,90 @@ def test_binary_payload_cannot_satisfy_requested_text():
     data = b"\x00\x01\x02binary payload\xff" * 40
     result = ContentVerifier().verify_data(data, expected_type=FileType.TEXT)
     assert result.status == VerificationStatus.WRONG_FORMAT
+
+
+def _jpeg(*, close=True, trailing=b""):
+    """Minimal marker layout: comment padding, one scan, optional EOI."""
+    comment = b"x" * 520
+    segment = b"\xff\xfe" + (len(comment) + 2).to_bytes(2, "big") + comment
+    scan_header = b"\x01\x01\x00\x00\x3f\x00"
+    scan = b"\xff\xda" + (len(scan_header) + 2).to_bytes(2, "big") + scan_header
+    entropy = b"\x12\x34\xff\x00\x56"
+    eoi = b"\xff\xd9" if close else b""
+    return b"\xff\xd8" + segment + scan + entropy + eoi + trailing
+
+
+def _png(*, iend=True, trailing=b""):
+    signature = b"\x89PNG\r\n\x1a\n"
+    image_data = b"\x00" * 512
+    idat = (
+        len(image_data).to_bytes(4, "big")
+        + b"IDAT"
+        + image_data
+        + b"\x00\x00\x00\x00"
+    )
+    ending = b"\x00\x00\x00\x00IEND\xaeB`\x82" if iend else b""
+    return signature + idat + ending + trailing
+
+
+def test_jpeg_with_trailing_metadata_is_kept(tmp_path):
+    """Extended XMP sits after EOI. That file is complete and must be kept."""
+    data = _jpeg(trailing=b'\n<?xpacket begin="W5M0MpCehiHzreSzNTczkc9d"?>' + b"<x:xmpmeta/>")
+    path = tmp_path / "photo.jpg"
+    agent = make_agent(path, data)
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/photo.jpg", "expected_type": "image"}
+    )
+    assert not result.get("skipped")
+    assert path.read_bytes() == data
+    agent._record_download.assert_called_once()
+
+
+def test_jpeg_that_ends_on_eoi_is_kept():
+    result = ContentVerifier().verify_data(_jpeg(), extension=".jpg")
+    assert result.status == VerificationStatus.VALID
+
+
+def test_jpeg_restart_markers_and_trailing_bytes_are_kept():
+    """Restart markers are inside the scan, and bytes after EOI stay with the file."""
+    base = _jpeg(close=False)
+    data = base + b"\xff\xd0\x11\xff\xd7\x22\xff\xd9" + b"\n" * 24
+    result = ContentVerifier().verify_data(data, extension=".jpg")
+    assert result.status == VerificationStatus.VALID
+
+
+def test_truncated_jpeg_is_still_deleted(tmp_path):
+    """A scan that never reaches EOI is still rejected, even if a thumbnail has one."""
+    thumb = b"\xff\xd8" + b"\x00" * 16 + b"\xff\xd9"
+    app1 = b"\xff\xe1" + (len(thumb) + 2).to_bytes(2, "big") + thumb
+    data = b"\xff\xd8" + app1 + _jpeg(close=False)[2:]
+    assert b"\xff\xd9" in data
+    path = tmp_path / "photo.jpg"
+    agent = make_agent(path, data)
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/photo.jpg", "expected_type": "image"}
+    )
+    assert result["reason"] == "corrupted"
+    assert not path.exists()
+    agent._record_download.assert_not_called()
+
+
+def test_png_with_trailing_bytes_is_kept(tmp_path):
+    data = _png(trailing=b"\n" * 32 + b"camera-padding")
+    path = tmp_path / "photo.png"
+    agent = make_agent(path, data)
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/photo.png", "expected_type": "image"}
+    )
+    assert not result.get("skipped")
+    assert path.read_bytes() == data
+
+
+def test_truncated_png_is_still_deleted(tmp_path):
+    path = tmp_path / "photo.png"
+    agent = make_agent(path, _png(iend=False))
+    result = AgentActionsMixin._execute_action(
+        agent, "download", {"url": "/photo.png", "expected_type": "image"}
+    )
+    assert result["reason"] == "corrupted"
+    assert not path.exists()

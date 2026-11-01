@@ -117,6 +117,62 @@ def _formats_compatible(expected: FileType, detected: FileType) -> bool:
     return expected == FileType.EPUB and detected == FileType.ZIP
 
 
+def _jpeg_has_image_eoi(data: bytes) -> bool:
+    """Return True when a top-level JPEG scan is closed by an EOI marker.
+
+    Extended XMP and other metadata are stored after that marker, so a
+    complete file does not have to end on it. An EOI inside an EXIF
+    thumbnail lives in an APP segment and does not count.
+    """
+    if len(data) < 4 or not data.startswith(b"\xff\xd8"):
+        return False
+    index = 2
+    size = len(data)
+    saw_scan = False
+    while index < size:
+        if data[index] != 0xFF:
+            return False
+        index += 1
+        while index < size and data[index] == 0xFF:
+            index += 1
+        if index >= size:
+            return False
+        marker = data[index]
+        index += 1
+        if marker == 0xD9:
+            return saw_scan
+        # TEM and restart markers have no length field.
+        if marker == 0x01 or 0xD0 <= marker <= 0xD7:
+            continue
+        if marker == 0x00 or index + 1 >= size:
+            return False
+        segment_length = int.from_bytes(data[index:index + 2], "big")
+        if segment_length < 2 or index + segment_length > size:
+            return False
+        index += segment_length
+        if marker != 0xDA:
+            continue
+        saw_scan = True
+        while index < size:
+            if data[index] != 0xFF:
+                index += 1
+                continue
+            marker_at = index + 1
+            while marker_at < size and data[marker_at] == 0xFF:
+                marker_at += 1
+            if marker_at >= size:
+                return False
+            # FF 00 is a stuffed data byte. Restart markers stay inside the scan.
+            if data[marker_at] == 0x00 or 0xD0 <= data[marker_at] <= 0xD7:
+                index = marker_at + 1
+                continue
+            index = marker_at - 1
+            break
+        else:
+            return False
+    return False
+
+
 class ContentVerifier:
     """Verifies downloaded content integrity and validity."""
 
@@ -465,8 +521,9 @@ class ContentVerifier:
         """Verify image file integrity."""
         # JPEG check
         if data.startswith(b'\xff\xd8\xff'):
-            # Check for JPEG end marker
-            if not data.endswith(b'\xff\xd9'):
+            # EOI closes the scan. Metadata after it, including extended XMP,
+            # is normal; only a scan that never reaches EOI is truncated.
+            if not data.endswith(b'\xff\xd9') and not _jpeg_has_image_eoi(data):
                 return VerificationResult(
                     status=VerificationStatus.CORRUPTED,
                     file_type=FileType.IMAGE,
@@ -477,8 +534,10 @@ class ContentVerifier:
 
         # PNG check
         elif data.startswith(b'\x89PNG\r\n\x1a\n'):
-            # Check for IEND chunk
-            if b'IEND' not in data[-20:]:
+            # IEND is 12 bytes. Allow metadata after the chunk; a file that
+            # never wrote IEND is truncated.
+            iend = data.rfind(b'\x00\x00\x00\x00IEND')
+            if b'IEND' not in data[-20:] and (iend == -1 or iend + 12 > len(data)):
                 return VerificationResult(
                     status=VerificationStatus.CORRUPTED,
                     file_type=FileType.IMAGE,
