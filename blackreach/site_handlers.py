@@ -13,12 +13,13 @@ Supported Sites:
 - Shopping: Amazon
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Callable, Any, Tuple
-from abc import ABC, abstractmethod
-from urllib.parse import urlparse
 import re
 import time
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+from blackreach.domain_match import host_matches
 
 
 @dataclass
@@ -54,12 +55,9 @@ class SiteHandler(ABC):
     @classmethod
     def matches(cls, url: str) -> bool:
         """Check if this handler matches the given URL."""
-        parsed = urlparse(url)
-        domain = parsed.netloc.lower()
-
-        # Check domain list
+        # Check domain list (label-aware, see blackreach.domain_match)
         for d in cls.domains:
-            if d in domain:
+            if host_matches(url, d):
                 return True
 
         # Check URL patterns
@@ -301,7 +299,7 @@ class ZLibraryHandler(SiteHandler):
 class GoogleHandler(SiteHandler):
     """Handler for Google Search."""
 
-    domains = ["google.com", "www.google"]
+    domains = ["google.com", "google"]
 
     def get_download_actions(self, html: str, url: str) -> List[SiteAction]:
         """Google doesn't have direct downloads - just navigation."""
@@ -513,7 +511,7 @@ class GitHubHandler(SiteHandler):
 class WikipediaHandler(SiteHandler):
     """Handler for Wikipedia."""
 
-    domains = ["wikipedia.org", "en.wikipedia", "en.m.wikipedia"]
+    domains = ["wikipedia.org"]
 
     def get_download_actions(self, html: str, url: str) -> List[SiteAction]:
         """Wikipedia doesn't have traditional downloads."""
