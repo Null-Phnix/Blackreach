@@ -79,7 +79,7 @@ class Config:
         default_model="gemini-2.5-flash"
     ))
     xai: ProviderConfig = field(default_factory=lambda: ProviderConfig(
-        default_model="grok-4-fast-non-reasoning"
+        default_model="grok-4.5"
     ))
 
     # Agent settings
@@ -136,6 +136,8 @@ AVAILABLE_MODELS = {
         "gemini-2.0-flash",
     ],
     "xai": [
+        "grok-4.5",
+        "grok-4.3",
         "grok-4-1-fast-reasoning",
         "grok-4-1-fast-non-reasoning",
         "grok-4-fast-reasoning",

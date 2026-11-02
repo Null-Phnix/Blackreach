@@ -38,6 +38,7 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
     "soupsieve>=2.9",
     "ollama>=0.1.0",
+    "openai>=1.66.0",  # xAI/Grok and OpenAI providers use the OpenAI SDK
     "click>=8.0.0",
     "rich>=13.0.0",
     "pyyaml>=6.0.0",
