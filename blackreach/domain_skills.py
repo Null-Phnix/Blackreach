@@ -32,15 +32,11 @@ Each skill file:
         action: 'stop, ask user'
 """
 
-import hashlib
-import json
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 import yaml
-
 
 SKILLS_DIR = Path("domain-skills")
 

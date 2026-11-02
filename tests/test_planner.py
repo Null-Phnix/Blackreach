@@ -5,10 +5,10 @@ Tests for goal complexity detection and plan data structures.
 Note: Full plan generation tests require LLM mocking.
 """
 
-import pytest
-from unittest.mock import Mock, MagicMock, patch
-from blackreach.planner import Planner, Plan, Subtask
+from unittest.mock import MagicMock, patch
+
 from blackreach.llm import LLMConfig
+from blackreach.planner import Plan, Planner, Subtask
 
 
 class TestSubtaskDataclass:
@@ -170,14 +170,14 @@ class TestPlannerInit:
     @patch('blackreach.planner.LLM')
     def test_init_creates_llm(self, mock_llm):
         """Planner creates LLM instance."""
-        planner = Planner()
+        Planner()
         mock_llm.assert_called_once()
 
     @patch('blackreach.planner.LLM')
     def test_init_with_custom_config(self, mock_llm):
         """Planner accepts custom LLM config."""
         config = LLMConfig(provider="openai", model="gpt-4")
-        planner = Planner(llm_config=config)
+        Planner(llm_config=config)
         mock_llm.assert_called_once_with(config)
 
 
@@ -280,7 +280,7 @@ class TestPlannerPlan:
         assert plan.subtasks[1].optional is False
 
     @patch('blackreach.planner.LLM')
-    def test_plan_handles_invalid_json(self, mock_llm_class):
+    def test_plan_handles_invalid_json_fallback(self, mock_llm_class):
         """plan() handles invalid JSON with fallback plan."""
         mock_llm = MagicMock()
         mock_llm.generate.return_value = 'This is not valid JSON at all'

@@ -11,14 +11,13 @@ Provides download queue management:
 - Checksum verification
 """
 
+import threading
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Callable, Tuple
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-import threading
 from queue import PriorityQueue
-import hashlib
+from typing import Callable, Dict, List, Optional, Tuple
 
 
 class DownloadPriority(Enum):
@@ -175,7 +174,6 @@ class DownloadQueue:
         destination = self.download_dir / filename
 
         # Check for duplicates
-        is_duplicate = False
         duplicate_path = None
 
         if self.enable_deduplication and not skip_duplicate_check:
@@ -188,7 +186,6 @@ class DownloadQueue:
                     sha256_hash=expected_sha256
                 )
                 if dup_info.is_duplicate and dup_info.original_entry:
-                    is_duplicate = True
                     duplicate_path = dup_info.original_entry.file_path
                     # Check if original file still exists
                     if Path(duplicate_path).exists():

@@ -9,15 +9,13 @@ Validates downloaded content to ensure it matches expectations:
 - File quality assessment
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, BinaryIO
-from pathlib import Path
-from enum import Enum
 import hashlib
-import struct
-import zipfile
 import io
-import os
+import zipfile
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import Dict, Optional, Tuple
 
 
 class VerificationStatus(Enum):
@@ -373,7 +371,7 @@ class ContentVerifier:
                 status=VerificationStatus.PLACEHOLDER,
                 file_type=FileType.UNKNOWN,
                 detected_type=FileType.HTML if b'<html' in check_data else FileType.TEXT,
-                message=f"File appears to be a placeholder or error page",
+                message="File appears to be a placeholder or error page",
                 details={"matched_pattern": pattern.decode('utf-8', errors='ignore')}
             )
 

@@ -17,8 +17,8 @@ Provides detection results with provider info and confidence levels.
 
 import re
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Tuple
 from enum import Enum
+from typing import Dict, List, Optional, Tuple
 
 
 class CaptchaProvider(Enum):

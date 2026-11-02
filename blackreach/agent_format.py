@@ -6,8 +6,7 @@ Imported by agent.py via multiple inheritance (mixin pattern).
 
 import logging
 import re
-from typing import Dict, Any, Optional
-from urllib.parse import urlparse
+from typing import Dict
 
 logger = logging.getLogger(__name__)
 

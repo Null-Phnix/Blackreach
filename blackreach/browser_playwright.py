@@ -5,42 +5,53 @@ Controls the browser: click, type, scroll, navigate, screenshot, download.
 Now with stealth and resilience features.
 """
 
-from playwright.sync_api import sync_playwright, Browser, Page, Playwright, BrowserContext, Route, Download, Error as PlaywrightError
+from playwright.sync_api import (
+    Browser,
+    BrowserContext,
+    Download,
+    Page,
+    Playwright,
+    Route,
+    sync_playwright,
+)
+from playwright.sync_api import Error as PlaywrightError
 
 try:
-    from blackreach.browser_cdp import CDPBrowerDaemon, _cdp_responding, CDP_HTTP
+    from blackreach.browser_cdp import CDPBrowerDaemon
     CDP_AVAILABLE = True
 except Exception:
     CDP_AVAILABLE = False
-from typing import Optional, List, Union, Callable, Dict, Any
-from pathlib import Path
+import hashlib
+import logging
+import random
+import threading
+import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from enum import Enum
-from urllib.parse import urlparse, unquote
-import urllib.request
-import urllib.error
-import time
-import random
-import hashlib
-import threading
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Union
+from urllib.parse import unquote, urlparse
 
-import logging
-
-from blackreach.ssrf import _is_ssrf_safe, urlopen_guarded
-from blackreach.stealth import Stealth, StealthConfig
-from blackreach.resilience import (
-    SmartSelector, PopupHandler, WaitConditions,
-    retry_with_backoff, RetryConfig
-)
+from blackreach.cloudflare_bypass import CloudflareBypasser
+from blackreach.detection import SiteDetector, SiteType, get_site_characteristics
 from blackreach.exceptions import (
     BrowserNotReadyError,
-    ElementNotFoundError,
     DownloadError,
+    ElementNotFoundError,
     InvalidActionArgsError,
     UnknownActionError,
 )
-from blackreach.detection import SiteDetector, get_site_characteristics, SiteType
-from blackreach.cloudflare_bypass import CloudflareBypasser
+from blackreach.resilience import (
+    PopupHandler,
+    RetryConfig,
+    SmartSelector,
+    WaitConditions,
+    retry_with_backoff,
+)
+from blackreach.ssrf import _is_ssrf_safe, urlopen_guarded
+from blackreach.stealth import Stealth, StealthConfig
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +84,8 @@ HUMAN_CLICK_PRE_DELAY = (0.1, 0.3)
 HUMAN_CLICK_POST_DELAY = (0.2, 0.5)
 
 # Precompiled regex for filename sanitization (P0-SEC fix)
-import re
+import re  # noqa: E402
+
 _UNSAFE_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _PATH_TRAVERSAL = re.compile(r'(?:^|[\\/])\.\.(?:[\\/]|$)')
 
@@ -751,7 +763,7 @@ class Hand:
         if scripts:
             combined = "\n".join(scripts)
             self._page.add_init_script(combined)
-    
+
     def _release_all_keys(self) -> None:
         """Release all modifier keys to prevent stuck keys on the host system."""
         if not self._page:
@@ -1420,7 +1432,7 @@ class Hand:
                     if search_btn.is_visible():
                         search_btn.click()
                         self._human_delay(0.5, 1.0)
-                except:
+                except Exception:
                     pass
 
         return {"action": "type", "selector": used_selector, "text": text, "submitted": submit}
@@ -1433,7 +1445,7 @@ class Hand:
         for attempt in range(max_attempts):
             try:
                 # Try typing with submit
-                result = self.type(selector, query, submit=True, human=False)
+                self.type(selector, query, submit=True, human=False)
                 self._human_delay(1.5, 2.5)
 
                 # Verify if we navigated away from search page
@@ -1491,7 +1503,7 @@ class Hand:
         """Hover over an element."""
         self.page.locator(selector).first.hover()
         return {"action": "hover", "selector": selector}
-    
+
     # === Reading ===
 
     def get_html(self, wait_for_load: bool = True, retries: int = 3, ensure_content: bool = False) -> str:

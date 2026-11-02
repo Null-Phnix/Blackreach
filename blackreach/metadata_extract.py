@@ -8,17 +8,17 @@ Extracts metadata from downloaded files:
 - General file metadata (size, hash, type)
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Union, BinaryIO
-from datetime import datetime
-from pathlib import Path
-from enum import Enum
 import hashlib
-import struct
-import zipfile
 import io
 import re
+import struct
 import xml.etree.ElementTree as ET
+import zipfile
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Dict, List, Optional, Union
 
 
 class MetadataType(Enum):
@@ -183,11 +183,11 @@ class MetadataExtractor:
     def _check_pypdf(self) -> bool:
         """Check if PyPDF2/pypdf is available."""
         try:
-            import pypdf
+            import pypdf  # noqa: F401
             return True
         except ImportError:
             try:
-                import PyPDF2
+                import PyPDF2  # noqa: F401
                 return True
             except ImportError:
                 return False
@@ -429,11 +429,11 @@ class MetadataExtractor:
             'producer': rb'/Producer\s*\(([^)]+)\)',
         }
 
-        for field, pattern in info_patterns.items():
+        for field_name, pattern in info_patterns.items():
             match = re.search(pattern, data)
             if match:
                 value = match.group(1).decode('utf-8', errors='ignore')
-                setattr(pdf_meta, field, value)
+                setattr(pdf_meta, field_name, value)
 
         return pdf_meta
 

@@ -11,16 +11,13 @@ Tests the new browser lifecycle management methods:
 - Agent.check_browser_health()
 """
 
-import pytest
-from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch, PropertyMock
-from playwright.sync_api import Error as PlaywrightError
-from blackreach.browser import Hand
-from blackreach.agent import Agent, AgentConfig
-from blackreach.stealth import StealthConfig
-from blackreach.resilience import RetryConfig
-from blackreach.exceptions import BrowserNotReadyError, BrowserError, NavigationError
+from unittest.mock import Mock, PropertyMock, patch
 
+from playwright.sync_api import Error as PlaywrightError
+
+from blackreach.agent import Agent, AgentConfig
+from blackreach.browser import Hand
+from blackreach.exceptions import BrowserError, NavigationError
 
 # =============================================================================
 # Hand Browser Management Tests

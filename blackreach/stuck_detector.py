@@ -25,10 +25,9 @@ Example usage:
 import hashlib
 import re
 from collections import deque
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Set, Tuple
+from dataclasses import dataclass
 from enum import Enum
-
+from typing import Dict, List, Optional, Tuple
 
 # P0-PERF: Pre-compiled regex patterns for content hashing
 _RE_SCRIPT = re.compile(r'<script\b[^>]*>.*?</script\b[^>]*>', re.DOTALL | re.IGNORECASE)
@@ -367,7 +366,7 @@ class StuckDetector:
 
         # Track recovery attempts to avoid repeating failed strategies
         # Only consider strategies that the agent actually handles
-        HANDLED_STRATEGIES = {
+        handled_strategies = {
             RecoveryStrategy.GO_BACK,
             RecoveryStrategy.TRY_ALTERNATE_SOURCE,
             RecoveryStrategy.SCROLL_AND_EXPLORE,
@@ -379,7 +378,7 @@ class StuckDetector:
         def get_best_strategy(strategies: List[RecoveryStrategy]) -> RecoveryStrategy:
             """Get the handled strategy with fewest attempts."""
             # Filter to only strategies the agent can actually execute
-            actionable = [s for s in strategies if s in HANDLED_STRATEGIES]
+            actionable = [s for s in strategies if s in handled_strategies]
             if not actionable:
                 return RecoveryStrategy.TRY_ALTERNATE_SOURCE
 

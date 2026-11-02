@@ -4,52 +4,50 @@ Unit tests for blackreach/exceptions.py
 Tests the exception hierarchy and error message formatting.
 """
 
-import pytest
 from blackreach.exceptions import (
+    AccessDeniedError,
+    ActionError,
+    # Agent
+    AgentError,
+    APIError,
     # Base
     BlackreachError,
     # Browser
     BrowserError,
     BrowserNotReadyError,
-    BrowserUnhealthyError,
     BrowserRestartFailedError,
-    ElementNotFoundError,
-    NavigationError,
-    DownloadError,
-    TimeoutError,
-    # LLM
-    LLMError,
-    ProviderError,
-    ProviderNotInstalledError,
-    ParseError,
-    APIError,
-    RateLimitError,
-    # Agent
-    AgentError,
-    ActionError,
-    UnknownActionError,
-    InvalidActionArgsError,
-    StuckError,
-    MaxStepsExceededError,
-    # Site
-    SiteError,
+    BrowserUnhealthyError,
     CaptchaError,
-    LoginRequiredError,
-    PaywallError,
-    AccessDeniedError,
     # Config
     ConfigError,
+    ConnectionError,
+    DownloadError,
+    ElementNotFoundError,
+    InvalidActionArgsError,
     InvalidConfigError,
+    # LLM
+    LLMError,
+    LoginRequiredError,
+    MaxStepsExceededError,
+    NavigationError,
     # Network
     NetworkError,
-    ConnectionError,
-    SSLError,
+    ParseError,
+    PaywallError,
+    ProviderError,
+    ProviderNotInstalledError,
+    RateLimitError,
+    SessionCorruptedError,
     # Session
     SessionError,
     SessionNotFoundError,
-    SessionCorruptedError,
+    # Site
+    SiteError,
+    SSLError,
+    StuckError,
+    TimeoutError,
+    UnknownActionError,
 )
-
 
 # =============================================================================
 # Base Exception Tests

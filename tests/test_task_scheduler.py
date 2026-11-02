@@ -4,15 +4,14 @@ Unit tests for blackreach/task_scheduler.py
 Tests task scheduling with priorities, dependencies, and parallel execution.
 """
 
-import pytest
 import time
-from datetime import datetime
+
 from blackreach.task_scheduler import (
-    TaskPriority,
-    TaskStatus,
     Task,
     TaskGroup,
+    TaskPriority,
     TaskScheduler,
+    TaskStatus,
     get_scheduler,
 )
 
@@ -214,7 +213,7 @@ class TestTaskSchedulerExecution:
     def test_get_next_respects_priority(self):
         """Should return highest priority task first."""
         scheduler = TaskScheduler()
-        low_id = scheduler.add_task(name="Low", action="test", priority=TaskPriority.LOW)
+        scheduler.add_task(name="Low", action="test", priority=TaskPriority.LOW)
         high_id = scheduler.add_task(name="High", action="test", priority=TaskPriority.HIGH)
 
         next_task = scheduler.get_next()

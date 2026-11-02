@@ -22,10 +22,10 @@ Example usage:
 """
 
 import time
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
-from enum import Enum
 from collections import defaultdict
+from dataclasses import dataclass
+from enum import Enum
+from typing import Dict, List, Optional, Set, Tuple
 
 from blackreach.knowledge import CONTENT_SOURCES, ContentSource, find_best_sources
 

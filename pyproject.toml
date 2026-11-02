@@ -103,6 +103,12 @@ line-length = 100
 select = ["E", "F", "I", "N", "W"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+# Lazy-import package: names are imported under TYPE_CHECKING purely for IDEs.
+"blackreach/__init__.py" = ["F401"]
+# Tests bind patched classes as `MockHand` etc. on purpose.
+"tests/**" = ["N806"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

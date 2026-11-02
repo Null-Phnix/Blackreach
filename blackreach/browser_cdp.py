@@ -19,7 +19,6 @@ import shutil
 import signal
 import socket
 import subprocess
-import sys
 import time
 import urllib.request
 from pathlib import Path

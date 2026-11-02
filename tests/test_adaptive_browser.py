@@ -1,14 +1,15 @@
 """Tests for the adaptive browser router and bulk fetcher."""
 
-import json
-import os
 import urllib.request
-from urllib.parse import urlparse
+
 import pytest
 
 from blackreach.adaptive_browser import (
-    BrowserRouter, BrowserMode, RoutePlan, get_router, scan_url,
-    _KNOWN_HARD_SITES, _KNOWN_LIGHT_SITES, _require_web_url,
+    BrowserMode,
+    BrowserRouter,
+    _require_web_url,
+    get_router,
+    scan_url,
 )
 from blackreach.exceptions import NavigationError
 
@@ -16,7 +17,7 @@ from blackreach.exceptions import NavigationError
 class TestBrowserRouterInit:
     def test_router_creates_cache_dir(self, tmp_path):
         cache = tmp_path / "route_cache.json"
-        router = BrowserRouter(cache_path=cache)
+        BrowserRouter(cache_path=cache)
         assert cache.parent.exists()
 
     def test_singleton_router(self):

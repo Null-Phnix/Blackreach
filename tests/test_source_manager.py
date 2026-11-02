@@ -4,12 +4,12 @@ Unit tests for blackreach/source_manager.py
 Tests source health tracking and failover logic.
 """
 
-import pytest
 import time
+
 from blackreach.source_manager import (
-    SourceStatus,
     SourceHealth,
     SourceManager,
+    SourceStatus,
 )
 
 
@@ -374,8 +374,9 @@ class TestSourceManagerGetBestSource:
         manager = SourceManager()
 
         # Exclude all possible domains
-        from blackreach.knowledge import CONTENT_SOURCES
         from urllib.parse import urlparse
+
+        from blackreach.knowledge import CONTENT_SOURCES
         all_domains = {urlparse(s.url).netloc for s in CONTENT_SOURCES}
 
         source = manager.get_best_source("ebook", exclude_domains=all_domains)
@@ -467,7 +468,7 @@ class TestSourceManagerFailoverLogic:
             domain = urlparse(source_with_mirrors.url).netloc
 
             # Try to get failover
-            result = manager.get_failover(domain, "paper")
+            manager.get_failover(domain, "paper")
             # May or may not return result depending on mirror availability
 
     def test_get_failover_returns_alternative_source(self):
@@ -487,8 +488,9 @@ class TestSourceManagerFailoverLogic:
         manager = SourceManager()
 
         # Exclude all sources by making them unavailable
-        from blackreach.knowledge import CONTENT_SOURCES
         from urllib.parse import urlparse
+
+        from blackreach.knowledge import CONTENT_SOURCES
 
         for s in CONTENT_SOURCES:
             domain = urlparse(s.url).netloc
@@ -631,8 +633,9 @@ class TestSourceManagerGetHealthySources:
         """get_healthy_sources should exclude DOWN sources."""
         manager = SourceManager()
 
-        from blackreach.knowledge import CONTENT_SOURCES
         from urllib.parse import urlparse
+
+        from blackreach.knowledge import CONTENT_SOURCES
 
         if CONTENT_SOURCES:
             # Mark first source as DOWN
@@ -811,8 +814,9 @@ class TestSourceManagerSuggestSourcesForGoal:
         """suggest_sources_for_goal should skip unavailable sources."""
         manager = SourceManager()
 
-        from blackreach.knowledge import CONTENT_SOURCES
         from urllib.parse import urlparse
+
+        from blackreach.knowledge import CONTENT_SOURCES
 
         # Mark some sources as down
         for s in CONTENT_SOURCES[:3]:
@@ -847,10 +851,9 @@ class TestGlobalSourceManager:
 
     def test_get_source_manager_returns_instance(self):
         """get_source_manager should return a SourceManager instance."""
-        from blackreach.source_manager import get_source_manager, _source_manager
-
         # Reset global state
         import blackreach.source_manager as sm
+        from blackreach.source_manager import get_source_manager
         sm._source_manager = None
 
         manager = get_source_manager()
@@ -860,8 +863,8 @@ class TestGlobalSourceManager:
 
     def test_get_source_manager_returns_same_instance(self):
         """get_source_manager should return the same instance on repeated calls."""
-        from blackreach.source_manager import get_source_manager
         import blackreach.source_manager as sm
+        from blackreach.source_manager import get_source_manager
 
         # Reset global state
         sm._source_manager = None
@@ -1057,7 +1060,7 @@ class TestGetFailoverEdgeCases:
             )
 
             # Do another failover - it should avoid the recent target
-            result2 = manager.get_failover("source2.com", "ebook")
+            manager.get_failover("source2.com", "ebook")
 
             # The recent failover target may be excluded (lines 255-256)
 
@@ -1085,7 +1088,7 @@ class TestSuggestSourcesEdgeCases:
             assert manager._health[domain].status == SourceStatus.RATE_LIMITED
 
             # Get suggestions again - this exercises line 385
-            updated = manager.suggest_sources_for_goal("find research paper")
+            manager.suggest_sources_for_goal("find research paper")
 
     def test_suggest_sources_degraded_modifier(self):
         """Degraded sources should have health modifier of 0.7."""
@@ -1106,7 +1109,7 @@ class TestSuggestSourcesEdgeCases:
             assert manager._health[domain].status == SourceStatus.DEGRADED
 
             # Get suggestions again - this exercises line 387
-            updated = manager.suggest_sources_for_goal("find research paper")
+            manager.suggest_sources_for_goal("find research paper")
 
     def test_suggest_sources_prefers_mirror_with_better_health(self):
         """When primary is not healthy and mirrors exist, prefer mirror with better health."""
@@ -1152,8 +1155,9 @@ class TestDomainMapBuilding:
         """Domain map should include primary URLs."""
         manager = SourceManager()
 
-        from blackreach.knowledge import CONTENT_SOURCES
         from urllib.parse import urlparse
+
+        from blackreach.knowledge import CONTENT_SOURCES
 
         # Just verify that domains are mapped (not necessarily to a specific source
         # since multiple sources can share the same domain like archive.org)
@@ -1166,8 +1170,9 @@ class TestDomainMapBuilding:
         """Domain map should include mirror URLs."""
         manager = SourceManager()
 
-        from blackreach.knowledge import CONTENT_SOURCES
         from urllib.parse import urlparse
+
+        from blackreach.knowledge import CONTENT_SOURCES
 
         for source in CONTENT_SOURCES:
             for mirror in source.mirrors:
@@ -1183,8 +1188,9 @@ class TestGetBestSourceScoringDetailed:
         """Test that consecutive failures penalty is applied to available sources."""
         manager = SourceManager()
 
-        from blackreach.knowledge import CONTENT_SOURCES
         from urllib.parse import urlparse
+
+        from blackreach.knowledge import CONTENT_SOURCES
 
         # Find an ebook source
         ebook_sources = [s for s in CONTENT_SOURCES if "ebook" in s.content_types]
@@ -1213,8 +1219,9 @@ class TestGetBestSourceScoringDetailed:
         """Test that recent success bonus is applied to available sources."""
         manager = SourceManager()
 
-        from blackreach.knowledge import CONTENT_SOURCES
         from urllib.parse import urlparse
+
+        from blackreach.knowledge import CONTENT_SOURCES
 
         # Find an ebook source
         ebook_sources = [s for s in CONTENT_SOURCES if "ebook" in s.content_types]
@@ -1242,8 +1249,9 @@ class TestGetBestSourceScoringDetailed:
         """Test that rate limited penalty is applied when source is still in candidates."""
         manager = SourceManager()
 
-        from blackreach.knowledge import CONTENT_SOURCES
         from urllib.parse import urlparse
+
+        from blackreach.knowledge import CONTENT_SOURCES
 
         # We need to make a source RATE_LIMITED but still available
         # This happens when status is RATE_LIMITED but cool_down_until has passed
@@ -1269,8 +1277,9 @@ class TestGetBestSourceScoringDetailed:
         """Test that degraded penalty is applied when source is still in candidates."""
         manager = SourceManager()
 
-        from blackreach.knowledge import CONTENT_SOURCES
         from urllib.parse import urlparse
+
+        from blackreach.knowledge import CONTENT_SOURCES
 
         ebook_sources = [s for s in CONTENT_SOURCES if "ebook" in s.content_types]
         if ebook_sources:
@@ -1298,8 +1307,9 @@ class TestSuggestSourcesMirrorLogicDetailed:
         """When primary is degraded and mirror has better success rate, prefer mirror."""
         manager = SourceManager()
 
-        from blackreach.knowledge import CONTENT_SOURCES
         from urllib.parse import urlparse
+
+        from blackreach.knowledge import CONTENT_SOURCES
 
         # Find a source with mirrors
         source_with_mirrors = None
@@ -1339,8 +1349,9 @@ class TestSuggestSourcesMirrorLogicDetailed:
         """When primary is healthy, should use primary URL not mirror."""
         manager = SourceManager()
 
-        from blackreach.knowledge import CONTENT_SOURCES
         from urllib.parse import urlparse
+
+        from blackreach.knowledge import CONTENT_SOURCES
 
         # Find a source with mirrors
         source_with_mirrors = None
@@ -1371,8 +1382,9 @@ class TestSuggestSourcesMirrorLogicDetailed:
         """Test rate limited modifier in suggestions when source is still available."""
         manager = SourceManager()
 
-        from blackreach.knowledge import CONTENT_SOURCES
         from urllib.parse import urlparse
+
+        from blackreach.knowledge import CONTENT_SOURCES
 
         # Find a paper source (since we know sci-hub has mirrors)
         paper_sources = [s for s in CONTENT_SOURCES if "paper" in s.content_types]
@@ -1397,8 +1409,9 @@ class TestSuggestSourcesMirrorLogicDetailed:
         """Test degraded modifier in suggestions when source is still available."""
         manager = SourceManager()
 
-        from blackreach.knowledge import CONTENT_SOURCES
         from urllib.parse import urlparse
+
+        from blackreach.knowledge import CONTENT_SOURCES
 
         paper_sources = [s for s in CONTENT_SOURCES if "paper" in s.content_types]
         if paper_sources:

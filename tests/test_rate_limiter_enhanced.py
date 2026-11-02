@@ -4,16 +4,16 @@ Unit tests for enhanced rate_limiter.py
 Tests adaptive throttling and response-based rate limiting.
 """
 
-import pytest
-import time
 from datetime import datetime, timedelta
 
+import pytest
+
 from blackreach.rate_limiter import (
-    RateLimiter,
-    RateLimitConfig,
     DomainState,
-    ServerResponseType,
+    RateLimitConfig,
+    RateLimiter,
     ResponseMetrics,
+    ServerResponseType,
     get_rate_limiter,
     reset_rate_limiter,
 )

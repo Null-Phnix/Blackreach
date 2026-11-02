@@ -4,8 +4,8 @@ Unit tests for blackreach/cli.py
 Tests CLI commands using Click's testing utilities.
 """
 
-import pytest
-from unittest.mock import patch, MagicMock, Mock
+from unittest.mock import MagicMock, patch
+
 from click.testing import CliRunner
 
 
@@ -120,7 +120,7 @@ class TestCLIInvocation:
 
     def test_cli_version(self):
         """CLI --version works."""
-        from blackreach.cli import cli, __version__
+        from blackreach.cli import __version__, cli
         runner = CliRunner()
         result = runner.invoke(cli, ['--version'])
         assert result.exit_code == 0
@@ -357,6 +357,7 @@ class TestSignalHandler:
     def test_signal_handler_prints_message(self, mock_console):
         """_signal_handler prints exit message."""
         import signal
+
         from blackreach.cli import _signal_handler
 
         # Should not raise
@@ -431,7 +432,7 @@ class TestInstallPlaywrightBrowsers:
         assert result is False
 
 
-class TestCleanupKeyboard:
+class TestCleanupKeyboardFunction:
     """Tests for _cleanup_keyboard function."""
 
     def test_cleanup_with_no_agent(self):
@@ -1079,7 +1080,6 @@ class TestCleanupHandlers:
 
     def test_atexit_registered(self):
         """atexit cleanup is registered."""
-        import atexit
         # Just verify the module loads without error
         # atexit.register is called at import time
         from blackreach.cli import _cleanup_keyboard
@@ -1123,6 +1123,7 @@ class TestPytestDetection:
     def test_signal_handlers_not_registered_under_pytest(self):
         """Signal handlers should not be registered when running under pytest."""
         import signal
+
         from blackreach.cli import _signal_handler
 
         # Get current SIGTERM handler
@@ -1451,7 +1452,7 @@ class TestValidateCommandBehavior:
 
         from blackreach.cli import cli
         runner = CliRunner()
-        result = runner.invoke(cli, ['validate', '--fix'])
+        runner.invoke(cli, ['validate', '--fix'])
 
         # Should fix browser to chromium
         assert mock_config.browser_type == "chromium"
@@ -1478,7 +1479,7 @@ class TestValidateCommandBehavior:
 
         from blackreach.cli import cli
         runner = CliRunner()
-        result = runner.invoke(cli, ['validate', '--fix'])
+        runner.invoke(cli, ['validate', '--fix'])
 
         # Should fix max_steps to 30
         assert mock_config.max_steps == 30
@@ -1578,7 +1579,7 @@ class TestSetupCommandBehavior:
 
         from blackreach.cli import cli
         runner = CliRunner()
-        result = runner.invoke(cli, ['setup'])
+        runner.invoke(cli, ['setup'])
 
         mock_setup.assert_called_once()
 
@@ -1593,7 +1594,7 @@ class TestSetupCommandBehavior:
 
         from blackreach.cli import cli
         runner = CliRunner()
-        result = runner.invoke(cli, ['setup', '--reset'])
+        runner.invoke(cli, ['setup', '--reset'])
 
         mock_config_file.unlink.assert_called_once()
 
@@ -1622,7 +1623,7 @@ class TestUpdateCommandBehavior:
 
         from blackreach.cli import cli
         runner = CliRunner()
-        result = runner.invoke(cli, ['update'])
+        runner.invoke(cli, ['update'])
 
         # Should run git pull
         assert any('git' in str(call) for call in mock_run.call_args_list)
@@ -1635,7 +1636,7 @@ class TestUpdateCommandBehavior:
 
         from blackreach.cli import cli
         runner = CliRunner()
-        result = runner.invoke(cli, ['update', '--force'])
+        runner.invoke(cli, ['update', '--force'])
 
         # Should run pip install
         assert any('pip' in str(call) for call in mock_run.call_args_list)
@@ -2285,7 +2286,7 @@ class TestConfigMenuBehavior:
 
         from blackreach.cli import cli
         runner = CliRunner()
-        result = runner.invoke(cli, ['config'])
+        runner.invoke(cli, ['config'])
 
         # Should have called set_default_provider
         mock_config_mgr.set_default_provider.assert_called_with("openai")
@@ -2747,7 +2748,7 @@ class TestValidateAPIKeyRequired:
 
         from blackreach.cli import cli
         runner = CliRunner()
-        result = runner.invoke(cli, ['validate'])
+        runner.invoke(cli, ['validate'])
 
         # Should check API key
         mock_config_mgr.has_api_key.assert_called()
@@ -2778,7 +2779,7 @@ class TestValidateMaxStepsFix:
 
         from blackreach.cli import cli
         runner = CliRunner()
-        result = runner.invoke(cli, ['validate', '--fix'])
+        runner.invoke(cli, ['validate', '--fix'])
 
         # Should fix max_steps to 100
         assert mock_config.max_steps == 100

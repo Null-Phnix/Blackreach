@@ -4,18 +4,18 @@ Unit tests for blackreach/resilience.py
 Tests retry logic, circuit breaker, and smart selectors.
 """
 
-import pytest
 import time
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
+
+import pytest
 
 from blackreach.resilience import (
-    RetryConfig,
-    retry_with_backoff,
     CircuitBreaker,
     CircuitBreakerConfig,
     CircuitBreakerOpen,
+    RetryConfig,
+    retry_with_backoff,
 )
-
 
 # =============================================================================
 # RetryConfig Tests
@@ -742,8 +742,9 @@ class TestSmartSelectorFindByText:
 
     def test_find_by_text_timeout_returns_none(self):
         """find_by_text() returns None on timeout."""
-        from blackreach.resilience import SmartSelector
         from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        from blackreach.resilience import SmartSelector
 
         mock_page = Mock()
         mock_locator = Mock()
@@ -968,8 +969,9 @@ class TestWaitConditionsMethods:
 
     def test_wait_for_url_timeout(self):
         """wait_for_url() returns False on timeout."""
-        from blackreach.resilience import WaitConditions
         from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        from blackreach.resilience import WaitConditions
 
         mock_page = Mock()
         mock_page.wait_for_url.side_effect = PlaywrightTimeout("Timeout")
@@ -995,8 +997,9 @@ class TestWaitConditionsMethods:
 
     def test_wait_for_text_timeout(self):
         """wait_for_text() returns False on timeout."""
-        from blackreach.resilience import WaitConditions
         from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        from blackreach.resilience import WaitConditions
 
         mock_page = Mock()
         mock_locator = Mock()
@@ -1024,8 +1027,9 @@ class TestWaitConditionsMethods:
 
     def test_wait_for_element_timeout(self):
         """wait_for_element() returns False on timeout."""
-        from blackreach.resilience import WaitConditions
         from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        from blackreach.resilience import WaitConditions
 
         mock_page = Mock()
         mock_locator = Mock()
@@ -1052,8 +1056,9 @@ class TestWaitConditionsMethods:
 
     def test_wait_for_network_idle_timeout(self):
         """wait_for_network_idle() returns False on timeout."""
-        from blackreach.resilience import WaitConditions
         from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        from blackreach.resilience import WaitConditions
 
         mock_page = Mock()
         mock_page.wait_for_load_state.side_effect = PlaywrightTimeout("Timeout")
@@ -1077,8 +1082,9 @@ class TestWaitConditionsMethods:
 
     def test_wait_for_navigation_timeout(self):
         """wait_for_navigation() returns False on timeout."""
-        from blackreach.resilience import WaitConditions
         from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+        from blackreach.resilience import WaitConditions
 
         mock_page = Mock()
         mock_page.wait_for_load_state.side_effect = PlaywrightTimeout("Timeout")
@@ -1105,7 +1111,6 @@ class TestCircuitBreakerThreadSafety:
 
     def test_concurrent_record_failures(self):
         """Concurrent record_failure calls should be atomic."""
-        import threading
         import concurrent.futures
 
         config = CircuitBreakerConfig(failure_threshold=100)
@@ -1127,7 +1132,6 @@ class TestCircuitBreakerThreadSafety:
 
     def test_concurrent_record_success_resets_count(self):
         """Concurrent success after half-open should properly close circuit."""
-        import threading
         import concurrent.futures
 
         config = CircuitBreakerConfig(failure_threshold=1, recovery_timeout=0.001)
@@ -1155,8 +1159,8 @@ class TestCircuitBreakerThreadSafety:
 
     def test_concurrent_allow_request_limits_half_open(self):
         """Concurrent allow_request in half-open should respect limits."""
-        import threading
         import concurrent.futures
+        import threading
 
         config = CircuitBreakerConfig(
             failure_threshold=1,
@@ -1190,8 +1194,8 @@ class TestCircuitBreakerThreadSafety:
 
     def test_concurrent_state_transitions(self):
         """Concurrent state access should be consistent."""
-        import threading
         import concurrent.futures
+        import threading
 
         config = CircuitBreakerConfig(failure_threshold=5, recovery_timeout=0.01)
         breaker = CircuitBreaker(config)
@@ -1232,8 +1236,8 @@ class TestCircuitBreakerThreadSafety:
 
     def test_concurrent_context_manager_usage(self):
         """Concurrent context manager usage should be thread-safe."""
-        import threading
         import concurrent.futures
+        import threading
 
         config = CircuitBreakerConfig(failure_threshold=100)
         breaker = CircuitBreaker(config)
@@ -1260,7 +1264,6 @@ class TestCircuitBreakerThreadSafety:
 
     def test_concurrent_reset_and_operations(self):
         """Reset during concurrent operations should be safe."""
-        import threading
         import concurrent.futures
 
         config = CircuitBreakerConfig(failure_threshold=50)

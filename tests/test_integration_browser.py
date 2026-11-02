@@ -8,13 +8,14 @@ Run with: pytest tests/test_integration_browser.py -v
 Skip network tests: pytest tests/test_integration_browser.py -v -m "not network"
 """
 
-import pytest
 import time
 from pathlib import Path
-from blackreach.browser import Hand
-from blackreach.stealth import StealthConfig
-from blackreach.resilience import RetryConfig
 
+import pytest
+
+from blackreach.browser import Hand
+from blackreach.resilience import RetryConfig
+from blackreach.stealth import StealthConfig
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration

@@ -5,27 +5,26 @@ Tests for structured logging to files with log levels.
 """
 
 import json
-import pytest
-from pathlib import Path
 from datetime import datetime
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+
+import pytest
 
 from blackreach.logging import (
-    LogEntry,
-    SessionLogger,
-    get_recent_logs,
-    read_log,
-    cleanup_old_logs,
-    LOG_DIR,
-    LogLevel,
-    filter_logs_by_level,
-    get_log_summary,
-    search_logs,
-    get_error_logs,
     ConsoleLogHandler,
     FileLogHandler,
     GlobalLogger,
+    LogEntry,
+    LogLevel,
+    SessionLogger,
+    cleanup_old_logs,
+    filter_logs_by_level,
+    get_error_logs,
+    get_log_summary,
     get_logger,
+    get_recent_logs,
+    read_log,
+    search_logs,
 )
 
 
@@ -122,7 +121,7 @@ class TestSessionLogger:
         log_dir = tmp_path / "logs"
         monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
 
-        logger = SessionLogger(1, "test goal")
+        SessionLogger(1, "test goal")
 
         assert log_dir.exists()
 
@@ -369,7 +368,6 @@ class TestSessionLoggerWriteFailure:
 
     def test_write_failure_does_not_crash(self, tmp_path, monkeypatch):
         """Write failure does not crash the logger."""
-        from unittest.mock import patch, mock_open
 
         log_dir = tmp_path / "logs"
         monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
@@ -387,7 +385,6 @@ class TestSessionLoggerWriteFailure:
 
     def test_write_failure_with_io_error(self, tmp_path, monkeypatch):
         """IOError during write does not crash."""
-        from unittest.mock import patch
 
         log_dir = tmp_path / "logs"
         monkeypatch.setattr("blackreach.logging.LOG_DIR", log_dir)
@@ -789,7 +786,6 @@ class TestFileLogHandler:
         handler = FileLogHandler(log_file)
 
         # Make the file unwritable by removing the parent directory
-        import shutil
         # Write to check it works first
         entry = LogEntry(
             timestamp=datetime.now().isoformat(),

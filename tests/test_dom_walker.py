@@ -5,18 +5,19 @@ Tests the DOM walker module that extracts interactive elements from the
 live browser DOM. All browser interactions are mocked - no real browser needed.
 """
 
+from unittest.mock import MagicMock, Mock, PropertyMock, patch
+
 import pytest
-from unittest.mock import Mock, MagicMock, PropertyMock, patch
+
 from blackreach.dom_walker import (
-    walk_dom,
-    format_elements,
-    format_text_summary,
-    _format_single_element,
-    _empty_result,
     CONTEXT_PRESETS,
     DOM_WALK_JS,
+    _empty_result,
+    _format_single_element,
+    format_elements,
+    format_text_summary,
+    walk_dom,
 )
-
 
 # =============================================================================
 # FIXTURES

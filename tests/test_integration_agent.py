@@ -7,15 +7,14 @@ They require network access and may use LLM API calls.
 Run with: pytest tests/test_integration_agent.py -v
 """
 
-import pytest
-import time
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
-from blackreach.agent import Agent, AgentConfig, AgentCallbacks
-from blackreach.llm import LLMConfig
-from blackreach.browser import Hand
-from blackreach.exceptions import UnknownActionError, InvalidActionArgsError, BrowserError
+from unittest.mock import Mock
 
+import pytest
+
+from blackreach.agent import Agent, AgentCallbacks, AgentConfig
+from blackreach.browser import Hand
+from blackreach.exceptions import BrowserError, InvalidActionArgsError, UnknownActionError
+from blackreach.llm import LLMConfig
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration

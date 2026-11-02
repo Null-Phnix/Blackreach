@@ -4,16 +4,13 @@ Unit tests for blackreach/progress.py
 Tests for download progress tracking and display.
 """
 
-import pytest
 import time
-from unittest.mock import MagicMock, patch
 
 from blackreach.progress import (
     DownloadInfo,
-    DownloadState,
     DownloadProgressTracker,
+    DownloadState,
     TaskProgressTracker,
-    track_downloads,
     format_size,
     format_speed,
     format_time,

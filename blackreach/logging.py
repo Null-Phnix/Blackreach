@@ -14,21 +14,16 @@ Each session gets its own log file with timestamp.
 """
 
 import json
-import logging
 import re
-import sys
-from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Any, Dict, Optional, List, Callable, Union
-from dataclasses import dataclass, asdict, field
-from enum import IntEnum
-from contextlib import contextmanager
 import threading
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from enum import IntEnum
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
 from rich.console import Console
-from rich.text import Text
-from rich.panel import Panel
-
 
 # Log directory
 LOG_DIR = Path.home() / ".blackreach" / "logs"
@@ -570,7 +565,7 @@ class SessionLogger:
 
 
 # Import time module for timed operations
-import time
+import time  # noqa: E402
 
 
 def get_recent_logs(n: int = 5) -> list:

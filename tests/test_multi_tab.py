@@ -9,19 +9,17 @@ Tests cover:
 - Tab lifecycle management (create, get, release, close)
 """
 
-import pytest
-from datetime import datetime, timedelta
-from unittest.mock import Mock, MagicMock, patch
 import time
+from datetime import datetime
+from unittest.mock import Mock
 
 from blackreach.multi_tab import (
-    TabStatus,
-    TabInfo,
-    TabPoolConfig,
-    TabManager,
     SyncTabManager,
+    TabInfo,
+    TabManager,
+    TabPoolConfig,
+    TabStatus,
 )
-
 
 # =============================================================================
 # TabStatus Enum Tests
@@ -411,7 +409,7 @@ class TestSyncTabManagerGetTab:
 
         # Create and release 2 tabs
         tab1 = manager.create_tab()
-        tab2 = manager.create_tab()
+        manager.create_tab()
         manager.release_tab(tab1.tab_id)  # Make idle
 
         # Now at max with 1 idle, 1 active
@@ -665,7 +663,7 @@ class TestSyncTabManagerStatus:
 
         manager = SyncTabManager(mock_context)
         tab1 = manager.create_tab()
-        tab2 = manager.create_tab()
+        manager.create_tab()
         manager.release_tab(tab1.tab_id)  # Make idle
 
         status = manager.get_status()
@@ -694,7 +692,7 @@ class TestSyncTabManagerGetMainTab:
 
         manager = SyncTabManager(mock_context)
         tab1 = manager.create_tab()
-        tab2 = manager.create_tab()
+        manager.create_tab()
 
         result = manager.get_main_tab()
 
@@ -842,8 +840,8 @@ class TestSyncTabManagerThreadSafety:
 
     def test_concurrent_get_tab_returns_unique_tabs(self):
         """Concurrent get_tab calls should never return the same tab."""
-        import threading
         import concurrent.futures
+        import threading
 
         mock_context = Mock()
         # Each call to new_page returns a unique mock
@@ -873,8 +871,8 @@ class TestSyncTabManagerThreadSafety:
 
     def test_concurrent_get_tab_with_reuse_no_duplicate_assignment(self):
         """Concurrent get_tab with reuse should not assign same idle tab twice."""
-        import threading
         import concurrent.futures
+        import threading
 
         mock_context = Mock()
         mock_context.new_page.side_effect = lambda: Mock()
@@ -911,7 +909,6 @@ class TestSyncTabManagerThreadSafety:
 
     def test_concurrent_create_and_close_tabs(self):
         """Concurrent create and close operations should be safe."""
-        import threading
         import concurrent.futures
 
         mock_context = Mock()
@@ -948,8 +945,8 @@ class TestSyncTabManagerThreadSafety:
 
     def test_concurrent_release_and_get_tab(self):
         """Concurrent release and get_tab should coordinate correctly."""
-        import threading
         import concurrent.futures
+        import threading
 
         mock_context = Mock()
         mock_context.new_page.side_effect = lambda: Mock()
@@ -959,7 +956,7 @@ class TestSyncTabManagerThreadSafety:
 
         # Create initial tabs
         tab1 = manager.create_tab()
-        tab2 = manager.create_tab()
+        manager.create_tab()
 
         results = []
         lock = threading.Lock()
@@ -983,8 +980,8 @@ class TestSyncTabManagerThreadSafety:
 
     def test_concurrent_get_status(self):
         """Concurrent get_status calls should be safe."""
-        import threading
         import concurrent.futures
+        import threading
 
         mock_context = Mock()
         mock_context.new_page.side_effect = lambda: Mock()
@@ -1028,7 +1025,6 @@ class TestSyncTabManagerThreadSafety:
 
     def test_concurrent_close_all(self):
         """Concurrent close_all calls should be safe."""
-        import threading
         import concurrent.futures
 
         mock_context = Mock()
@@ -1054,8 +1050,8 @@ class TestSyncTabManagerThreadSafety:
 
     def test_concurrent_navigate_different_tabs(self):
         """Concurrent navigation in different tabs should be safe."""
-        import threading
         import concurrent.futures
+        import threading
 
         mock_context = Mock()
         mock_context.new_page.side_effect = lambda: Mock()
@@ -1088,8 +1084,8 @@ class TestSyncTabManagerThreadSafety:
 
     def test_tab_counter_thread_safety(self):
         """Tab counter should be incremented atomically."""
-        import threading
         import concurrent.futures
+        import threading
 
         mock_context = Mock()
         mock_context.new_page.side_effect = lambda: Mock()

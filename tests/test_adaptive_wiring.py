@@ -1,14 +1,13 @@
 """Tests for agent adaptive routing and domain skills wiring."""
 
-from pathlib import Path
 
-import pytest
 from unittest.mock import MagicMock, patch
 
-from blackreach.agent import Agent, AgentConfig
-from blackreach.adaptive_browser import BrowserMode, RoutePlan, BrowserRouter
-from blackreach.bulk_fetcher import FetchResult
+import pytest
 
+from blackreach.adaptive_browser import BrowserMode, RoutePlan
+from blackreach.agent import Agent, AgentConfig
+from blackreach.bulk_fetcher import FetchResult
 
 # ---------------------------------------------------------------------------
 # Fixtures

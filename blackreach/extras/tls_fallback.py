@@ -6,8 +6,8 @@ ponytail: NOT wired into the fallback chain yet, and `curl_cffi` is not installe
 Import-safe (guarded below); fetch() raises a clear error until the dep is added and a
 caller is added in blackreach/browser.py. Wire-up + `pip install curl_cffi` is a Phase-2 item.
 """
-import re
 import logging
+import re
 
 try:
     from curl_cffi import requests as cffi_requests
@@ -39,10 +39,10 @@ def fetch(url: str, timeout: int = 15) -> dict:
         html = r.text
         title_match = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE | re.DOTALL)
         title = title_match.group(1).strip() if title_match else ""
-        
+
         combined = (title + html[:2000]).lower()
         blocked = any(m in combined for m in BLOCK_MARKERS)
-        
+
         return {
             "url": str(r.url),
             "status": r.status_code,

@@ -18,11 +18,10 @@ then the executor uses a faster model for each step.
 
 import json
 import re
-from typing import List, Optional
 from dataclasses import dataclass
+from typing import List, Optional
 
 from blackreach.llm import LLM, LLMConfig
-
 
 # P0-PERF: Pre-compiled regex patterns
 _RE_NUMBERS_GT_1 = re.compile(r'\b([2-9]|[1-9]\d+)\b')

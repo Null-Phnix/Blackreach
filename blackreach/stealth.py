@@ -10,8 +10,8 @@ Techniques to avoid detection by anti-bot systems:
 """
 
 import random
-from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -85,19 +85,19 @@ BLOCKED_DOMAINS = [
 
 class Stealth:
     """Stealth utilities for evading bot detection."""
-    
+
     def __init__(self, config: Optional[StealthConfig] = None):
         self.config = config or StealthConfig()
         self._current_proxy_index = 0
-    
+
     def get_random_user_agent(self) -> str:
         """Get a random user agent string."""
         return random.choice(USER_AGENTS)
-    
+
     def get_random_viewport(self) -> Dict[str, int]:
         """Get a random viewport size."""
         return random.choice(VIEWPORTS).copy()
-    
+
     def get_next_proxy(self) -> Optional[str]:
         """Get next proxy from rotation list."""
         if not self.config.proxy_rotation:
@@ -105,24 +105,24 @@ class Stealth:
         proxy = self.config.proxy_rotation[self._current_proxy_index]
         self._current_proxy_index = (self._current_proxy_index + 1) % len(self.config.proxy_rotation)
         return proxy
-    
+
     def random_delay(self, min_s: float = None, max_s: float = None) -> float:
         """Get a random delay duration."""
         min_s = min_s or self.config.min_delay
         max_s = max_s or self.config.max_delay
         return random.uniform(min_s, max_s)
-    
+
     def typing_delay(self) -> float:
         """Get delay between keystrokes for human-like typing."""
         min_d, max_d = self.config.typing_speed
         return random.uniform(min_d, max_d)
-    
+
     def should_block_url(self, url: str) -> bool:
         """Check if URL should be blocked (tracking, ads, etc.)."""
         if not self.config.block_tracking:
             return False
         return any(domain in url.lower() for domain in BLOCKED_DOMAINS)
-    
+
     def get_resource_types_to_block(self) -> List[str]:
         """Get list of resource types to block."""
         blocked = []

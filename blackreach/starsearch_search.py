@@ -19,7 +19,7 @@ import socket
 import time
 import urllib.parse
 from pathlib import Path
-from typing import List, Dict
+from typing import Dict, List
 
 from bs4 import BeautifulSoup
 

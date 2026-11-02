@@ -4,16 +4,18 @@ Unit tests for blackreach/error_recovery.py
 Tests error categorization and recovery strategy selection.
 """
 
-import pytest
 import time
+
+import pytest
+
 from blackreach.error_recovery import (
     ErrorCategory,
-    RecoveryAction,
     ErrorInfo,
-    RecoveryResult,
     ErrorRecovery,
-    with_recovery,
+    RecoveryAction,
+    RecoveryResult,
     get_recovery,
+    with_recovery,
 )
 
 

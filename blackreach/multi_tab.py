@@ -8,12 +8,12 @@ Provides multi-tab browser management:
 - Cross-tab coordination
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Callable
-from datetime import datetime
-from enum import Enum
 import asyncio
 import threading
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, Optional
 
 
 class TabStatus(Enum):

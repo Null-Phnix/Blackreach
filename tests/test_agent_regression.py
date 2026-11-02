@@ -1,9 +1,11 @@
 # Regression tests for action-tracking and goal-negation bugs (2026-05-08)
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
+
 from blackreach.agent import Agent, AgentConfig, goal_needs_download
-from blackreach.llm import LLMConfig
 from blackreach.exceptions import BrowserError
+from blackreach.llm import LLMConfig
 
 
 class TestStepRecordsOnFailure:

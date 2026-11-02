@@ -4,14 +4,14 @@ Unit tests for blackreach/timeout_manager.py
 Tests adaptive timeout management with historical learning.
 """
 
-import pytest
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
+
 from blackreach.timeout_manager import (
-    TimeoutConfig,
     ActionTiming,
-    TimeoutStats,
+    TimeoutConfig,
     TimeoutManager,
+    TimeoutStats,
     get_timeout_manager,
     reset_timeout_manager,
 )

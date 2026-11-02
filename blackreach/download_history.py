@@ -8,16 +8,15 @@ Tracks download history to prevent re-downloading same files:
 - Download statistics and analytics
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
-from datetime import datetime
-from pathlib import Path
-from enum import Enum
+import json
 import logging
 import sqlite3
-import json
-import hashlib
 import threading
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 

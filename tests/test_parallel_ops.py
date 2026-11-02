@@ -4,26 +4,25 @@ Unit tests for blackreach/parallel_ops.py
 Tests parallel operation capabilities.
 """
 
-import pytest
-from datetime import datetime
-from unittest.mock import MagicMock, patch, PropertyMock
 import threading
 import time
+from datetime import datetime
+from unittest.mock import MagicMock, patch
 
+from blackreach.multi_tab import TabInfo, TabStatus
 from blackreach.parallel_ops import (
-    ParallelTaskType,
-    ParallelTaskStatus,
-    ParallelTask,
-    ParallelResult,
-    ParallelFetcher,
     ParallelDownloader,
-    ParallelSearcher,
+    ParallelFetcher,
     ParallelOperationManager,
+    ParallelResult,
+    ParallelSearcher,
+    ParallelTask,
+    ParallelTaskStatus,
+    ParallelTaskType,
     get_parallel_manager,
     reset_parallel_manager,
 )
-from blackreach.multi_tab import TabInfo, TabStatus, TabPoolConfig
-from blackreach.rate_limiter import RateLimiter, RateLimitConfig
+from blackreach.rate_limiter import RateLimitConfig, RateLimiter
 
 
 class TestParallelTaskType:
@@ -303,9 +302,9 @@ class TestParallelFetcherExecution:
 
     def test_fetcher_uses_thread_pool(self):
         """ParallelFetcher should use ThreadPoolExecutor for parallel execution."""
-        from concurrent.futures import ThreadPoolExecutor
-        import blackreach.parallel_ops as parallel_ops
         import inspect
+
+        import blackreach.parallel_ops as parallel_ops
 
         # Check that ThreadPoolExecutor is used in fetch_pages
         source = inspect.getsource(parallel_ops.ParallelFetcher.fetch_pages)
@@ -314,8 +313,9 @@ class TestParallelFetcherExecution:
 
     def test_downloader_uses_thread_pool(self):
         """ParallelDownloader should use ThreadPoolExecutor for parallel execution."""
-        import blackreach.parallel_ops as parallel_ops
         import inspect
+
+        import blackreach.parallel_ops as parallel_ops
 
         source = inspect.getsource(parallel_ops.ParallelDownloader.download_files)
         assert "ThreadPoolExecutor" in source, "download_files should use ThreadPoolExecutor"
@@ -323,8 +323,9 @@ class TestParallelFetcherExecution:
 
     def test_searcher_uses_thread_pool(self):
         """ParallelSearcher should use ThreadPoolExecutor for parallel execution."""
-        import blackreach.parallel_ops as parallel_ops
         import inspect
+
+        import blackreach.parallel_ops as parallel_ops
 
         source = inspect.getsource(parallel_ops.ParallelSearcher.search_multiple_sources)
         assert "ThreadPoolExecutor" in source, "search_multiple_sources should use ThreadPoolExecutor"
@@ -335,8 +336,9 @@ class TestParallelFetcherConfig:
 
     def test_max_parallel_default(self):
         """ParallelFetcher should have sensible max_parallel default."""
-        from blackreach.parallel_ops import ParallelFetcher
         from unittest.mock import MagicMock
+
+        from blackreach.parallel_ops import ParallelFetcher
 
         # Create mock browser context
         mock_context = MagicMock()
@@ -347,8 +349,9 @@ class TestParallelFetcherConfig:
 
     def test_max_parallel_configurable(self):
         """ParallelFetcher max_parallel should be configurable."""
-        from blackreach.parallel_ops import ParallelFetcher
         from unittest.mock import MagicMock
+
+        from blackreach.parallel_ops import ParallelFetcher
 
         mock_context = MagicMock()
         fetcher = ParallelFetcher(mock_context, max_parallel=5)
@@ -427,7 +430,7 @@ class TestParallelFetcherInit:
 
     def test_init_with_custom_timeout_manager(self):
         """ParallelFetcher accepts custom timeout manager."""
-        from blackreach.timeout_manager import TimeoutManager, TimeoutConfig
+        from blackreach.timeout_manager import TimeoutConfig, TimeoutManager
 
         mock_context = MagicMock()
         custom_tm = TimeoutManager(TimeoutConfig(default_timeout=60.0))
@@ -1194,7 +1197,7 @@ class TestParallelDownloaderDownloadSingle:
         # Will fail due to mock but we're testing the status set
         try:
             downloader._download_single(task)
-        except:
+        except Exception:
             pass
 
         assert task.started_at is not None
@@ -1783,7 +1786,7 @@ class TestParallelOperationManagerDelegationMethods:
         manager._fetcher.fetch_pages.return_value = mock_result
 
         urls = ["https://example.com"]
-        result = manager.fetch_pages(urls)
+        manager.fetch_pages(urls)
 
         manager._fetcher.fetch_pages.assert_called_once_with(urls)
 
@@ -1796,7 +1799,7 @@ class TestParallelOperationManagerDelegationMethods:
         manager._downloader.download_files.return_value = mock_result
 
         items = [("https://example.com/file.pdf", "file.pdf")]
-        result = manager.download_files(items)
+        manager.download_files(items)
 
         manager._downloader.download_files.assert_called_once()
 
@@ -1808,7 +1811,7 @@ class TestParallelOperationManagerDelegationMethods:
         manager._searcher.search_multiple_sources.return_value = {"source": []}
 
         sources = ["https://google.com?q={query}"]
-        result = manager.search_sources("test", sources)
+        manager.search_sources("test", sources)
 
         manager._searcher.search_multiple_sources.assert_called_once()
 
@@ -1943,7 +1946,7 @@ class TestResetParallelManager:
     def test_reset_clears_manager(self):
         """reset_parallel_manager clears the global manager."""
         mock_context = MagicMock()
-        manager = get_parallel_manager(browser_context=mock_context)
+        get_parallel_manager(browser_context=mock_context)
 
         reset_parallel_manager()
 

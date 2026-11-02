@@ -10,24 +10,22 @@ Tests cover:
 - Global get_session_manager function
 """
 
-import pytest
-from datetime import datetime, timedelta
-from pathlib import Path
-from unittest.mock import Mock, patch
-import tempfile
-import sqlite3
 import json
-import os
+import sqlite3
+import tempfile
+from datetime import datetime
+from pathlib import Path
+
+import pytest
 
 from blackreach.session_manager import (
-    SessionStatus,
-    SessionSnapshot,
-    SessionState,
     LearningData,
     SessionManager,
+    SessionSnapshot,
+    SessionState,
+    SessionStatus,
     get_session_manager,
 )
-
 
 # =============================================================================
 # SessionStatus Enum Tests
@@ -289,12 +287,12 @@ class TestSessionManagerInit:
 
     def test_init_creates_database(self, temp_db_path):
         """SessionManager creates database on init."""
-        manager = SessionManager(temp_db_path)
+        SessionManager(temp_db_path)
         assert temp_db_path.exists()
 
     def test_init_creates_tables(self, temp_db_path):
         """SessionManager creates required tables."""
-        manager = SessionManager(temp_db_path)
+        SessionManager(temp_db_path)
 
         conn = sqlite3.connect(temp_db_path)
         cursor = conn.cursor()
@@ -734,7 +732,7 @@ class TestSessionManagerGetResumableSessions:
 
     def test_get_resumable_includes_active(self, session_manager):
         """get_resumable_sessions includes active sessions."""
-        session = session_manager.create_session(
+        session_manager.create_session(
             goal="Active Session",
             start_url="https://example.com"
         )

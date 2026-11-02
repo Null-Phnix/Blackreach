@@ -5,13 +5,14 @@ Tests agent configuration, callbacks, and core logic.
 Note: Full integration tests require browser fixtures.
 """
 
-import pytest
-from urllib.parse import urlparse
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
-from dataclasses import asdict
-from blackreach.agent import Agent, AgentConfig, AgentCallbacks, download_quota
-from blackreach.exceptions import SessionNotFoundError, LLMError, BrowserError
+from unittest.mock import MagicMock, Mock, patch
+from urllib.parse import urlparse
+
+import pytest
+
+from blackreach.agent import Agent, AgentCallbacks, AgentConfig, download_quota
+from blackreach.exceptions import BrowserError, LLMError, SessionNotFoundError
 
 
 @pytest.mark.parametrize(
@@ -286,18 +287,6 @@ class TestActionAliases:
     def test_action_aliases_defined(self):
         """Action aliases are defined in execute method."""
         # These are the expected aliases
-        expected_aliases = {
-            "search": "type",
-            "go": "navigate",
-            "goto": "navigate",
-            "visit": "navigate",
-            "enter": "type",
-            "input": "type",
-            "link": "click",
-            "press_key": "press",
-            "finish": "done",
-            "complete": "done",
-        }
 
         # Verify these are documented (by checking that code contains them)
         agent = Agent()
@@ -521,8 +510,8 @@ class TestLoadPrompts:
 
     def test_load_prompts_fallback_when_missing(self):
         """_load_prompts uses fallback when react.txt missing."""
-        from unittest.mock import patch, MagicMock
         from pathlib import Path
+        from unittest.mock import patch
 
         # Create a mock that makes react file not exist
         original_exists = Path.exists
@@ -1228,7 +1217,7 @@ class TestRunBrowserFailureHandling:
         agent = Agent(agent_config=config)
 
         with patch.object(agent, 'ensure_browser', return_value=False):
-            result = agent.run("test goal", quiet=True)
+            agent.run("test goal", quiet=True)
 
         # Session should have been started
         assert agent.session_id is not None
@@ -2104,7 +2093,7 @@ class TestExecuteActionClick:
         agent = Agent(agent_config=config)
 
         mock_page = MagicMock()
-        mock_locator = MagicMock()
+        MagicMock()
         mock_page.get_by_text.return_value.first.click.return_value = None
         mock_hand = MagicMock()
         mock_hand.page = mock_page
@@ -2226,7 +2215,7 @@ class TestResumeExtended:
 
         with patch.object(agent.persistent_memory, 'load_session_state', return_value=mock_state):
             with patch.object(agent, 'ensure_browser', return_value=False):  # Browser fails
-                result = agent.resume(123, quiet=True)
+                agent.resume(123, quiet=True)
 
         # State should be restored
         assert agent.session_id == 123
@@ -2255,7 +2244,7 @@ class TestResumeExtended:
 
         with patch.object(agent.persistent_memory, 'load_session_state', return_value=mock_state):
             with patch.object(agent, 'ensure_browser', return_value=True):
-                with patch.object(agent, '_run_loop', return_value={"success": True, "paused": False}) as mock_run:
+                with patch.object(agent, '_run_loop', return_value={"success": True, "paused": False}):
                     agent.hand = mock_hand
                     agent.resume(123, quiet=True)
 
@@ -2876,14 +2865,6 @@ class TestAgentDomWalkerEmptyResults:
         agent = Agent(agent_config=config)
 
         # An empty result similar to what dom_walker._empty_result() produces
-        empty_result = {
-            "elements": [],
-            "text_summary": "",
-            "url": "https://example.com",
-            "title": "",
-            "total_elements": 0,
-            "visible_elements": 0,
-        }
         # Agent's _format_elements expects old observer format, so pass empty dict
         result = agent._format_elements({})
         assert result is not None
@@ -2892,7 +2873,7 @@ class TestAgentDomWalkerEmptyResults:
     def test_agent_handles_dom_result_with_error(self, tmp_path):
         """Agent handles dom_walker result that includes an error key."""
         config = AgentConfig(memory_db=tmp_path / "test.db")
-        agent = Agent(agent_config=config)
+        Agent(agent_config=config)
 
         error_result = {
             "elements": [],

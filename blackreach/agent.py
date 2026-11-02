@@ -15,41 +15,53 @@ import json
 import logging
 import re
 import time
-from pathlib import Path
-from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
-from urllib.parse import urlparse, urljoin
+from pathlib import Path
+from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
-from blackreach.browser import Hand
-from blackreach.detection import SiteDetector
-from blackreach.dom_walker import walk_dom, format_elements, format_text_summary, debug_html
-from blackreach.observer import Eyes
-from blackreach.llm import LLM, LLMConfig
-from blackreach.stealth import StealthConfig
-from blackreach.resilience import RetryConfig
-from blackreach.memory import SessionMemory, PersistentMemory
-from blackreach.logging import SessionLogger, redact_log_text
-from blackreach.exceptions import (
-    InvalidActionArgsError, UnknownActionError, SessionNotFoundError,
-    BrowserError, NavigationError, DownloadError, LLMError, NetworkError,
-)
-from blackreach.knowledge import reason_about_goal, get_working_url, get_all_urls_for_source, find_best_sources
 from blackreach.action_tracker import ActionTracker
-from blackreach.stuck_detector import StuckDetector, RecoveryStrategy, compute_content_hash
-from blackreach.error_recovery import ErrorRecovery
-from blackreach.source_manager import get_source_manager
-from blackreach.goal_engine import GoalDecomposition, get_goal_engine
-from blackreach.nav_context import NavigationContext, PageValue
-from blackreach.site_handlers import get_site_hints
-from blackreach.search_intel import SearchIntelligence, get_search_fallback_url, SearchEngine, DEFAULT_SEARCH_ENGINE
-from blackreach.content_verify import VerificationStatus, get_verifier
-from blackreach.timeout_manager import get_timeout_manager
-from blackreach.rate_limiter import get_rate_limiter
-
 from blackreach.adaptive_browser import BrowserMode, BrowserRouter, _require_web_url
-from blackreach.domain_skills import get_skill_manager
 from blackreach.agent_actions import AgentActionsMixin
 from blackreach.agent_format import AgentFormatMixin
+from blackreach.browser import Hand
+from blackreach.content_verify import get_verifier
+from blackreach.detection import SiteDetector
+from blackreach.dom_walker import format_elements, format_text_summary, walk_dom
+from blackreach.domain_skills import get_skill_manager
+from blackreach.error_recovery import ErrorRecovery
+from blackreach.exceptions import (
+    BrowserError,
+    LLMError,
+    NavigationError,
+    NetworkError,
+    SessionNotFoundError,
+)
+from blackreach.goal_engine import GoalDecomposition, get_goal_engine
+from blackreach.knowledge import (
+    find_best_sources,
+    get_all_urls_for_source,
+    get_working_url,
+    reason_about_goal,
+)
+from blackreach.llm import LLM, LLMConfig
+from blackreach.logging import SessionLogger, redact_log_text
+from blackreach.memory import PersistentMemory, SessionMemory
+from blackreach.nav_context import NavigationContext, PageValue
+from blackreach.observer import Eyes
+from blackreach.rate_limiter import get_rate_limiter
+from blackreach.resilience import RetryConfig
+from blackreach.search_intel import (
+    DEFAULT_SEARCH_ENGINE,
+    SearchEngine,
+    SearchIntelligence,
+    get_search_fallback_url,
+)
+from blackreach.site_handlers import get_site_hints
+from blackreach.source_manager import get_source_manager
+from blackreach.stealth import StealthConfig
+from blackreach.stuck_detector import RecoveryStrategy, StuckDetector, compute_content_hash
+from blackreach.timeout_manager import get_timeout_manager
 
 logger = logging.getLogger(__name__)
 
@@ -361,7 +373,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
         try:
             self.hand.click(sel)
             self._skill_manager.record_success(domain, action_hint, {"selector": sel},
-                                               notes=f"element_id path")
+                                               notes="element_id path")
             return {"action": "click", "skill": action_hint, "selector": sel}
         except Exception as e:
             self._skill_manager.record_failure(domain, action_hint, str(e))
@@ -897,7 +909,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
         url_match = RE_URL.search(goal)
         if url_match:
             url = url_match.group()
-            return (url, f"Using URL specified in goal", "")
+            return (url, "Using URL specified in goal", "")
 
         # Also check for bare domain names (e.g., "google.com", "example.org")
         domain_match = RE_DOMAIN.search(goal)
@@ -920,7 +932,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
                     else:
                         log(f"   {engine.value.title()} blocked → using DuckDuckGo")
                         return ("https://lite.duckduckgo.com/lite/", f"{engine.value.title()} blocked, using DuckDuckGo", "")
-                return (url, f"Using domain specified in goal", "")
+                return (url, "Using domain specified in goal", "")
 
         if re.search(r"\b(?:summari[sz]e|summari[sz]ing|summary|summize|explain|overview)\b", goal, re.I):
             search_url, _ = get_search_fallback_url(goal)
@@ -931,7 +943,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
         search_query = self.search_intel.create_search(goal, content_type)
         self._current_search_session = self.search_intel.start_session(search_query)
 
-        log(f"\n🧠 REASONING:")
+        log("\n🧠 REASONING:")
         log(f"   Content type: {', '.join(result['content_types'])}")
         log(f"   Subject: \"{result['subject']}\"")
         log(f"   Optimized query: \"{search_query.query}\"")
@@ -1184,7 +1196,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
                 self._consecutive_challenges = 2  # Trigger failover logic
 
             elif strategy == RecoveryStrategy.SCROLL_AND_EXPLORE:
-                log(f"  [SCROLLING to find more content]")
+                log("  [SCROLLING to find more content]")
                 self.hand.scroll("down", 800)
                 time.sleep(1)
                 self.stuck_detector.record_recovery_attempt(strategy)
@@ -1192,7 +1204,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
                 html = self.hand.get_html()
 
             elif strategy == RecoveryStrategy.WAIT_AND_RETRY:
-                log(f"  [WAITING 3s then refreshing]")
+                log("  [WAITING 3s then refreshing]")
                 time.sleep(3)
                 self.hand.refresh()
                 time.sleep(2)
@@ -1202,7 +1214,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
                 title = self.hand.get_title()
 
             elif strategy == RecoveryStrategy.GIVE_UP:
-                log(f"  [GIVING UP on current approach - resetting to start]")
+                log("  [GIVING UP on current approach - resetting to start]")
                 self.stuck_detector.record_recovery_attempt(strategy)
                 self.stuck_detector.reset()
                 self._recent_urls = []
@@ -1215,7 +1227,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
                 title = self.hand.get_title()
 
             elif strategy == RecoveryStrategy.REFORMULATE_SEARCH:
-                log(f"  [REFORMULATING search - trying alternate query]")
+                log("  [REFORMULATING search - trying alternate query]")
                 self.stuck_detector.record_recovery_attempt(strategy)
                 # Inject a failure note that the LLM will see in context,
                 # prompting it to try different search terms or approach
@@ -1312,7 +1324,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
                                 break
 
                             if not found_working:
-                                log(f"  [WARNING: All known sources blocked - continuing with current page]")
+                                log("  [WARNING: All known sources blocked - continuing with current page]")
 
             url = self.hand.get_url()
             title = self.hand.get_title()
@@ -1347,7 +1359,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
         if is_download_goal:
             download_landing = self.detector.detect_download_landing(html, url)
             if download_landing.detected:
-                log(f"  [Download landing page detected - look for download button]")
+                log("  [Download landing page detected - look for download button]")
 
         # Walk the live DOM to get all interactive elements with numeric IDs
         # This replaces the old BeautifulSoup parsing with live browser DOM walking
@@ -1359,8 +1371,7 @@ class Agent(AgentActionsMixin, AgentFormatMixin):
 
         # If DOM walker found nothing, try render recovery then re-walk
         if not dom_result.get("elements"):
-            debug_info = debug_html(html)
-            log(f"  [No elements found - render recovery...]")
+            log("  [No elements found - render recovery...]")
 
             for attempt in range(2):
                 if attempt == 0:
@@ -1622,7 +1633,7 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
 
         # Format 3: {"done": true} or {"status": "done"}
         if not action:
-            if data.get("done") == True or data.get("status") == "done":
+            if data.get("done") is True or data.get("status") == "done":
                 action = "done"
                 args = {"reason": data.get("reason", "complete")}
 
@@ -1738,7 +1749,7 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
             # Don't allow "done" if the goal still needs a file and we have 0.
             # Word boundaries: "notes" and "find and download" must not slip through.
             if goal_needs_download(goal) and download_count == 0:
-                log(f"  [BLOCKED: Goal needs downloads but have 0 - continuing search]")
+                log("  [BLOCKED: Goal needs downloads but have 0 - continuing search]")
                 self._record_failure(url, "premature_done", f"LLM tried to quit: {reason}")
                 # Return a non-done result to force loop to continue
                 return {"done": False, "blocked": True, "reason": "Premature done blocked"}
@@ -1773,7 +1784,7 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
             ])
 
             if needs_download and download_count == 0:
-                log(f"  [NO ACTION PARSED - using knowledge base fallback]")
+                log("  [NO ACTION PARSED - using knowledge base fallback]")
                 result = reason_about_goal(goal)
                 if result.get("best_source"):
                     search_url = result["start_url"]
@@ -1879,7 +1890,7 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                 self._consecutive_challenges = 2
                 result = {"done": False, "error": error_msg, "recoverable": recoverable}
             elif recovery_result.new_context.get("use_alternative"):
-                log(f"  [RECOVERY: Trying alternative approach]")
+                log("  [RECOVERY: Trying alternative approach]")
                 alternatives = self.action_tracker.get_alternative_actions(action, target, domain)
                 if alternatives:
                     log(f"  [ALTERNATIVES: {', '.join(alternatives[:3])}]")
@@ -1928,7 +1939,7 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
             self._repeated_failure_count = 0
 
         if self._consecutive_failures >= self._max_consecutive_failures:
-            log(f"  [TOO MANY FAILURES - trying different approach]")
+            log("  [TOO MANY FAILURES - trying different approach]")
             self._consecutive_failures = 0
 
         return result

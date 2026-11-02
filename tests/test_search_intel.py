@@ -4,15 +4,14 @@ Unit tests for blackreach/search_intel.py
 Tests search query formulation, result analysis, and learning.
 """
 
-import pytest
 from blackreach.search_intel import (
+    QueryFormulator,
+    ResultAnalyzer,
     SearchEngine,
+    SearchIntelligence,
     SearchQuery,
     SearchResult,
     SearchSession,
-    QueryFormulator,
-    ResultAnalyzer,
-    SearchIntelligence,
     get_search_intel,
 )
 
@@ -348,18 +347,6 @@ class TestSearchIntelligence:
         url = intel.get_search_url(query)
         assert "google.com" in url
         assert "python" in url
-
-    def test_get_search_url_duckduckgo(self):
-        """Should generate DuckDuckGo search URL."""
-        intel = SearchIntelligence()
-        query = SearchQuery(
-            original="test",
-            query="python book",
-            engine=SearchEngine.DUCKDUCKGO
-        )
-
-        url = intel.get_search_url(query)
-        assert "duckduckgo.com" in url
 
     def test_get_search_url_duckduckgo(self):
         """Should generate DuckDuckGo search URL."""

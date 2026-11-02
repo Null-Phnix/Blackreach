@@ -3,15 +3,16 @@ Tests for Enhanced Download Queue System
 Tests for history tracking and deduplication functionality.
 """
 
-import pytest
-import tempfile
 import os
+import tempfile
 from pathlib import Path
-from datetime import datetime
+
+import pytest
 
 from blackreach.download_queue import (
-    DownloadQueue, DownloadPriority, DownloadStatus, DownloadItem,
-    QueueStats, get_download_queue
+    DownloadItem,
+    DownloadQueue,
+    DownloadStatus,
 )
 
 

@@ -4,21 +4,27 @@ Contains _execute_action and all per-action handler methods.
 Imported by agent.py via multiple inheritance (mixin pattern).
 """
 
-import json
 import logging
 import re
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any
-from urllib.parse import urlparse, urljoin
+from typing import Any, Dict, Optional
+from urllib.parse import urljoin, urlparse
 
 from blackreach.content_verify import FileType, VerificationStatus
-from blackreach.nav_context import PageValue
 from blackreach.exceptions import (
-    BrowserError, NavigationError, DownloadError,
-    InvalidActionArgsError, UnknownActionError, LLMError, NetworkError,
+    BrowserError,
+    DownloadError,
+    InvalidActionArgsError,
+    NetworkError,
+    UnknownActionError,
 )
-from blackreach.search_intel import get_search_fallback_url, SearchEngine, DEFAULT_SEARCH_ENGINE
+from blackreach.nav_context import PageValue
+from blackreach.search_intel import (  # noqa: F401 - SearchEngine kept importable here, see test_mixin_imports
+    DEFAULT_SEARCH_ENGINE,
+    SearchEngine,
+    get_search_fallback_url,
+)
 
 STEP_PAUSE_SECONDS = 0.5
 MIN_FULL_IMAGE_SIZE = 200000
@@ -246,7 +252,7 @@ class AgentActionsMixin:
             # Check if this URL previously failed
             if url and url in self._failed_download_urls:
                 logger.info("SKIP: URL previously failed %s", url[:50])
-                self.session_memory.add_failure(f"Download URL failed before - use a different link")
+                self.session_memory.add_failure("Download URL failed before - use a different link")
                 return {"action": "download", "skipped": True, "reason": "previously failed"}
 
             try:

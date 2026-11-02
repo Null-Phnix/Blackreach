@@ -19,9 +19,7 @@ import concurrent.futures
 import re
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set, Union
-
+from typing import Callable, Dict, List, Optional, Set
 
 try:
     import httpx

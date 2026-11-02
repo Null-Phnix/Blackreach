@@ -227,59 +227,111 @@ __all__ = list(_LAZY_IMPORTS.keys())
 # TYPE_CHECKING block for IDE support - these imports only happen
 # during static analysis, not at runtime
 if TYPE_CHECKING:
-    from blackreach.agent import Agent, AgentConfig, AgentCallbacks
-    from blackreach.memory import SessionMemory, PersistentMemory
-    from blackreach.llm import LLM, LLMConfig
-    from blackreach.browser import Hand, ProxyConfig, ProxyType, ProxyRotator
-    from blackreach.observer import Eyes  # Deprecated: use dom_walker instead
+    from blackreach.agent import Agent, AgentCallbacks, AgentConfig
+    from blackreach.api import BlackreachAPI, BrowseResult, browse, download, search
+    from blackreach.browser import Hand, ProxyConfig, ProxyRotator, ProxyType
+    from blackreach.cache import PageCache, ResultCache, get_page_cache, get_result_cache
     from blackreach.captcha_detect import (
-        CaptchaDetector, CaptchaDetectionResult, CaptchaProvider,
-        detect_captcha, is_captcha_present, get_captcha_detector
+        CaptchaDetectionResult,
+        CaptchaDetector,
+        CaptchaProvider,
+        detect_captcha,
+        get_captcha_detector,
+        is_captcha_present,
+    )
+    from blackreach.config import (
+        AVAILABLE_MODELS,
+        Config,
+        ConfigManager,
+        ConfigValidator,
+        ProviderConfig,
+        ValidationResult,
+        config_manager,
+        validate_config,
+        validate_for_run,
+    )
+    from blackreach.content_verify import (
+        ContentVerifier,
+        IntegrityResult,
+        IntegrityVerifier,
+        VerificationStatus,
+        compute_checksums,
+        compute_file_checksums,
+        compute_hash,
+        compute_md5,
+        get_integrity_verifier,
+        get_verifier,
+        verify_checksum,
     )
     from blackreach.cookie_manager import (
-        CookieManager, Cookie, CookieProfile,
-        get_cookie_manager, reset_cookie_manager
-    )
-    from blackreach.knowledge import reason_about_goal, CONTENT_SOURCES
-    from blackreach.nav_context import NavigationContext, PageValue
-    from blackreach.site_handlers import get_handler_for_url, SiteHandler
-    from blackreach.search_intel import SearchIntelligence, get_search_intel
-    from blackreach.content_verify import (
-        ContentVerifier, VerificationStatus, get_verifier,
-        compute_hash, compute_md5, compute_checksums, compute_file_checksums,
-        verify_checksum, IntegrityVerifier, IntegrityResult, get_integrity_verifier
+        Cookie,
+        CookieManager,
+        CookieProfile,
+        get_cookie_manager,
+        reset_cookie_manager,
     )
     from blackreach.download_history import (
-        DownloadHistory, DownloadSource, HistoryEntry, DuplicateInfo, get_download_history
+        DownloadHistory,
+        DownloadSource,
+        DuplicateInfo,
+        HistoryEntry,
+        get_download_history,
     )
-    from blackreach.metadata_extract import (
-        MetadataExtractor, PDFMetadata, EPUBMetadata, ImageMetadata, FileMetadata,
-        ExtractionResult, MetadataType, compute_checksum, extract_pdf_metadata,
-        extract_epub_metadata, get_metadata_extractor
-    )
-    from blackreach.timeout_manager import TimeoutManager, get_timeout_manager
-    from blackreach.rate_limiter import RateLimiter, get_rate_limiter
-    from blackreach.session_manager import SessionManager, SessionStatus, get_session_manager
-    from blackreach.multi_tab import SyncTabManager, TabStatus
-    from blackreach.download_queue import DownloadQueue, DownloadPriority, get_download_queue
-    from blackreach.task_scheduler import TaskScheduler, TaskPriority, get_scheduler
-    from blackreach.cache import PageCache, ResultCache, get_page_cache, get_result_cache
-    from blackreach.api import BlackreachAPI, browse, download, search, BrowseResult
-    from blackreach.config import (
-        Config, ProviderConfig, ConfigManager, config_manager, AVAILABLE_MODELS,
-        validate_config, validate_for_run, ValidationResult, ConfigValidator
-    )
-    from blackreach.parallel_ops import (
-        ParallelFetcher, ParallelDownloader, ParallelSearcher,
-        ParallelOperationManager, ParallelResult, ParallelTask,
-        get_parallel_manager
-    )
+    from blackreach.download_queue import DownloadPriority, DownloadQueue, get_download_queue
+    from blackreach.knowledge import CONTENT_SOURCES, reason_about_goal
+    from blackreach.llm import LLM, LLMConfig
     from blackreach.logging import (
-        SessionLogger, LogLevel, LogEntry,
-        get_recent_logs, read_log, cleanup_old_logs, get_logger,
-        filter_logs_by_level, get_log_summary, search_logs, get_error_logs
+        LogEntry,
+        LogLevel,
+        SessionLogger,
+        cleanup_old_logs,
+        filter_logs_by_level,
+        get_error_logs,
+        get_log_summary,
+        get_logger,
+        get_recent_logs,
+        read_log,
+        search_logs,
+    )
+    from blackreach.memory import PersistentMemory, SessionMemory
+    from blackreach.metadata_extract import (
+        EPUBMetadata,
+        ExtractionResult,
+        FileMetadata,
+        ImageMetadata,
+        MetadataExtractor,
+        MetadataType,
+        PDFMetadata,
+        compute_checksum,
+        extract_epub_metadata,
+        extract_pdf_metadata,
+        get_metadata_extractor,
+    )
+    from blackreach.multi_tab import SyncTabManager, TabStatus
+    from blackreach.nav_context import NavigationContext, PageValue
+    from blackreach.observer import Eyes  # Deprecated: use dom_walker instead
+    from blackreach.parallel_ops import (
+        ParallelDownloader,
+        ParallelFetcher,
+        ParallelOperationManager,
+        ParallelResult,
+        ParallelSearcher,
+        ParallelTask,
+        get_parallel_manager,
     )
     from blackreach.progress import (
-        DownloadProgressTracker, TaskProgressTracker, DownloadInfo, DownloadState,
-        track_downloads, format_size, format_speed, format_time
+        DownloadInfo,
+        DownloadProgressTracker,
+        DownloadState,
+        TaskProgressTracker,
+        format_size,
+        format_speed,
+        format_time,
+        track_downloads,
     )
+    from blackreach.rate_limiter import RateLimiter, get_rate_limiter
+    from blackreach.search_intel import SearchIntelligence, get_search_intel
+    from blackreach.session_manager import SessionManager, SessionStatus, get_session_manager
+    from blackreach.site_handlers import SiteHandler, get_handler_for_url
+    from blackreach.task_scheduler import TaskPriority, TaskScheduler, get_scheduler
+    from blackreach.timeout_manager import TimeoutManager, get_timeout_manager

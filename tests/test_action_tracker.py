@@ -4,7 +4,6 @@ Unit tests for blackreach/action_tracker.py
 Tests action outcome tracking and confidence scoring.
 """
 
-import pytest
 from blackreach.action_tracker import (
     ActionOutcome,
     ActionStats,

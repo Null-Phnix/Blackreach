@@ -1,5 +1,4 @@
 """Regression tests for mixin-level import bugs."""
-import pytest
 
 
 def test_agent_actions_has_searchengine_import():
@@ -25,6 +24,7 @@ def test_agent_actions_navigate_references_searchengine():
     (a SearchEngine constant) and `get_search_fallback_url`.
     """
     import inspect
+
     from blackreach import agent_actions
 
     src = inspect.getsource(agent_actions.AgentActionsMixin)

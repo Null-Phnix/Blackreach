@@ -4,11 +4,8 @@ Unit tests for blackreach/memory.py
 Tests both SessionMemory (RAM) and PersistentMemory (SQLite).
 """
 
-import pytest
-from pathlib import Path
 
-from blackreach.memory import SessionMemory, PersistentMemory
-
+from blackreach.memory import PersistentMemory, SessionMemory
 
 # =============================================================================
 # SessionMemory Tests

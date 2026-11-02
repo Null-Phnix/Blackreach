@@ -5,8 +5,7 @@ All custom exceptions inherit from BlackreachError for easy catching.
 Specific exception types allow for granular error handling.
 """
 
-from typing import Optional, Any
-
+from typing import Any, Optional
 
 # =============================================================================
 # Base Exception
