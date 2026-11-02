@@ -10,7 +10,6 @@ import socket
 import urllib.parse
 import urllib.request
 
-
 _NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")
 
 

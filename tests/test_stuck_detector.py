@@ -4,13 +4,11 @@ Unit tests for blackreach/stuck_detector.py
 Tests stuck state detection and recovery strategy suggestions.
 """
 
-import pytest
-import time
 from blackreach.stuck_detector import (
+    Observation,
+    RecoveryStrategy,
     StuckDetector,
     StuckReason,
-    RecoveryStrategy,
-    Observation,
     StuckState,
     compute_content_hash,
 )

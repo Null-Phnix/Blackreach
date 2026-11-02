@@ -10,16 +10,17 @@ Provides:
 - Accessibility-based selectors
 """
 
-import time
 import random
 import re
 import threading
-from typing import Optional, List, Callable, Any, Union
+import time
 from dataclasses import dataclass
-from functools import wraps
 from difflib import SequenceMatcher
-from playwright.sync_api import Page, Locator, TimeoutError as PlaywrightTimeout
+from functools import wraps
+from typing import Any, Callable, List, Optional, Union
 
+from playwright.sync_api import Locator, Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 # P0-PERF: Pre-compiled regex patterns
 _RE_QUOTED_TEXT = re.compile(r'"([^"]+)"')
@@ -38,25 +39,25 @@ class RetryConfig:
 def retry_with_backoff(config: RetryConfig = None):
     """
     Decorator for retrying functions with exponential backoff.
-    
+
     Usage:
         @retry_with_backoff(RetryConfig(max_attempts=5))
         def flaky_operation():
             ...
     """
     config = config or RetryConfig()
-    
+
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs) -> Any:
             last_exception = None
-            
+
             for attempt in range(config.max_attempts):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
                     last_exception = e
-                    
+
                     if attempt < config.max_attempts - 1:
                         delay = min(
                             config.base_delay * (config.exponential_base ** attempt),
@@ -65,7 +66,7 @@ def retry_with_backoff(config: RetryConfig = None):
                         if config.jitter:
                             delay *= random.uniform(0.5, 1.5)
                         time.sleep(delay)
-            
+
             raise last_exception
         return wrapper
     return decorator
@@ -204,7 +205,7 @@ class CircuitBreaker:
         return False  # Don't suppress exceptions
 
 
-class CircuitBreakerOpen(Exception):
+class CircuitBreakerOpen(Exception):  # noqa: N818 - public name
     """Exception raised when circuit breaker is open."""
 
     def __init__(self, name: str, time_remaining: float = 0):
@@ -218,20 +219,20 @@ class SmartSelector:
     Smart element selector with fallback strategies.
     Tries multiple selector strategies to find elements reliably.
     """
-    
+
     def __init__(self, page: Page, timeout: float = 10000):
         self.page = page
         self.timeout = timeout
-    
+
     def find(
-        self, 
-        selectors: Union[str, List[str]], 
+        self,
+        selectors: Union[str, List[str]],
         visible_only: bool = True,
         wait: bool = True
     ) -> Optional[Locator]:
         """
         Find element using multiple selector strategies.
-        
+
         Args:
             selectors: Single selector or list of fallback selectors
             visible_only: Only return visible elements
@@ -239,7 +240,7 @@ class SmartSelector:
         """
         if isinstance(selectors, str):
             selectors = [selectors]
-        
+
         for selector in selectors:
             try:
                 locator = self._try_selector(selector, visible_only, wait)
@@ -247,34 +248,34 @@ class SmartSelector:
                     return locator
             except Exception:
                 continue
-        
+
         return None
-    
+
     def _try_selector(
-        self, 
-        selector: str, 
+        self,
+        selector: str,
         visible_only: bool,
         wait: bool
     ) -> Optional[Locator]:
         """Try a single selector."""
         locator = self.page.locator(selector)
-        
+
         if visible_only:
             locator = locator.filter(has=self.page.locator(":visible"))
-        
+
         if wait:
             try:
                 locator.first.wait_for(timeout=self.timeout / len([selector]))
             except PlaywrightTimeout:
                 return None
-        
+
         if locator.count() > 0:
             return locator.first
         return None
-    
+
     def find_by_text(
-        self, 
-        text: str, 
+        self,
+        text: str,
         tag: str = "*",
         exact: bool = False
     ) -> Optional[Locator]:
@@ -286,11 +287,11 @@ class SmartSelector:
                 locator = self.page.get_by_text(text, exact=True)
             else:
                 locator = self.page.get_by_text(text, exact=False)
-            
+
             # Filter by tag if specified
             if tag != "*":
                 locator = self.page.locator(tag).filter(has=locator)
-            
+
             locator.first.wait_for(timeout=self.timeout)
             return locator.first
         except PlaywrightTimeout:
@@ -307,7 +308,7 @@ class SmartSelector:
                 return locator.first
             except Exception:
                 return None
-    
+
     def find_input(
         self,
         name: str = None,
@@ -317,26 +318,26 @@ class SmartSelector:
     ) -> Optional[Locator]:
         """Find input field by various attributes."""
         selectors = []
-        
+
         if name:
             selectors.extend([
                 f"input[name='{name}']",
                 f"textarea[name='{name}']",
                 f"[name='{name}']"
             ])
-        
+
         if placeholder:
             selectors.extend([
                 f"input[placeholder*='{placeholder}' i]",
                 f"textarea[placeholder*='{placeholder}' i]"
             ])
-        
+
         if label:
             selectors.extend([
                 f"label:has-text('{label}') input",
                 f"input[aria-label*='{label}' i]"
             ])
-        
+
         if input_type:
             selectors.append(f"input[type='{input_type}']")
 

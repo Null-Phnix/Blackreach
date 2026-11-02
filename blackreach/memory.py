@@ -11,13 +11,11 @@ This allows the agent to:
 - Learn from past failures
 """
 
-import sqlite3
 import json
+import sqlite3
+from dataclasses import dataclass, field
 from pathlib import Path
-from datetime import datetime
-from typing import Optional, List, Dict, Any
-from dataclasses import dataclass, field, asdict
-
+from typing import Any, Dict, List, Optional
 
 # =============================================================================
 # SESSION MEMORY (RAM only - dies when program ends)

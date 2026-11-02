@@ -2,15 +2,17 @@
 Tests for Download History System
 """
 
-import pytest
-import tempfile
 import os
+import tempfile
 from pathlib import Path
-from datetime import datetime, timedelta
+
+import pytest
 
 from blackreach.download_history import (
-    DownloadHistory, DownloadSource, HistoryEntry, DuplicateInfo,
-    get_download_history
+    DownloadHistory,
+    DownloadSource,
+    DuplicateInfo,
+    HistoryEntry,
 )
 
 
@@ -36,7 +38,7 @@ class TestDownloadHistory:
 
     def test_init_creates_database(self, temp_db):
         """Test that initialization creates the database."""
-        history = DownloadHistory(temp_db)
+        DownloadHistory(temp_db)
         assert temp_db.exists()
 
     def test_add_entry(self, history):

@@ -5,14 +5,14 @@ Tests UI components that can be unit tested without requiring
 actual console interaction.
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
+
 from blackreach.ui import (
-    Theme,
-    SlashCompleter,
-    AgentProgress,
-    theme,
     HISTORY_FILE,
+    AgentProgress,
+    SlashCompleter,
+    Theme,
+    theme,
 )
 
 
@@ -328,11 +328,9 @@ class TestAgentProgressMethods:
 
         # First call for step 3
         progress.update_step(3, "observe")
-        call_count_1 = mock_console.print.call_count
 
         # Second call for step 3 (same step)
         progress.update_step(3, "think")
-        call_count_2 = mock_console.print.call_count
 
         # Should not have printed more for second call of same step
         assert 3 in progress._step_shown

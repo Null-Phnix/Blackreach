@@ -21,12 +21,12 @@ Example usage:
     # Returns list of selectors sorted by success rate
 """
 
+import json
 import re
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
-from collections import defaultdict
-import json
 
 
 @dataclass
@@ -217,7 +217,6 @@ class ActionTracker:
     def _update_good_selectors(self, domain: str, selector: str) -> None:
         """Update the list of selectors that work well on a domain."""
         normalized = self._normalize_selector(selector)
-        selector_type = self._extract_selector_type(selector)
 
         # Get current stats for this selector pattern
         key = (domain, "click", normalized)

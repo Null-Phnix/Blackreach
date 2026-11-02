@@ -45,10 +45,17 @@ _backend = _choose_backend(_requested_backend, _starsearch_available())
 try:
     if _backend != "starsearch":
         raise ImportError("Playwright explicitly selected")
-    from blackreach.extras.browser_starsearch import (
-        Hand, ProxyConfig, ProxyType, ProxyRotator,
-        BrowserNotReadyError, ElementNotFoundError, DownloadError,
-        InvalidActionArgsError, UnknownActionError,
+    # The error classes are re-exported for callers of blackreach.browser.
+    from blackreach.extras.browser_starsearch import (  # noqa: F401
+        BrowserNotReadyError,
+        DownloadError,
+        ElementNotFoundError,
+        Hand,
+        InvalidActionArgsError,
+        ProxyConfig,
+        ProxyRotator,
+        ProxyType,
+        UnknownActionError,
     )
     _backend = "starsearch"
     logger.info("Using StarSearch browser backend (stealth daemon)")
@@ -60,7 +67,10 @@ except (ImportError, ModuleNotFoundError) as exc:
             "could not be loaded; refusing silent Playwright fallback"
         ) from exc
     from blackreach.browser_playwright import (
-        Hand, ProxyConfig, ProxyType, ProxyRotator,
+        Hand,
+        ProxyConfig,
+        ProxyRotator,
+        ProxyType,
     )
     _backend = "playwright"
     logger.info("Using Playwright browser backend")
@@ -82,8 +92,7 @@ except ImportError:
         return True
 
 # _sanitize_filename is always from the Playwright backend (shared utility)
-from blackreach.browser_playwright import _sanitize_filename, _reserve_unique_path
-
+from blackreach.browser_playwright import _sanitize_filename  # noqa: E402
 
 # Backwards compatibility
 Browser = Hand

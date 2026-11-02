@@ -21,31 +21,25 @@ Skip integration tests:
     pytest tests/ -m "not integration"
 """
 
-import pytest
 import time
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
+import pytest
 from playwright._impl._errors import TimeoutError as PlaywrightTimeoutError
 
 from blackreach.browser import Hand
-from blackreach.stealth import StealthConfig
-from blackreach.resilience import RetryConfig
+from blackreach.debug_tools import (
+    DebugConfig,
+    DebugSnapshot,
+    DebugTools,
+    ErrorCapturingWrapper,
+)
 from blackreach.exceptions import (
     BrowserNotReadyError,
     ElementNotFoundError,
-    DownloadError,
     InvalidActionArgsError,
     UnknownActionError,
 )
-from blackreach.debug_tools import (
-    DebugTools,
-    DebugConfig,
-    DebugSnapshot,
-    TestResultTracker,
-    ErrorCapturingWrapper,
-)
-
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration
@@ -367,7 +361,7 @@ class TestScreenshot:
         browser.goto(mock_server_with_pages.url, wait_for_content=False)
         screenshot_path = temp_dir / "full_page.png"
 
-        result = browser.screenshot(str(screenshot_path), full_page=True)
+        browser.screenshot(str(screenshot_path), full_page=True)
 
         assert screenshot_path.exists()
 
@@ -428,7 +422,7 @@ class TestErrorHandling:
 
     def test_execute_wait_action(self, browser):
         """execute() handles wait action."""
-        with patch('time.sleep') as mock_sleep:
+        with patch('time.sleep'):
             result = browser.execute({"action": "wait", "seconds": 0.1})
 
         assert result["action"] == "wait"
@@ -564,7 +558,7 @@ class TestDebugTools:
 # Test Result Tracker Tests
 # =============================================================================
 
-class TestResultTracker:
+class TestResultTrackerIntegration:
     """Tests for test result tracking."""
 
     def test_tracker_initialization(self, test_result_tracker):
@@ -650,7 +644,7 @@ class TestDynamicContent:
 
     def test_wait_for_dynamic_content(self, browser, mock_server_with_pages):
         """Browser waits for dynamic content to load."""
-        result = browser.goto(
+        browser.goto(
             mock_server_with_pages.url_for('/dynamic'),
             wait_for_content=True
         )

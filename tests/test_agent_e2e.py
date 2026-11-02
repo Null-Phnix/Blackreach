@@ -5,15 +5,14 @@ These tests verify the complete agent workflow using mocked components
 to avoid actual browser and LLM API calls.
 """
 
-import pytest
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
-from dataclasses import dataclass
+from unittest.mock import Mock
+
+import pytest
 
 from blackreach.agent import Agent, AgentConfig
 from blackreach.llm import LLMConfig, LLMResponse
-from blackreach.memory import SessionMemory, PersistentMemory
-
+from blackreach.memory import PersistentMemory, SessionMemory
 
 # =============================================================================
 # Fixtures
@@ -191,7 +190,7 @@ class TestActionExecution:
         agent.hand = mock_browser
 
         # Test with explicit selector (the implementation falls through to hand.click)
-        result = agent._execute_action("click", {"selector": "#specific-button"})
+        agent._execute_action("click", {"selector": "#specific-button"})
 
         mock_browser.click.assert_called_with("#specific-button")
 
@@ -214,7 +213,7 @@ class TestActionExecution:
         )
         agent.hand = mock_browser
 
-        result = agent._execute_action("type", {"selector": "#search", "text": "query"})
+        agent._execute_action("type", {"selector": "#search", "text": "query"})
 
         mock_browser.type.assert_called()
 

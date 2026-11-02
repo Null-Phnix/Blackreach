@@ -5,15 +5,15 @@ Tests CAPTCHA, login, paywall, and rate limit detection.
 """
 
 import pytest
-from blackreach.detection import SiteDetector, DetectionResult
+
+from blackreach.detection import DetectionResult, SiteDetector
 from blackreach.exceptions import (
+    AccessDeniedError,
     CaptchaError,
     LoginRequiredError,
     PaywallError,
     RateLimitError,
-    AccessDeniedError,
 )
-
 
 # =============================================================================
 # Fixtures
@@ -722,8 +722,9 @@ class TestRaiseForObstacle:
 
     def test_rate_limit_invalid_retry_after_format(self, detector):
         """RateLimitError handles unparseable retry_after gracefully."""
+        from unittest.mock import MagicMock, patch
+
         from blackreach.exceptions import RateLimitError
-        from unittest.mock import patch, MagicMock
 
         # Create a mock DetectionResult with invalid retry_after format
         mock_result = MagicMock()
@@ -751,7 +752,7 @@ class TestSiteCharacteristics:
 
     def test_get_site_characteristics_wikipedia(self):
         """Wikipedia returns static site characteristics."""
-        from blackreach.detection import get_site_characteristics, SiteType
+        from blackreach.detection import SiteType, get_site_characteristics
 
         chars = get_site_characteristics("https://en.wikipedia.org/wiki/Python")
 
@@ -763,7 +764,7 @@ class TestSiteCharacteristics:
 
     def test_get_site_characteristics_github(self):
         """GitHub returns hybrid site characteristics."""
-        from blackreach.detection import get_site_characteristics, SiteType
+        from blackreach.detection import SiteType, get_site_characteristics
 
         chars = get_site_characteristics("https://github.com/anthropics/claude-code")
 
@@ -774,7 +775,7 @@ class TestSiteCharacteristics:
 
     def test_get_site_characteristics_google(self):
         """Google returns search engine characteristics."""
-        from blackreach.detection import get_site_characteristics, SiteType
+        from blackreach.detection import SiteType, get_site_characteristics
 
         chars = get_site_characteristics("https://www.google.com/search?q=test")
 
@@ -784,7 +785,7 @@ class TestSiteCharacteristics:
 
     def test_get_site_characteristics_unknown_site(self):
         """Unknown sites return default characteristics."""
-        from blackreach.detection import get_site_characteristics, SiteType
+        from blackreach.detection import SiteType, get_site_characteristics
 
         chars = get_site_characteristics("https://some-random-spa-site.com/app")
 
@@ -794,7 +795,7 @@ class TestSiteCharacteristics:
 
     def test_get_site_characteristics_invalid_url(self):
         """Invalid URLs return default characteristics."""
-        from blackreach.detection import get_site_characteristics, SiteType
+        from blackreach.detection import SiteType, get_site_characteristics
 
         chars = get_site_characteristics("not-a-valid-url")
 
@@ -802,7 +803,7 @@ class TestSiteCharacteristics:
 
     def test_get_site_characteristics_duckduckgo(self):
         """DuckDuckGo returns search engine characteristics."""
-        from blackreach.detection import get_site_characteristics, SiteType
+        from blackreach.detection import SiteType, get_site_characteristics
 
         chars = get_site_characteristics("https://duckduckgo.com/?q=python")
 
@@ -811,7 +812,7 @@ class TestSiteCharacteristics:
 
     def test_get_site_characteristics_stackoverflow(self):
         """Stack Overflow returns static site characteristics."""
-        from blackreach.detection import get_site_characteristics, SiteType
+        from blackreach.detection import SiteType, get_site_characteristics
 
         chars = get_site_characteristics("https://stackoverflow.com/questions/12345")
 
@@ -821,7 +822,7 @@ class TestSiteCharacteristics:
 
     def test_get_site_characteristics_arxiv(self):
         """arXiv returns static site characteristics."""
-        from blackreach.detection import get_site_characteristics, SiteType
+        from blackreach.detection import SiteType, get_site_characteristics
 
         chars = get_site_characteristics("https://arxiv.org/abs/2301.12345")
 
@@ -857,7 +858,7 @@ class TestSiteCharacteristics:
 
     def test_get_site_characteristics_case_insensitive(self):
         """URL domain matching is case-insensitive."""
-        from blackreach.detection import get_site_characteristics, SiteType
+        from blackreach.detection import SiteType, get_site_characteristics
 
         chars_lower = get_site_characteristics("https://en.wikipedia.org/wiki/Test")
         chars_upper = get_site_characteristics("https://EN.WIKIPEDIA.ORG/wiki/Test")
@@ -868,7 +869,7 @@ class TestSiteCharacteristics:
 
     def test_get_site_characteristics_libgen(self):
         """LibGen sites return static characteristics."""
-        from blackreach.detection import get_site_characteristics, SiteType
+        from blackreach.detection import SiteType, get_site_characteristics
 
         chars = get_site_characteristics("https://libgen.rs/book/123456")
 
@@ -877,7 +878,7 @@ class TestSiteCharacteristics:
 
     def test_get_site_characteristics_readthedocs(self):
         """ReadTheDocs sites return static characteristics."""
-        from blackreach.detection import get_site_characteristics, SiteType
+        from blackreach.detection import SiteType, get_site_characteristics
 
         chars = get_site_characteristics("https://docs.myproject.readthedocs.io/en/latest/")
 
@@ -886,7 +887,7 @@ class TestSiteCharacteristics:
 
     def test_get_site_characteristics_huggingface(self):
         """Hugging Face returns hybrid characteristics."""
-        from blackreach.detection import get_site_characteristics, SiteType
+        from blackreach.detection import SiteType, get_site_characteristics
 
         chars = get_site_characteristics("https://huggingface.co/models")
 
@@ -894,7 +895,7 @@ class TestSiteCharacteristics:
 
     def test_get_site_characteristics_google_scholar(self):
         """Google Scholar returns search engine characteristics."""
-        from blackreach.detection import get_site_characteristics, SiteType
+        from blackreach.detection import SiteType, get_site_characteristics
 
         chars = get_site_characteristics("https://scholar.google.com/scholar?q=test")
 
@@ -902,7 +903,7 @@ class TestSiteCharacteristics:
 
     def test_get_site_characteristics_pubmed(self):
         """PubMed returns static characteristics."""
-        from blackreach.detection import get_site_characteristics, SiteType
+        from blackreach.detection import SiteType, get_site_characteristics
 
         chars = get_site_characteristics("https://pubmed.ncbi.nlm.nih.gov/12345678/")
 

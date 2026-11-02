@@ -8,13 +8,13 @@ Provides task scheduling for the agent:
 - Task queue management
 """
 
+import threading
+import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Callable, Set
 from datetime import datetime
 from enum import Enum
 from queue import PriorityQueue
-import threading
-import time
+from typing import Any, Callable, Dict, List, Optional, Set
 
 
 class TaskPriority(Enum):

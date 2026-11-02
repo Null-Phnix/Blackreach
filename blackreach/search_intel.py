@@ -5,12 +5,14 @@ Provides intelligent search query formulation, result analysis,
 and query optimization based on learning from past searches.
 """
 
+import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
 from datetime import datetime
 from enum import Enum
-import re
-from urllib.parse import quote as url_quote, urlparse
+from typing import Dict, List, Optional
+from urllib.parse import quote as url_quote
+
+from blackreach.domain_match import host_matches
 
 
 class SearchEngine(Enum):
@@ -311,7 +313,7 @@ class ResultAnalyzer:
             "gutenberg.org", "standard-ebooks.org"
         ],
         "paper": [
-            "arxiv.org", "scholar.google", "semanticscholar",
+            "arxiv.org", "scholar.google.com", "semanticscholar",
             "researchgate.net", "academia.edu"
         ],
         "image": [
@@ -345,7 +347,7 @@ class ResultAnalyzer:
         # Check trusted domains
         if content_type in self.TRUSTED_DOMAINS:
             for domain in self.TRUSTED_DOMAINS[content_type]:
-                if domain in url_lower:
+                if host_matches(url_lower, domain):
                     score += 0.3
                     break
 

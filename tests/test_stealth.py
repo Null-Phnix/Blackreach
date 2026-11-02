@@ -4,13 +4,12 @@ Unit tests for blackreach/stealth.py
 Tests browser stealth and anti-detection features.
 """
 
-import pytest
 from blackreach.stealth import (
-    Stealth,
-    StealthConfig,
+    BLOCKED_DOMAINS,
     USER_AGENTS,
     VIEWPORTS,
-    BLOCKED_DOMAINS,
+    Stealth,
+    StealthConfig,
 )
 
 

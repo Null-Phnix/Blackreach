@@ -9,15 +9,15 @@ Provides caching for browser operations:
 - Persistent cache option
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, Optional, Any, Generic, TypeVar
-from datetime import datetime, timedelta
-from collections import OrderedDict
-from pathlib import Path
 import hashlib
 import json
 import logging
 import threading
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, Generic, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
 

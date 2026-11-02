@@ -5,12 +5,13 @@ Advanced techniques for bypassing Cloudflare, DataDome, and other anti-bot syste
 Uses undetected-playwright for maximum stealth.
 """
 
-import time
-import random
-from typing import Optional
-from playwright.sync_api import Page, Browser, BrowserContext
-from dataclasses import dataclass
 import logging
+import random
+import time
+from dataclasses import dataclass
+from typing import Optional
+
+from playwright.sync_api import Browser, Page
 
 logger = logging.getLogger(__name__)
 

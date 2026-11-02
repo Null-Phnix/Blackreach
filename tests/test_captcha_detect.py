@@ -5,13 +5,14 @@ Tests CAPTCHA detection for various providers.
 """
 
 import pytest
+
 from blackreach.captcha_detect import (
-    CaptchaDetector,
     CaptchaDetectionResult,
+    CaptchaDetector,
     CaptchaProvider,
     detect_captcha,
-    is_captcha_present,
     get_captcha_detector,
+    is_captcha_present,
 )
 
 

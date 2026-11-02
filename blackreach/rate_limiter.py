@@ -10,14 +10,16 @@ Provides intelligent rate limit management:
 - Response time monitoring for proactive adjustment
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Callable
-from datetime import datetime, timedelta
-from collections import defaultdict
-from enum import Enum
-import time
 import re
 import statistics
+import time
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from enum import Enum
+from typing import Dict, List, Optional, Tuple
+
+from blackreach.domain_match import best_host_match
 
 
 class ServerResponseType(Enum):
@@ -125,7 +127,6 @@ class RateLimiter:
 
         # Get rate limit for domain
         rate_limit = self._get_rate_limit(domain)
-        interval = 60.0 / rate_limit  # Seconds between requests
 
         # Clean old requests (keep last minute)
         cutoff = now - timedelta(minutes=1)
@@ -219,10 +220,11 @@ class RateLimiter:
 
     def _get_rate_limit(self, domain: str) -> float:
         """Get the rate limit for a domain."""
-        # Check for known limits
-        for known_domain, limit in self.known_limits.items():
-            if known_domain in domain:
-                return limit
+        # Check for known limits (most specific domain wins, so api.github.com
+        # gets its own limit rather than github.com's)
+        known_domain = best_host_match(domain, self.known_limits)
+        if known_domain:
+            return self.known_limits[known_domain]
 
         # Check for custom detected limit
         state = self.domains[domain]

@@ -4,14 +4,13 @@ Unit tests for blackreach/cache.py
 Tests LRU cache implementation with TTL support.
 """
 
-import pytest
-import time
 import tempfile
+import time
 from pathlib import Path
-from datetime import datetime, timedelta
+
 from blackreach.cache import (
-    CacheEntry,
     CacheConfig,
+    CacheEntry,
     LRUCache,
     PageCache,
     ResultCache,

@@ -12,15 +12,16 @@ Detects:
 
 import re
 from dataclasses import dataclass
-from typing import Optional, List, Tuple
-from urllib.parse import urlparse
 from enum import Enum
+from typing import List, Optional
+from urllib.parse import urlparse
 
+from blackreach.domain_match import best_host_match, host_matches
 from blackreach.exceptions import (
+    AccessDeniedError,
     CaptchaError,
     LoginRequiredError,
     PaywallError,
-    AccessDeniedError,
     RateLimitError,
 )
 
@@ -324,9 +325,9 @@ def get_site_characteristics(url: str) -> SiteCharacteristics:
         domain = parsed.netloc.lower()
 
         # Check against known patterns
-        for pattern, characteristics in STATIC_SITE_PATTERNS.items():
-            if pattern in domain:
-                return characteristics
+        pattern = best_host_match(domain, STATIC_SITE_PATTERNS)
+        if pattern:
+            return STATIC_SITE_PATTERNS[pattern]
 
         # Default characteristics for unknown sites
         return SiteCharacteristics(
@@ -770,7 +771,7 @@ class SiteDetector:
             'libgen.is', 'libgen.rs', 'library.lol', 'z-lib.org', 'z-lib.is',
         ]
         for domain in landing_page_domains:
-            if domain in url_lower:
+            if host_matches(url_lower, domain):
                 indicators.append(f"Known landing domain: {domain}")
                 confidence += 0.4
 
@@ -942,7 +943,7 @@ class SiteDetector:
         url_lower = url.lower()
         engine_name = None
         for domain, name in self.SEARCH_ENGINE_DOMAINS.items():
-            if domain in url_lower:
+            if host_matches(url_lower, domain):
                 engine_name = name
                 break
 

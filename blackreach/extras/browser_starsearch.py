@@ -9,33 +9,33 @@ INSTALL: Copy this file to blackreach/browser.py (or symlink).
 No other Blackreach files need modification.
 """
 from __future__ import annotations
+
 import hashlib
 import json
 import logging
 import os
+import random
 import re
 import threading
 import time
-import random
-import urllib.request
 import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
-from urllib.parse import urljoin, urlparse, unquote
+from urllib.parse import unquote, urljoin, urlparse
 
 from blackreach.ssrf import _is_ssrf_safe, urlopen_guarded
 
-
 try:
     from starsearch import StarSearch
-    from starsearch.session import StarSearchSession
     from starsearch.exceptions import (
-        StarSearchError,
         StarSearchElementNotFound,
+        StarSearchError,
         StarSearchTimeoutError,
     )
+    from starsearch.session import StarSearchSession
 except ModuleNotFoundError as exc:
     if exc.name != "starsearch" and not (exc.name or "").startswith("starsearch."):
         raise
@@ -48,7 +48,7 @@ except ModuleNotFoundError as exc:
     class StarSearchError(Exception):
         pass
 
-    class StarSearchElementNotFound(StarSearchError):
+    class StarSearchElementNotFound(StarSearchError):  # noqa: N818 - public name
         pass
 
     class StarSearchTimeoutError(StarSearchError):
@@ -432,10 +432,6 @@ class Hand:
         if handle_popups:
             self._try_dismiss_popups()
         return {"action": "goto", "url": url}
-
-    def get_url(self) -> str:
-        self._ensure_session()
-        return self._session.evaluate("window.location.href") or ""
 
     def get_title(self, retries: int = 3) -> str:
         self._ensure_session()

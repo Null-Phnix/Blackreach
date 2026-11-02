@@ -3,15 +3,22 @@ Tests for Enhanced Content Verification System
 Tests for MD5/SHA256 checksum verification functionality.
 """
 
-import pytest
 import tempfile
-import os
 from pathlib import Path
 
+import pytest
+
 from blackreach.content_verify import (
-    ContentVerifier, VerificationStatus, FileType,
-    compute_hash, compute_md5, compute_checksums, compute_file_checksums,
-    verify_checksum, IntegrityVerifier, IntegrityResult, get_integrity_verifier
+    ContentVerifier,
+    IntegrityResult,
+    IntegrityVerifier,
+    VerificationStatus,
+    compute_checksums,
+    compute_file_checksums,
+    compute_hash,
+    compute_md5,
+    get_integrity_verifier,
+    verify_checksum,
 )
 
 

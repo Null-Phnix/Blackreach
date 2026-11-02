@@ -4,14 +4,14 @@ Unit tests for blackreach/nav_context.py
 Tests navigation context, breadcrumb tracking, and backtrack functionality.
 """
 
-import pytest
 from datetime import datetime
+
 from blackreach.nav_context import (
-    PageValue,
     Breadcrumb,
-    NavigationPath,
     DomainKnowledge,
     NavigationContext,
+    NavigationPath,
+    PageValue,
 )
 
 

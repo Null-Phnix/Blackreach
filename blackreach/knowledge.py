@@ -5,11 +5,10 @@ This module contains knowledge about where to find specific types of content,
 enabling Blackreach to make intelligent decisions about where to start searching.
 """
 
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional
-from urllib.parse import quote_plus
 import re
-
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
+from urllib.parse import quote_plus
 
 # P0-PERF: Pre-compiled regex patterns for extract_subject()
 _RE_PREFIXES = [
@@ -719,8 +718,8 @@ def check_url_reachable(url: str, timeout: float = 5.0) -> bool:
     Quick check if a URL is reachable.
     Returns True if reachable, False otherwise.
     """
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     try:
         req = urllib.request.Request(

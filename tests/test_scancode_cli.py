@@ -1,7 +1,6 @@
 """Tests for blackreach CLI scancode command."""
 
 from click.testing import CliRunner
-import pytest
 
 from blackreach.cli import cli
 

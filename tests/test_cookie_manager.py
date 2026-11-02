@@ -4,18 +4,19 @@ Unit tests for blackreach/cookie_manager.py
 Tests cookie persistence and management.
 """
 
-import pytest
 import json
-import time
 import tempfile
+import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+
+import pytest
 
 from blackreach.cookie_manager import (
     Cookie,
-    CookieProfile,
-    CookieManager,
     CookieEncryption,
+    CookieManager,
+    CookieProfile,
     get_cookie_manager,
     reset_cookie_manager,
 )

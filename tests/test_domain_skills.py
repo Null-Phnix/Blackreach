@@ -1,12 +1,12 @@
 """Unit tests for blackreach/domain_skills.py."""
+
 import pytest
-from pathlib import Path
+
 from blackreach.domain_skills import (
-    SiteSkill,
-    DomainSkillManager,
-    get_skill_manager,
-    _manager,
     SKILLS_DIR,
+    DomainSkillManager,
+    SiteSkill,
+    get_skill_manager,
 )
 
 

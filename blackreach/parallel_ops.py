@@ -8,17 +8,15 @@ Provides parallel browsing and download capabilities:
 - Progress aggregation and reporting
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Callable, Tuple
-from datetime import datetime
-from enum import Enum
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import time
-import queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from blackreach.multi_tab import SyncTabManager, TabStatus, TabPoolConfig, TabInfo
-from blackreach.download_queue import DownloadQueue, DownloadItem, DownloadPriority, DownloadStatus
+from blackreach.multi_tab import SyncTabManager, TabPoolConfig
 from blackreach.rate_limiter import RateLimiter, get_rate_limiter
 from blackreach.timeout_manager import TimeoutManager, get_timeout_manager
 
@@ -199,9 +197,6 @@ class ParallelFetcher:
             if not can_request:
                 time.sleep(wait_time)
 
-            # Get timeout
-            timeout = self.timeout_manager.get_timeout("navigate", domain)
-
             # Get a tab
             tab = self.tab_manager.get_tab(task=f"fetch_{task.url}")
             task.tab_id = tab.tab_id
@@ -346,8 +341,8 @@ class ParallelDownloader:
 
     def _download_single(self, task: ParallelTask) -> bool:
         """Download a single file."""
-        from urllib.parse import urlparse
         from pathlib import Path
+        from urllib.parse import urlparse
 
         task.status = ParallelTaskStatus.RUNNING
         task.started_at = datetime.now()
@@ -455,7 +450,7 @@ class ParallelSearcher:
                 self.tab_manager.release_tab(tab.tab_id)
                 return (source, results)
 
-            except Exception as e:  # Search task may raise any error type (browser, network, parse, etc.)
+            except Exception:  # Search task may raise any error type (browser, network, parse, etc.)
                 return (source, [])
 
         # P0-PERF: Use ThreadPoolExecutor for parallel search

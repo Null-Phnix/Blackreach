@@ -4,17 +4,16 @@ Unit tests for proxy support in browser.py
 Tests ProxyConfig, ProxyRotator, and browser proxy integration.
 """
 
-import pytest
-import time
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from blackreach.browser import (
-    ProxyType,
+    Hand,
     ProxyConfig,
     ProxyRotator,
-    Hand,
+    ProxyType,
 )
-from blackreach.stealth import StealthConfig
 
 
 class TestProxyType:

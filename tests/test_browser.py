@@ -5,16 +5,20 @@ Tests browser controller (Hand class) initialization and configuration.
 Note: Full browser integration tests require Playwright fixtures.
 """
 
-import pytest
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
 from playwright.sync_api import Error as PlaywrightError
+
 from blackreach.browser import (
-    Hand, _sanitize_filename, _is_ssrf_safe,
-    ProxyConfig, ProxyRotator, ProxyType
+    Hand,
+    ProxyConfig,
+    ProxyRotator,
+    ProxyType,
+    _is_ssrf_safe,
+    _sanitize_filename,
 )
-from blackreach.stealth import StealthConfig
-from blackreach.resilience import RetryConfig
 from blackreach.exceptions import (
     BrowserNotReadyError,
     ElementNotFoundError,
@@ -22,6 +26,8 @@ from blackreach.exceptions import (
     NavigationError,
     UnknownActionError,
 )
+from blackreach.resilience import RetryConfig
+from blackreach.stealth import StealthConfig
 
 
 class TestHandInit:
@@ -766,8 +772,8 @@ class TestHandWithMockedPage:
 
     def test_compute_hash_returns_string(self):
         """_compute_hash() returns a hash string."""
-        import tempfile
         import os
+        import tempfile
 
         hand = Hand(headless=True)
 
@@ -1494,7 +1500,7 @@ class TestProxyRotatorStickySession:
         ])
 
         # Get proxy for domain
-        p1 = rotator.get_next(domain="example.com")
+        rotator.get_next(domain="example.com")
 
         # Clear sessions
         rotator.clear_sticky_sessions()
@@ -2308,7 +2314,7 @@ class TestHandEnsureAwake:
 
         with patch.object(hand, 'wake') as mock_wake:
             with patch.object(hand, 'is_healthy', return_value=False):
-                result = hand.ensure_awake()
+                hand.ensure_awake()
 
         mock_wake.assert_called_once()
 
@@ -2335,7 +2341,7 @@ class TestHandRestart:
 
         with patch.object(hand, 'sleep') as mock_sleep:
             with patch.object(hand, 'wake') as mock_wake:
-                with patch.object(hand, 'goto') as mock_goto:
+                with patch.object(hand, 'goto'):
                     result = hand.restart()
 
         mock_sleep.assert_called_once()
@@ -2445,7 +2451,7 @@ class TestHandForceRender:
         hand._page.locator.return_value.count.return_value = 0
 
         with patch('time.sleep'):
-            result = hand.force_render()
+            hand.force_render()
 
         # Should have called evaluate for resize event
         assert hand._page.evaluate.called
@@ -2669,7 +2675,7 @@ class TestHandScreenshot:
         hand = Hand()
         hand._page = MagicMock()
 
-        result = hand.screenshot("full.png", full_page=True)
+        hand.screenshot("full.png", full_page=True)
 
         hand._page.screenshot.assert_called_once_with(path="full.png", full_page=True)
 

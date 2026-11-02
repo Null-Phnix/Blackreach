@@ -5,13 +5,12 @@ Tracks navigation history, remembers where good content was found,
 and provides intelligent back-navigation with breadcrumb support.
 """
 
+import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
 from datetime import datetime
 from enum import Enum
-import hashlib
-import re
-from urllib.parse import urlparse, urljoin
+from typing import Dict, List, Optional, Set, Tuple
+from urllib.parse import urlparse
 
 
 class PageValue(Enum):

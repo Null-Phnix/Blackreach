@@ -8,31 +8,25 @@ Provides:
 - Integration with rich library
 """
 
-import time
 import threading
-from typing import Optional, Dict, Any, Callable, List
-from dataclasses import dataclass, field
-from pathlib import Path
+import time
+from dataclasses import dataclass
 from enum import Enum, auto
+from typing import Any, Callable, Dict, List, Optional
 
 from rich.console import Console
+from rich.live import Live
 from rich.progress import (
-    Progress,
-    SpinnerColumn,
-    TextColumn,
     BarColumn,
     DownloadColumn,
-    TransferSpeedColumn,
-    TimeRemainingColumn,
-    TaskProgressColumn,
+    Progress,
+    SpinnerColumn,
     TaskID,
-    track,
+    TaskProgressColumn,
+    TextColumn,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
 )
-from rich.live import Live
-from rich.table import Table
-from rich.panel import Panel
-from rich.text import Text
-
 
 console = Console()
 

@@ -27,16 +27,14 @@ Example usage:
         remaining = engine.get_remaining_subtasks()
 """
 
-import re
-import json
 import hashlib
-from enum import Enum
+import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple, Any
 from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional, Set
 
-from blackreach.knowledge import find_best_sources, extract_subject
-
+from blackreach.knowledge import extract_subject, find_best_sources
 
 # P0-PERF: Pre-compiled regex patterns for goal parsing
 _RE_NUMBERS = re.compile(r'\b(\d+)\b')

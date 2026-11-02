@@ -10,28 +10,34 @@ Usage:
     blackreach setup                     # First-time setup
 """
 
-import click
-from rich.console import Console
-from rich.panel import Panel
-from rich.text import Text
-from rich.markup import escape
-from rich.table import Table
-from rich.prompt import Prompt, Confirm
-from rich.progress import Progress, SpinnerColumn, TextColumn
-from datetime import datetime
-from pathlib import Path
-import subprocess
-import sys
+import atexit
+import os
 import shutil
 import signal
-import atexit
+import subprocess
+import sys
 import time
-import os
+from datetime import datetime
+from pathlib import Path
+
+import click
+from rich.console import Console
+from rich.markup import escape
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.prompt import Confirm, Prompt
+from rich.table import Table
+from rich.text import Text
 
 from blackreach import __version__
-from blackreach.config import config_manager, AVAILABLE_MODELS, CONFIG_FILE, validate_config, validate_for_run
+from blackreach.config import (
+    AVAILABLE_MODELS,
+    CONFIG_FILE,
+    config_manager,
+    validate_config,
+    validate_for_run,
+)
 from blackreach.exceptions import BlackreachError, SessionNotFoundError
-from blackreach.logging import LogLevel
 from blackreach.run_status import describe_run
 
 # Global reference to active agent for cleanup
@@ -281,8 +287,9 @@ def run(goal: str, provider: str, model: str, headless: bool, browser: str, step
         resume: int, verbose: bool, do_validate: bool, cdp: bool, json_output: bool = False):
     """Run a goal or resume saved progress with an explicit decision budget."""
     global _active_agent
-    from blackreach.agent import Agent, AgentConfig
     import json
+
+    from blackreach.agent import Agent, AgentConfig
 
     result = None
     try:
@@ -351,13 +358,15 @@ def daemon_group():
 @click.option('--port', '-p', type=int, default=9222, help='CDP port (default: 9222)')
 def daemon_start(headless: bool, port: int):
     """Start the persistent Chrome daemon."""
-    from blackreach.browser_cdp import _find_chromium, _port_open, _cdp_responding
-    import json, urllib.request
+    import json
+    import urllib.request
+
+    from blackreach.browser_cdp import _cdp_responding, _find_chromium
 
     if _cdp_responding(timeout=2.0):
         # Already running — just print
         ws_url = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2).read())["webSocketDebuggerUrl"]
-        console.print(f"[bold green]✓ Chrome daemon already running[/bold green]")
+        console.print("[bold green]✓ Chrome daemon already running[/bold green]")
         console.print(f"  Port: [cyan]{port}[/cyan]")
         console.print(f"  WS:   [dim]{ws_url}[/dim]")
         return
@@ -416,10 +425,10 @@ def daemon_start(headless: bool, port: int):
     pid_file.write_text(str(proc.pid))
 
     ws_url = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2).read())["webSocketDebuggerUrl"]
-    console.print(f"[bold green]✓ Chrome daemon started[/bold green]")
+    console.print("[bold green]✓ Chrome daemon started[/bold green]")
     console.print(f"  Port: [cyan]{port}[/cyan]")
     console.print(f"  WS:   [dim]{ws_url}[/dim]")
-    console.print(f"\n[dim]Use [cyan]blackreach run --cdp \"your goal\"[/cyan] to connect[/dim]")
+    console.print("\n[dim]Use [cyan]blackreach run --cdp \"your goal\"[/cyan] to connect[/dim]")
 
 
 @daemon_group.command(name="stop")
@@ -446,7 +455,6 @@ def daemon_stop(port: int):
             pid_file.unlink(missing_ok=True)
 
     # Fallback: kill by port
-    import shutil
     lsof = shutil.which("lsof")
     if lsof:
         try:
@@ -461,7 +469,7 @@ def daemon_stop(port: int):
             pass
 
     if killed:
-        console.print(f"[bold green]✓ Chrome daemon stopped[/bold green]")
+        console.print("[bold green]✓ Chrome daemon stopped[/bold green]")
     else:
         console.print(f"[yellow]No daemon found on port {port}[/yellow]")
 
@@ -470,19 +478,21 @@ def daemon_stop(port: int):
 @click.option('--port', '-p', type=int, default=9222, help='CDP port (default: 9222)')
 def daemon_status_cmd(port: int):
     """Check Chrome daemon status."""
+    import json
+    import urllib.request
+
     from blackreach.browser_cdp import _cdp_responding
-    import json, urllib.request
 
     if _cdp_responding(timeout=2.0):
         ws_url = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2).read())["webSocketDebuggerUrl"]
-        console.print(f"[bold green]● Chrome daemon running[/bold green]")
+        console.print("[bold green]● Chrome daemon running[/bold green]")
         console.print(f"  Port:  [cyan]{port}[/cyan]")
         console.print(f"  WS:    [dim]{ws_url}[/dim]")
-        console.print(f"\n[dim]Use [cyan]blackreach run --cdp \"your goal\"[/cyan] to connect[/dim]")
+        console.print("\n[dim]Use [cyan]blackreach run --cdp \"your goal\"[/cyan] to connect[/dim]")
     else:
-        console.print(f"[red]● Chrome daemon not running[/red]")
+        console.print("[red]● Chrome daemon not running[/red]")
         console.print(f"  Port:  [dim]{port}[/dim]")
-        console.print(f"\n[dim]Start with: [cyan]blackreach daemon start[/cyan][/dim]")
+        console.print("\n[dim]Start with: [cyan]blackreach daemon start[/cyan][/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -504,13 +514,12 @@ def scancode_cmd(url: str, refresh: bool, verbose: bool):
         blackreach scancode https://wikipedia.org/wiki/Python --verbose
         blackreach scancode https://wikipedia.org/wiki/Python --refresh
     """
-    from blackreach.adaptive_browser import get_router, BrowserMode
+    from blackreach.adaptive_browser import BrowserMode, get_router
 
     plan = get_router().plan_for(url, force_refresh=refresh)
 
-    from rich.table import Table
     from rich.panel import Panel
-    from rich.text import Text
+    from rich.table import Table
 
     mode_colours = {
         BrowserMode.LIGHTWEIGHT: "green",
@@ -551,7 +560,7 @@ def scancode_cmd(url: str, refresh: bool, verbose: bool):
         reasons = plan.reasons[:3]
         if reasons:
             console.print(f"[dim]Reasons: {', '.join(reasons)}[/dim]")
-        console.print(f"\n[dim]Use --verbose for full details[/dim]")
+        console.print("\n[dim]Use --verbose for full details[/dim]")
 
 
 def _show_results(result: dict):
@@ -993,8 +1002,8 @@ def validate(fix: bool):
 @click.option('--domain', '-d', help='Filter by domain')
 def actions(domain: str):
     """Show action tracking statistics."""
-    from blackreach.memory import PersistentMemory
     from blackreach.action_tracker import ActionTracker
+    from blackreach.memory import PersistentMemory
 
     console.print(BANNER)
     console.print("[bold]Action Tracking Statistics[/bold]\n")
@@ -1071,7 +1080,7 @@ def actions(domain: str):
 @click.option('--type', '-t', 'content_type', help='Filter by content type')
 def sources(content_type: str):
     """Show content source health and availability."""
-    from blackreach.source_manager import get_source_manager, SourceStatus
+    from blackreach.source_manager import get_source_manager
 
     console.print(BANNER)
     console.print("[bold]Content Source Status[/bold]\n")
@@ -1132,9 +1141,9 @@ def sources(content_type: str):
 @click.option('--json', 'json_output', is_flag=True, help='Print diagnostic data without terminal formatting')
 def doctor(browser: str = 'chromium', offline: bool = False, json_output: bool = False):
     """Check this Python environment. A present executable is not a launch test."""
+    import importlib.util
     import json
     import platform
-    import importlib.util
 
     checks = []
     py_version = platform.python_version()
@@ -1460,7 +1469,7 @@ def sessions(limit: int):
 @click.option('--force', '-f', is_flag=True, help='Skip confirmation')
 def clear(clear_logs: bool, days: int, force: bool):
     """Clear old logs and cached data."""
-    from blackreach.logging import cleanup_old_logs, LOG_DIR
+    from blackreach.logging import LOG_DIR, cleanup_old_logs
 
     console.print(BANNER)
     console.print("[bold]Data Cleanup[/bold]\n")
@@ -1498,7 +1507,7 @@ def clear(clear_logs: bool, days: int, force: bool):
 @click.option('--id', 'session_id', type=int, help='Show specific session log')
 def logs(limit: int, session_id: int):
     """Show recent session logs."""
-    from blackreach.logging import get_recent_logs, read_log, LOG_DIR
+    from blackreach.logging import LOG_DIR, get_recent_logs, read_log
 
     console.print(BANNER)
     console.print("[bold]Session Logs[/bold]\n")
@@ -1594,23 +1603,14 @@ def logs(limit: int, session_id: int):
 def interactive_mode():
     """Interactive REPL mode with full polish."""
     global _active_agent
-    from blackreach.agent import Agent, AgentConfig
-    from blackreach.llm import LLMConfig
     from blackreach import ui
+    from blackreach.agent import Agent, AgentConfig
 
     ui.print_banner()
 
     cfg = config_manager.load()
     provider = cfg.default_provider
     model = getattr(cfg, provider).default_model
-
-    try:
-        from blackreach.memory import PersistentMemory
-        mem = PersistentMemory(Path("./memory.db"))
-        stats = mem.get_stats()
-        mem.close()
-    except Exception:  # Best-effort stats display
-        stats = {"total_sessions": 0, "total_downloads": 0}
 
     ui.print_welcome(provider, model)
     prompt = ui.InteractivePrompt()
@@ -1671,20 +1671,19 @@ def interactive_mode():
                     ui.print_error("Usage: /plan <goal>")
                 else:
                     from blackreach.planner import Planner
-                    from blackreach.llm import LLMConfig
 
                     with ui.spinner("Planning..."):
                         llm_config = _make_llm_config(provider, model, cfg)
                         planner = Planner(llm_config)
 
                         if planner.is_simple_goal(goal):
-                            ui.print_info(f"Goal is simple - will run directly without planning")
+                            ui.print_info("Goal is simple - will run directly without planning")
                         else:
                             plan = planner.plan(goal)
                             if plan:
-                                console.print(f"\n[bold]Plan Preview:[/bold]")
+                                console.print("\n[bold]Plan Preview:[/bold]")
                                 console.print(planner.format_plan(plan))
-                                console.print(f"\n[dim]Run the goal directly to execute this plan[/dim]")
+                                console.print("\n[dim]Run the goal directly to execute this plan[/dim]")
 
             elif cmd_lower in ['/logs', '/l', 'logs']:
                 # Show recent session logs
@@ -1707,7 +1706,7 @@ def interactive_mode():
                                 console.print(f"  #{session_id}: {goal}... {success} ({duration}s)")
                             else:
                                 console.print(f"  #{session_id}: {goal}... [yellow]incomplete[/yellow]")
-                    console.print(f"\n  [dim]Logs: ~/.blackreach/logs/[/dim]")
+                    console.print("\n  [dim]Logs: ~/.blackreach/logs/[/dim]")
 
             elif cmd_lower in ['/sessions', '/resume', 'sessions']:
                 # Show resumable sessions
@@ -1735,8 +1734,7 @@ def interactive_mode():
                 # Resume a specific session
                 try:
                     session_id = int(cmd.split(' ', 1)[1].strip())
-                    from blackreach.agent import Agent, AgentConfig, AgentCallbacks
-                    from blackreach.llm import LLMConfig
+                    from blackreach.agent import Agent, AgentConfig
 
                     # Check API key
                     if provider != "ollama" and not config_manager.has_api_key(provider):
@@ -1878,9 +1876,8 @@ def interactive_mode():
 def run_agent_with_ui(goal: str, provider: str, model: str, cfg):
     """Run agent with polished UI output."""
     global _active_agent
-    from blackreach.agent import Agent, AgentConfig, AgentCallbacks
-    from blackreach.llm import LLMConfig
     from blackreach import ui
+    from blackreach.agent import Agent, AgentCallbacks, AgentConfig
 
     progress = ui.AgentProgress()
 

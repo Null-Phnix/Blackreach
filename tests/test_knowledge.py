@@ -1,15 +1,14 @@
 """Tests for the knowledge base module."""
 
-import pytest
 from blackreach.knowledge import (
+    CONTENT_SOURCES,
+    ContentSource,
     detect_content_type,
     extract_subject,
     find_best_sources,
-    reason_about_goal,
-    get_smart_start,
     get_all_urls_for_source,
-    ContentSource,
-    CONTENT_SOURCES
+    get_smart_start,
+    reason_about_goal,
 )
 
 
@@ -269,7 +268,7 @@ class TestContentSourceDataclass:
         )
         assert source.name == "Test"
         assert source.priority == 5  # default
-        assert source.requires_search == True  # default
+        assert source.requires_search  # default
 
     def test_all_sources_have_valid_urls(self):
         for source in CONTENT_SOURCES:
@@ -348,8 +347,9 @@ class TestReasonAboutGoalEdgeCases:
 
     def test_fallback_to_bing_when_no_sources(self):
         """Falls back to the suite's StarSearch-supported engine."""
-        from blackreach.knowledge import reason_about_goal
         from unittest.mock import patch
+
+        from blackreach.knowledge import reason_about_goal
 
         with patch('blackreach.knowledge.find_best_sources', return_value=[]):
             result = reason_about_goal("xyz123")
@@ -421,8 +421,9 @@ class TestCheckUrlReachable:
 
     def test_reachable_url_returns_true(self):
         """Reachable URL returns True."""
+        from unittest.mock import MagicMock, patch
+
         from blackreach.knowledge import check_url_reachable
-        from unittest.mock import patch, MagicMock
 
         with patch('urllib.request.urlopen') as mock_urlopen:
             mock_urlopen.return_value = MagicMock()
@@ -431,9 +432,10 @@ class TestCheckUrlReachable:
 
     def test_unreachable_url_returns_false(self):
         """Unreachable URL returns False."""
-        from blackreach.knowledge import check_url_reachable
-        from unittest.mock import patch
         import urllib.error
+        from unittest.mock import patch
+
+        from blackreach.knowledge import check_url_reachable
 
         with patch('urllib.request.urlopen', side_effect=urllib.error.URLError("Network error")):
             result = check_url_reachable("https://nonexistent.invalid")
@@ -441,9 +443,10 @@ class TestCheckUrlReachable:
 
     def test_http_error_returns_false(self):
         """HTTP error returns False."""
-        from blackreach.knowledge import check_url_reachable
-        from unittest.mock import patch
         import urllib.error
+        from unittest.mock import patch
+
+        from blackreach.knowledge import check_url_reachable
 
         with patch('urllib.request.urlopen', side_effect=urllib.error.HTTPError(None, 404, "Not Found", {}, None)):
             result = check_url_reachable("https://example.com/notfound")
@@ -451,8 +454,9 @@ class TestCheckUrlReachable:
 
     def test_timeout_returns_false(self):
         """Timeout returns False."""
-        from blackreach.knowledge import check_url_reachable
         from unittest.mock import patch
+
+        from blackreach.knowledge import check_url_reachable
 
         with patch('urllib.request.urlopen', side_effect=TimeoutError()):
             result = check_url_reachable("https://slow.example.com")
@@ -464,8 +468,9 @@ class TestGetWorkingUrl:
 
     def test_returns_first_working_url(self):
         """Returns the first working URL."""
-        from blackreach.knowledge import get_working_url, check_url_reachable
         from unittest.mock import patch
+
+        from blackreach.knowledge import get_working_url
 
         source = ContentSource(
             name="Test",
@@ -482,8 +487,9 @@ class TestGetWorkingUrl:
 
     def test_returns_mirror_when_primary_fails(self):
         """Returns mirror URL when primary fails."""
-        from blackreach.knowledge import get_working_url
         from unittest.mock import patch
+
+        from blackreach.knowledge import get_working_url
 
         source = ContentSource(
             name="Test",
@@ -503,8 +509,9 @@ class TestGetWorkingUrl:
 
     def test_returns_none_when_all_fail(self):
         """Returns None when all URLs fail."""
-        from blackreach.knowledge import get_working_url
         from unittest.mock import patch
+
+        from blackreach.knowledge import get_working_url
 
         source = ContentSource(
             name="Test",

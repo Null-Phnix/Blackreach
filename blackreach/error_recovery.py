@@ -29,10 +29,10 @@ Example usage:
 
 import re
 import time
-from enum import Enum
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Callable, Any
+from enum import Enum
 from functools import wraps
+from typing import Any, Callable, Dict, List, Optional
 
 
 class ErrorCategory(Enum):

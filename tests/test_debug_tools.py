@@ -10,23 +10,22 @@ Tests cover:
 - Global get_debug_tools function
 """
 
-import pytest
+import tempfile
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
-import tempfile
-import time
+from unittest.mock import Mock
+
+import pytest
 
 from blackreach.debug_tools import (
-    DebugSnapshot,
     DebugConfig,
+    DebugSnapshot,
     DebugTools,
-    TestResultTracker,
     ErrorCapturingWrapper,
+    TestResultTracker,
     get_debug_tools,
     pytest_configure_debug,
 )
-
 
 # =============================================================================
 # DebugSnapshot Dataclass Tests
@@ -285,7 +284,7 @@ class TestDebugToolsInit:
         """DebugTools creates output directory."""
         new_dir = temp_output_dir / "new_dir"
         config = DebugConfig(output_dir=new_dir)
-        tools = DebugTools(config)
+        DebugTools(config)
         assert new_dir.exists()
 
     def test_init_snapshots_empty(self, debug_tools):
@@ -740,7 +739,7 @@ class TestGetDebugTools:
         dt._debug_tools = None  # Reset singleton
 
         config1 = DebugConfig(output_dir=temp_output_dir)
-        result1 = get_debug_tools(config1)
+        get_debug_tools(config1)
 
         config2 = DebugConfig(output_dir=temp_output_dir, max_snapshots=50)
         result2 = get_debug_tools(config2)

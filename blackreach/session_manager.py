@@ -8,13 +8,13 @@ Provides comprehensive session management:
 - Browser state recovery
 """
 
-from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional, Any, Set
-from datetime import datetime
-from pathlib import Path
 import json
 import sqlite3
+from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
+from pathlib import Path
+from typing import Dict, List, Optional, Set
 
 
 class SessionStatus(Enum):

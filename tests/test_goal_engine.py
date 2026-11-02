@@ -4,12 +4,11 @@ Unit tests for blackreach/goal_engine.py
 Tests goal decomposition and progress tracking.
 """
 
-import pytest
 from blackreach.goal_engine import (
-    SubtaskStatus,
-    GoalType,
     EnhancedSubtask,
     GoalEngine,
+    GoalType,
+    SubtaskStatus,
 )
 
 
@@ -181,7 +180,7 @@ class TestGoalEngineDependencies:
         decomposition = engine.decompose("Find and download a specific book")
 
         # Check that some subtasks might have dependencies
-        has_deps = any(len(st.depends_on) > 0 for st in decomposition.subtasks)
+        any(len(st.depends_on) > 0 for st in decomposition.subtasks)
         # This is acceptable either way - some goals have deps, some don't
 
     def test_check_dependencies_satisfied(self):
@@ -202,7 +201,7 @@ class TestGoalEngineCompletion:
     def test_not_complete_initially(self):
         """Should not be complete initially."""
         engine = GoalEngine()
-        decomposition = engine.decompose("Download a file")
+        engine.decompose("Download a file")
 
         assert engine.is_complete() is False
 

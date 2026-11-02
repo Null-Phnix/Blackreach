@@ -2,19 +2,24 @@
 Tests for Metadata Extraction System
 """
 
-import pytest
-import tempfile
-import os
-from pathlib import Path
-from datetime import datetime
-import struct
-import zipfile
 import io
+import struct
+import tempfile
+import zipfile
+from pathlib import Path
+
+import pytest
 
 from blackreach.metadata_extract import (
-    MetadataExtractor, PDFMetadata, EPUBMetadata, ImageMetadata, FileMetadata,
-    ExtractionResult, MetadataType, compute_checksum, extract_pdf_metadata,
-    extract_epub_metadata, get_metadata_extractor
+    EPUBMetadata,
+    ExtractionResult,
+    FileMetadata,
+    ImageMetadata,
+    MetadataExtractor,
+    MetadataType,
+    PDFMetadata,
+    compute_checksum,
+    get_metadata_extractor,
 )
 
 

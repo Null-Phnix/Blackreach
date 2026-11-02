@@ -10,18 +10,18 @@ Includes:
 - Debug tools fixtures
 """
 
-import pytest
-import tempfile
-import shutil
-import threading
-import socket
-import time
-from pathlib import Path
-from unittest.mock import Mock, MagicMock
-from http.server import HTTPServer, SimpleHTTPRequestHandler
-from functools import partial
 import json
 import os
+import shutil
+import socket
+import tempfile
+import threading
+import time
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+from pathlib import Path
+from unittest.mock import Mock
+
+import pytest
 
 # Backend choice must be deterministic in unit tests. A live developer daemon
 # must not change which implementation gets imported or create browser sessions.
@@ -29,6 +29,7 @@ os.environ.setdefault("BLACKREACH_BROWSER_BACKEND", "playwright")
 
 # Add project root to path
 import sys
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
@@ -620,8 +621,8 @@ def mock_server_with_pages(mock_server, simple_html, form_page_html, dynamic_con
 @pytest.fixture
 def browser_config():
     """Default browser configuration for testing."""
-    from blackreach.stealth import StealthConfig
     from blackreach.resilience import RetryConfig
+    from blackreach.stealth import StealthConfig
 
     return {
         'headless': True,
@@ -665,7 +666,7 @@ def browser_with_debug(browser, debug_output_dir):
     """
     Browser wrapped with debug tools for automatic error capture.
     """
-    from blackreach.debug_tools import DebugTools, DebugConfig, ErrorCapturingWrapper
+    from blackreach.debug_tools import DebugConfig, DebugTools, ErrorCapturingWrapper
 
     config = DebugConfig(
         output_dir=debug_output_dir,
@@ -683,7 +684,7 @@ def browser_with_debug(browser, debug_output_dir):
 @pytest.fixture
 def debug_tools(debug_output_dir):
     """Create debug tools instance for testing."""
-    from blackreach.debug_tools import DebugTools, DebugConfig
+    from blackreach.debug_tools import DebugConfig, DebugTools
 
     config = DebugConfig(
         output_dir=debug_output_dir,

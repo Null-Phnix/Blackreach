@@ -4,16 +4,18 @@ Unit tests for blackreach/api.py
 Tests the high-level API interface.
 """
 
-import pytest
 import json
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
 from blackreach.api import (
-    BrowseResult,
-    SearchResult,
-    DownloadResult,
     ApiConfig,
     BlackreachAPI,
+    BrowseResult,
+    DownloadResult,
+    SearchResult,
     _clean_result_url,
     _huginn_api_key,
 )
@@ -366,7 +368,7 @@ class TestBlackreachAPIClose:
         assert api._agent is None
 
 
-class TestSearchResult:
+class TestSearchResultExtended:
     """Extended tests for SearchResult."""
 
     def test_empty_results_default(self):

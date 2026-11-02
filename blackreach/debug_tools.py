@@ -8,14 +8,13 @@ Provides:
 - Test result aggregation
 """
 
-import traceback
 import time
-import os
+import traceback
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Callable
-from dataclasses import dataclass, field
-from contextlib import contextmanager
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -298,7 +297,7 @@ class DebugTools:
                 html_parts.append(f"<p><strong>HTML saved to:</strong> {snapshot.html_path}</p>")
 
             if snapshot.extra_data:
-                html_parts.append(f"<p><strong>Extra data:</strong></p>")
+                html_parts.append("<p><strong>Extra data:</strong></p>")
                 html_parts.append(f"<pre>{snapshot.extra_data}</pre>")
 
             html_parts.append("</div>")

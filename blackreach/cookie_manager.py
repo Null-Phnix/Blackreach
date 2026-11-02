@@ -10,18 +10,15 @@ Manages browser cookies across sessions:
 - Import/export in various formats (Netscape, JSON)
 """
 
+import base64
 import json
 import logging
 import os
 import time
-import base64
-import hashlib
-import secrets
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Dict, Any, Union, Tuple
-from datetime import datetime, timedelta
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -241,8 +238,8 @@ class CookieEncryption:
 
         # Fallback to hostname + user
         if not machine_id_parts:
-            import socket
             import getpass
+            import socket
             machine_id_parts.append(socket.gethostname())
             machine_id_parts.append(getpass.getuser())
 

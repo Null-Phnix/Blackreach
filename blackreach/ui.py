@@ -12,45 +12,42 @@ Provides:
 """
 
 import time
-from typing import Optional, Dict, Any, List
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-
-from blackreach import __version__
-from rich.console import Console
-from rich.live import Live
-from rich.panel import Panel
-from rich.spinner import Spinner
-from rich.text import Text
-from rich.table import Table
-from rich.status import Status
-from rich.rule import Rule
-from rich.style import Style
-from rich.progress import (
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    BarColumn,
-    DownloadColumn,
-    TransferSpeedColumn,
-    TimeRemainingColumn,
-    TaskProgressColumn,
-)
-from rich.traceback import Traceback
-from rich.syntax import Syntax
-from rich.markdown import Markdown
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from prompt_toolkit import PromptSession
-from prompt_toolkit.history import FileHistory
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import Completer, Completion
-from prompt_toolkit.styles import Style as PTStyle
 from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.shortcuts import radiolist_dialog
+from prompt_toolkit.styles import Style as PTStyle
+from rich.console import Console
+from rich.live import Live
+from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
+)
+from rich.rule import Rule
+from rich.table import Table
+from rich.text import Text
+from rich.traceback import Traceback
 
+from blackreach import __version__
+
+if TYPE_CHECKING:
+    from blackreach.config import ValidationResult
 
 # Global console
 console = Console()
@@ -188,8 +185,9 @@ class AgentProgress:
 
     def complete(self, success: bool, result: dict):
         """Use the same result contract as the command-line entry point."""
-        from blackreach.run_status import describe_run
         from rich.markup import escape
+
+        from blackreach.run_status import describe_run
 
         description = describe_run(result)
         console.print()
@@ -458,9 +456,9 @@ def print_help():
     ))
 
     # Usage
-    console.print(f"\n[bold]Usage:[/bold]")
-    console.print(f"  Type a goal to run the browser agent, or use slash commands.")
-    console.print(f"\n[bold]Examples:[/bold]")
+    console.print("\n[bold]Usage:[/bold]")
+    console.print("  Type a goal to run the browser agent, or use slash commands.")
+    console.print("\n[bold]Examples:[/bold]")
     console.print(f"  [{theme.muted}]go to wikipedia and search for AI[/]")
     console.print(f"  [{theme.muted}]download the first PDF from arxiv about transformers[/]")
     console.print(f"  [{theme.muted}]navigate to github.com and find python projects[/]")
@@ -614,7 +612,6 @@ def show_simple_menu(title: str, options: list, current: str = None) -> Optional
 
 def show_provider_menu(current_provider: str = None) -> Optional[str]:
     """Show provider selection menu."""
-    from blackreach.config import AVAILABLE_MODELS
 
     options = [
         ("ollama", "Ollama - Local, free, private"),
@@ -653,7 +650,7 @@ def show_model_menu(current_provider: str, current_model: str = None) -> Optiona
             label = f"[{provider}] {model}"
             options.append(((provider, model), label))
 
-    console.print(f"\n[bold]Select Model[/bold]")
+    console.print("\n[bold]Select Model[/bold]")
     console.print("[dim]Model availability depends on your API account. Use /model <id> for a custom ID.[/dim]")
     console.print(f"[{theme.muted}]Current: {current_provider} / {current_model}[/]\n")
 
@@ -805,7 +802,7 @@ class DownloadProgressUI:
                 # ... download logic ...
                 update(bytes_downloaded, total_bytes)
         """
-        task_id = self.add_download(url, filename, total)
+        self.add_download(url, filename, total)
 
         def update_func(completed: int, new_total: int = None):
             self.update(url, completed, new_total)
@@ -974,7 +971,6 @@ def print_validation_result(result: "ValidationResult") -> None:
     Args:
         result: ValidationResult from config validation
     """
-    from blackreach.config import ValidationResult  # Import here to avoid circular
 
     if result.valid and not result.warnings:
         console.print("[green]Configuration is valid.[/green]")
