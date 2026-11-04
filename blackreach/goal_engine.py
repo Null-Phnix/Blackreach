@@ -40,6 +40,11 @@ from blackreach.knowledge import extract_subject, find_best_sources
 _RE_NUMBERS = re.compile(r'\b(\d+)\b')
 _RE_URL = re.compile(r'https?://\S+')
 _RE_DOMAIN = re.compile(r'\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}\b')
+_RE_GOAL_CLAUSE = re.compile(r"[.!?;](?:\s+|$)|\b(?:but|instead)\b", re.IGNORECASE)
+_RE_GOAL_NEGATION = re.compile(
+    r"\b(?:not|don['’]?t|never|avoid|without|cannot|can['’]?t)\b"
+    r"|\bno\s+(?:downloads?|saving|fetching)\b", re.IGNORECASE,
+)
 
 
 class SubtaskStatus(Enum):
@@ -267,10 +272,20 @@ class GoalEngine:
         return hashlib.blake2b(f"{text}{datetime.now().isoformat()}".encode(), digest_size=6).hexdigest()
 
     def detect_goal_type(self, goal: str) -> GoalType:
-        """Detect the type of goal."""
+        """Classify requested actions, not actions in a prohibition.
+
+        This is a planning heuristic, not an authorization boundary. Keep the
+        original goal intact for execution. A later affirmative clause may
+        still request a download after an earlier prohibition.
+        """
+        requested = []
+        for clause in _RE_GOAL_CLAUSE.split(goal):
+            negation = _RE_GOAL_NEGATION.search(clause)
+            requested.append(clause[:negation.start()] if negation else clause)
+        positive_goal = " ".join(requested)
         for goal_type, patterns in self._compiled_patterns.items():
             for pattern in patterns:
-                if pattern.search(goal):
+                if pattern.search(positive_goal):
                     return goal_type
         return GoalType.UNKNOWN
 

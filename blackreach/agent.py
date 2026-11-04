@@ -1923,13 +1923,22 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
         if len(self._action_history) > self._max_action_history:
             self._action_history.pop(0)
 
-        # Track repeated failures of the same action type
-        current_action_key = f"{action}:{args.get('selector', '')}:{args.get('text', '')}"
-        if current_action_key == self._last_failed_action:
-            self._repeated_failure_count += 1
+        # A repeated action is not a repeated failure. Include its destination
+        # and page so failures on different links do not form one retry streak.
+        if result.get("error"):
+            current_action_key = json.dumps({
+                "page": url,
+                "action": action,
+                "args": {k: v for k, v in args.items() if not k.startswith("_")},
+            }, sort_keys=True)
+            if current_action_key == self._last_failed_action:
+                self._repeated_failure_count += 1
+            else:
+                self._last_failed_action = current_action_key
+                self._repeated_failure_count = 1
         else:
-            self._last_failed_action = current_action_key
-            self._repeated_failure_count = 1
+            self._last_failed_action = None
+            self._repeated_failure_count = 0
 
         if self._repeated_failure_count >= 3:
             log(f"  [REPEATED FAILURE x{self._repeated_failure_count} - same action keeps failing]")
