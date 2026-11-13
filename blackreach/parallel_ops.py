@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from blackreach.multi_tab import SyncTabManager, TabPoolConfig
 from blackreach.rate_limiter import RateLimiter, get_rate_limiter
+from blackreach.ssrf import _is_ssrf_safe, assert_download_url_safe
 from blackreach.timeout_manager import TimeoutManager, get_timeout_manager
 
 
@@ -354,6 +355,9 @@ class ParallelDownloader:
             if not can_request:
                 time.sleep(wait_time)
 
+            # Refuse private and link-local targets before the browser connects.
+            _is_ssrf_safe(task.url)
+
             # Get a tab for download
             tab = self.tab_manager.get_tab(task=f"download_{task.url}")
             task.tab_id = tab.tab_id
@@ -367,6 +371,17 @@ class ParallelDownloader:
                 tab.page.goto(task.url)
 
             download = download_info.value
+            final_url = download.url if isinstance(getattr(download, "url", None), str) else ""
+            try:
+                assert_download_url_safe(final_url)
+            except ValueError:
+                delete = getattr(download, "delete", None)
+                if callable(delete):
+                    try:
+                        delete()
+                    except Exception:
+                        pass
+                raise
 
             # Save file
             download.save_as(str(download_path))

@@ -933,6 +933,46 @@ class TestSSRFProtection:
         with pytest.raises(ValueError, match="no hostname"):
             _is_ssrf_safe("file:///etc/passwd")
 
+    def test_browser_download_does_not_save_private_targets(self, tmp_path, monkeypatch):
+        """A PDF download uses the browser, which used to skip the SSRF guard.
+
+        Direct loopback never opens the browser. A public URL whose download
+        lands on a metadata address is deleted instead of saved.
+        """
+        import socket
+
+        hand = Hand(headless=True, download_dir=tmp_path)
+        page = MagicMock()
+        hand._page = page
+
+        with pytest.raises(ValueError, match="SSRF"):
+            hand.download_file(url="http://127.0.0.1/secret.zip")
+        page.expect_download.assert_not_called()
+
+        download = MagicMock()
+        download.url = "http://169.254.169.254/latest/meta-data/"
+        download.suggested_filename = "meta.bin"
+        ctx = MagicMock()
+        ctx.__enter__.return_value = ctx
+        ctx.value = download
+        page.expect_download.return_value = ctx
+
+        def public_dns(host, *args, **kwargs):
+            if host == "example.com":
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", 0))]
+            # A literal address is not a DNS miss. Treating it as unresolvable
+            # would skip the guard.
+            if host == "169.254.169.254":
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (host, 0))]
+            raise socket.gaierror("no such host")
+
+        monkeypatch.setattr("blackreach.ssrf.socket.getaddrinfo", public_dns)
+        with pytest.raises(ValueError, match="SSRF"):
+            hand.download_file(url="https://example.com/secret.zip")
+        download.save_as.assert_not_called()
+        download.delete.assert_called_once()
+        assert list(Path(tmp_path).iterdir()) == []
+
     def test_goto_and_download_reject_local_files_before_browser(self):
         """file:// must fail before the browser is started or the file is read."""
         hand = Hand(headless=True)

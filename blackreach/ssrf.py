@@ -98,3 +98,21 @@ def urlopen_guarded(request: urllib.request.Request, timeout: float):
     _is_ssrf_safe(request.full_url)
     opener = urllib.request.build_opener(_GuardedRedirectHandler)
     return opener.open(request, timeout=timeout)
+
+
+def assert_download_url_safe(url: str) -> None:
+    """Reject a browser download whose target is not a public http(s) resource.
+
+    Direct fetches already refuse loopback and link-local addresses. A browser
+    download must do the same for the URL Chromium reports, which is the
+    resource address after redirects. ``blob:`` and ``data:`` URLs are produced
+    by the page and do not name a network host.
+    """
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError("SSRF blocked: download URL is missing")
+    scheme = (urllib.parse.urlparse(url.strip()).scheme or "").lower()
+    if scheme in ("blob", "data"):
+        return
+    if scheme not in ("http", "https"):
+        raise ValueError("SSRF blocked: download URL scheme is not http(s)")
+    _is_ssrf_safe(url)

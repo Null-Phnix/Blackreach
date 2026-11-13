@@ -1166,6 +1166,46 @@ class TestParallelDownloaderDownloadFiles:
 class TestParallelDownloaderDownloadSingle:
     """Tests for _download_single method."""
 
+    def test_download_single_does_not_save_loopback_redirect(self, tmp_path, monkeypatch):
+        """A public URL that lands on loopback must not be written to disk."""
+        import socket
+
+        mock_context = MagicMock()
+        mock_page = MagicMock()
+        mock_download = MagicMock()
+        mock_download.url = "http://127.0.0.1/secret"
+        mock_download.suggested_filename = "secret.bin"
+
+        mock_tab = TabInfo(tab_id="tab_1", page=mock_page, status=TabStatus.ACTIVE)
+        downloader = ParallelDownloader(mock_context, download_dir=str(tmp_path))
+        downloader.tab_manager = MagicMock()
+        downloader.tab_manager.get_tab.return_value = mock_tab
+        downloader.rate_limiter = MagicMock()
+        downloader.rate_limiter.can_request.return_value = (True, 0)
+
+        mock_download_ctx = MagicMock()
+        mock_download_ctx.__enter__ = MagicMock(return_value=mock_download_ctx)
+        mock_download_ctx.__exit__ = MagicMock(return_value=False)
+        mock_download_ctx.value = mock_download
+        mock_page.expect_download.return_value = mock_download_ctx
+
+        def public_dns(host, *args, **kwargs):
+            if host == "example.com":
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", 0))]
+            raise socket.gaierror("no such host")
+
+        monkeypatch.setattr("blackreach.ssrf.socket.getaddrinfo", public_dns)
+        task = ParallelTask(
+            task_id="dl_1",
+            task_type=ParallelTaskType.DOWNLOAD_FILE,
+            url="https://example.com/file.pdf",
+            params={"filename": "file.pdf"},
+        )
+        assert downloader._download_single(task) is False
+        mock_download.save_as.assert_not_called()
+        mock_download.delete.assert_called_once()
+        assert list(tmp_path.iterdir()) == []
+
     def test_download_single_sets_running_status(self):
         """_download_single sets task to RUNNING."""
         mock_context = MagicMock()

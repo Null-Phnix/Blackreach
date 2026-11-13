@@ -50,7 +50,7 @@ from blackreach.resilience import (
     WaitConditions,
     retry_with_backoff,
 )
-from blackreach.ssrf import _is_ssrf_safe, urlopen_guarded
+from blackreach.ssrf import _is_ssrf_safe, assert_download_url_safe, urlopen_guarded
 from blackreach.stealth import Stealth, StealthConfig
 
 logger = logging.getLogger(__name__)
@@ -1598,6 +1598,27 @@ class Hand:
         """Set a callback for download events."""
         self._download_callback = callback
 
+    def _save_download_if_safe(self, download: Download, save_path: Path) -> None:
+        """Save a browser download only when its final URL is a public http(s) resource.
+
+        Chromium follows redirects before it emits the download. ``download.url``
+        is that final resource, so a public link that 302s to loopback must be
+        deleted instead of written into the download directory.
+        """
+        final_url = download.url if isinstance(getattr(download, "url", None), str) else ""
+        try:
+            assert_download_url_safe(final_url)
+        except ValueError:
+            save_path.unlink(missing_ok=True)
+            delete = getattr(download, "delete", None)
+            if callable(delete):
+                try:
+                    delete()
+                except Exception:
+                    logger.debug("Failed to delete blocked download %s", final_url)
+            raise
+        download.save_as(str(save_path))
+
     def download_file(self, selector: str = None, url: str = None, timeout: int = DOWNLOAD_TIMEOUT_MS) -> dict:
         """
         Download a file by clicking a link or navigating to a URL.
@@ -1615,6 +1636,9 @@ class Hand:
         if url:
             from blackreach.adaptive_browser import _require_web_url
             _require_web_url(url)
+            # Same gate as direct HTTP fetches. The browser would otherwise
+            # save http://127.0.0.1 or a metadata address as a normal file.
+            _is_ssrf_safe(url)
             # Direct download via navigation
             # Note: page.goto() will throw "Download is starting" for direct file URLs
             # We catch this and wait for the download
@@ -1639,7 +1663,7 @@ class Hand:
         base_path = self.download_dir / suggested_name
         save_path = _reserve_unique_path(self.download_dir, base_path)
 
-        download.save_as(str(save_path))
+        self._save_download_if_safe(download, save_path)
 
         return self._build_download_result(save_path, download.url)
 
@@ -1766,7 +1790,7 @@ class Hand:
             # P0-SEC: sanitize filename to prevent path traversal
             safe_filename = _sanitize_filename(download.suggested_filename)
             save_path = self.download_dir / safe_filename
-            download.save_as(str(save_path))
+            self._save_download_if_safe(download, save_path)
 
             return self._build_download_result(save_path, download.url)
         except (PlaywrightError, OSError) as e:

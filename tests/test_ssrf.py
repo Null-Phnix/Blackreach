@@ -7,7 +7,12 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
-from blackreach.ssrf import _GuardedRedirectHandler, _is_ssrf_safe, urlopen_guarded
+from blackreach.ssrf import (
+    _GuardedRedirectHandler,
+    _is_ssrf_safe,
+    assert_download_url_safe,
+    urlopen_guarded,
+)
 
 
 class _SecretHandler(BaseHTTPRequestHandler):
@@ -187,6 +192,66 @@ class TestRedirects:
             monkeypatch.setattr("blackreach.ssrf._is_ssrf_safe", allow_redirector_only)
             with pytest.raises(ValueError, match="SSRF"):
                 urlopen_guarded(urllib.request.Request(start), timeout=3)
+        finally:
+            redirector.shutdown()
+
+    def test_download_url_guard_blocks_redirect_target_and_allows_page_urls(self):
+        """Browser downloads report a final URL. Private targets must fail closed."""
+        with pytest.raises(ValueError, match="SSRF"):
+            assert_download_url_safe("http://127.0.0.1/secret")
+        with pytest.raises(ValueError, match="SSRF"):
+            assert_download_url_safe("http://169.254.169.254/latest/meta-data/")
+        with pytest.raises(ValueError, match="SSRF"):
+            assert_download_url_safe("")
+        with pytest.raises(ValueError, match="SSRF"):
+            assert_download_url_safe("file:///etc/passwd")
+        assert_download_url_safe("blob:https://example.com/2f6c1e4a-1") is None
+        assert_download_url_safe("https://example.com/paper.pdf") is None
+
+    def test_route_probe_does_not_read_loopback_redirect(self, monkeypatch, local_server, tmp_path):
+        """A public-looking HEAD must not follow a redirect onto this machine."""
+        from blackreach.adaptive_browser import BrowserRouter
+
+        secret_port = local_server
+        hits = {"n": 0}
+        original_get = _SecretHandler.do_GET
+
+        def counting_get(self, *args, **kwargs):
+            hits["n"] += 1
+            return original_get(self, *args, **kwargs)
+
+        monkeypatch.setattr(_SecretHandler, "do_GET", counting_get)
+
+        class Redirect(BaseHTTPRequestHandler):
+            def do_HEAD(self):
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{secret_port}/secret")
+                self.end_headers()
+
+            def do_GET(self):
+                self.do_HEAD()
+
+            def log_message(self, fmt, *args):
+                return
+
+        redirector = HTTPServer(("127.0.0.1", 0), Redirect)
+        thread = threading.Thread(target=redirector.serve_forever, daemon=True)
+        thread.start()
+        start = f"http://127.0.0.1:{redirector.server_address[1]}/paper.pdf"
+        real_check = _is_ssrf_safe
+
+        def allow_redirector_only(url: str) -> bool:
+            if url == start:
+                return True
+            return real_check(url)
+
+        monkeypatch.setattr("blackreach.ssrf._is_ssrf_safe", allow_redirector_only)
+        try:
+            router = BrowserRouter(cache_path=tmp_path / "route_cache.json")
+            score, reasons = router._probe_headers(start)
+            assert hits["n"] == 0
+            assert score == 0.0
+            assert reasons == ["probe-failed"]
         finally:
             redirector.shutdown()
 
