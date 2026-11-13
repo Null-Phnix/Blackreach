@@ -29,6 +29,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from blackreach.exceptions import NavigationError
+from blackreach.ssrf import urlopen_guarded
 
 
 class BrowserMode(Enum):
@@ -235,7 +236,7 @@ class BrowserRouter:
                 "Accept-Encoding": "identity",
                 "Connection": "keep-alive",
             })
-            resp = urllib.request.urlopen(req, timeout=10)
+            resp = urlopen_guarded(req, timeout=10)
 
             score = 0.0
             reasons: List[str] = []
@@ -290,7 +291,7 @@ class BrowserRouter:
                 f"https://{domain}/robots.txt",
                 headers={"User-Agent": "Mozilla/5.0 (compatible; Blackreach/5.0)"},
             )
-            resp = urllib.request.urlopen(req, timeout=5)
+            resp = urlopen_guarded(req, timeout=5)
             body = resp.read().decode("utf-8", errors="ignore")
 
             if "crawl-delay" in body.lower():
