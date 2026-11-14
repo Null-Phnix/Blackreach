@@ -1718,8 +1718,9 @@ class Hand:
                     ext = '.jpg'
                 elif 'png' in content_type_lower:
                     ext = '.png'
-                elif 'html' in content_type_lower:
-                    ext = '.html'
+                # Leave text/html extensionless. Naming it .html makes the
+                # verifier treat a landing page as a requested page, and a
+                # PDF that a server mislabels as text/html gets deleted.
                 if ext:
                     renamed = _reserve_unique_path(self.download_dir, save_path.with_suffix(ext))
                     save_path.unlink(missing_ok=True)
