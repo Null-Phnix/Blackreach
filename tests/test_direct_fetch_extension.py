@@ -58,6 +58,36 @@ def test_extensionless_epub_is_not_saved_as_zip(tmp_path):
         assert verified.status == VerificationStatus.VALID
 
 
+def test_extensionless_html_is_not_renamed_to_a_page(tmp_path):
+    """A landing page must not become page.html and pass verification.
+
+    StarSearch saves every download through this fetch. Playwright uses it
+    when the browser does not emit a download. Content-Type text/html used
+    to add .html, which the verifier treats as a requested page.
+    """
+    html = b"<!DOCTYPE html><html><body>" + b"Article landing page. " * 40 + b"</body></html>"
+    pdf = b"%PDF-1.7\n/Catalog /Pages\n" + b" " * 1500 + b"\n%%EOF"
+    for hand in (
+        PlaywrightHand(download_dir=tmp_path / "pw"),
+        StarSearchHand(download_dir=tmp_path / "ss"),
+    ):
+        dest = tmp_path / hand.__class__.__module__
+        result = _fetch(hand, dest, html, "text/html; charset=utf-8")
+        saved = Path(result["path"])
+        assert saved.name == "42"
+        assert saved.suffix == ""
+        verified = ContentVerifier().verify_file(saved)
+        assert verified.status == VerificationStatus.WRONG_FORMAT
+
+        xhtml = _fetch(hand, dest / "xhtml", html, "application/xhtml+xml")
+        assert Path(xhtml["path"]).suffix == ""
+
+        mislabeled = _fetch(hand, dest / "pdf", pdf, "text/html")
+        kept = Path(mislabeled["path"])
+        assert kept.suffix != ".html"
+        assert ContentVerifier().verify_file(kept).status == VerificationStatus.VALID
+
+
 def test_extensionless_zip_and_pdf_keep_their_types(tmp_path):
     pdf = b"%PDF-1.7\n/Catalog /Pages\n" + b" " * 1500 + b"\n%%EOF"
     stream = io.BytesIO()

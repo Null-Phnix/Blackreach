@@ -650,11 +650,13 @@ class Hand:
 
             # Order matters: epub and gzip types contain "zip" (application/epub+zip,
             # application/gzip), so check them before the generic zip match.
+            # text/html is not given a suffix: that name makes a landing page
+            # look requested, and it deletes a PDF a server mislabeled as HTML.
             if not save_path.suffix:
                 content_type_lower = content_type.lower()
                 ext_map = (
                     ('epub', '.epub'), ('gzip', '.gz'), ('pdf', '.pdf'), ('zip', '.zip'),
-                    ('jpeg', '.jpg'), ('jpg', '.jpg'), ('png', '.png'), ('html', '.html'),
+                    ('jpeg', '.jpg'), ('jpg', '.jpg'), ('png', '.png'),
                 )
                 for key, ext in ext_map:
                     if key in content_type_lower:
