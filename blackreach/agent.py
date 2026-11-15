@@ -111,28 +111,51 @@ RE_FAST_DOWNLOAD = re.compile(r'(fast\s+download)', re.IGNORECASE)
 RE_SLOW_PARTNER = re.compile(r'(slow\s+partner\s+server)', re.IGNORECASE)
 RE_FAST_PARTNER = re.compile(r'(fast\s+partner\s+server)', re.IGNORECASE)
 
-# "not" inside "notes"/"another" is not a refusal to download. "no" must not
-# match "no." (number abbreviation) or "nothing" except as its own word.
-_GOAL_NEGATION = re.compile(r"\b(?:dont|never|not|nothing|without|cannot)\b|\bno(?=\s)")
+# Negation has to attach to the obtain verb. "not" inside "notes"/"another",
+# and a later contrast ("download the PDF, not the HTML"), are not refusals.
 _GOAL_OBTAIN = re.compile(r"\b(?:download|fetch|save)\b")
+_NEGATION_PREFIX = re.compile(
+    r"\b(?:dont|never|cannot|do\s+not|not|without|no)\s+(?:\w+\s+){0,2}$"
+)
+_NEGATED_ACTIVITY = re.compile(
+    r"\b(?:dont|never|cannot|do\s+not|not|without)\s+"
+    r"(?:download(?:ing)?|fetch(?:ing)?|sav(?:e|ing))\b"
+)
+_OBTAIN_NOTHING = re.compile(r"nothing\b(?!\s+(?:but|except)\b)|no\s+(?:files?|downloads?)\b")
 _GOAL_FILE_REQUEST = re.compile(r"\b(?:epubs?|pdfs?|wallpapers?|pictures?|photos?)\b")
 _GOAL_INFO_ONLY = re.compile(r"\bdownloaded\b|\bdownload counts?\b|\bmost downloaded\b")
 _GOAL_INFO_VERB = re.compile(r"\b(?:list|find|search|show)\b|\bget the\b")
+
+
+def _positive_obtain(text: str) -> bool:
+    """True when an obtain verb is a request rather than a refusal of one."""
+    for match in _GOAL_OBTAIN.finditer(text):
+        prefix = text[max(0, match.start() - 48):match.start()]
+        if _NEGATION_PREFIX.search(prefix):
+            continue
+        if _OBTAIN_NOTHING.match(text[match.end():].lstrip()):
+            continue
+        return True
+    return False
 
 
 def goal_needs_download(goal: str) -> bool:
     """Return whether finishing with zero files would miss the goal.
 
     An explicit obtain verb still counts when the goal also says "find" or
-    "search". Queries about download statistics stay informational.
+    "search". Only a negation attached to that verb ("don't download",
+    "never save") cancels it, so "download the PDF, not the HTML" still
+    needs a file. Queries about download statistics stay informational.
     """
     text = goal.lower().replace("'", "")
-    if _GOAL_NEGATION.search(text):
-        return False
     if _GOAL_INFO_ONLY.search(text):
         return False
-    if _GOAL_OBTAIN.search(text):
+    if _positive_obtain(text):
         return True
+    # A refused obtain must not be revived by a file-type word inside it
+    # ("don't download the pdf"). "download nothing" is the same refusal.
+    if _NEGATED_ACTIVITY.search(text) or _GOAL_OBTAIN.search(text):
+        return False
     if _GOAL_INFO_VERB.search(text):
         return False
     return _GOAL_FILE_REQUEST.search(text) is not None
