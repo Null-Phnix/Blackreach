@@ -50,6 +50,15 @@ class TestStepRecordsOnFailure:
         assert len(agent._action_history) == 1
         assert "ERROR" in agent._action_history[0]
 
+    def test_contrast_does_not_finish_with_zero_files(self, agent):
+        """'Download the PDF, not the HTML' must not succeed before a file is saved."""
+        agent.llm.generate = MagicMock(
+            return_value='{"thought":"the abstract is enough","action":"done","args":{"reason":"done"}}'
+        )
+        result = agent._step("Download the PDF, not the HTML version", step_num=1, quiet=True)
+        assert result["done"] is False
+        assert result.get("blocked") is True
+
     def test_step_success_records_action(self, agent):
         """Happy path also records properly."""
         agent.llm.generate = MagicMock(return_value='{"thought":"click","action":"click","element":1}')
@@ -218,6 +227,22 @@ class TestGoalNegationNotDownload:
 
     def test_download_statistics_stay_informational(self):
         assert goal_needs_download("what is the download count") is False
+
+    def test_contrast_does_not_cancel_the_download(self):
+        """A later "not" names what to skip. The file is still required."""
+        assert goal_needs_download("Download the PDF, not the HTML version") is True
+        assert goal_needs_download("Download the arXiv PDF not the abstract") is True
+        assert goal_needs_download("Download the paper; nothing else") is True
+        assert goal_needs_download("Download the dataset without the readme") is True
+        assert goal_needs_download("download nothing but the epub") is True
+
+    def test_refused_obtain_stays_informational(self):
+        assert goal_needs_download("do not download anything") is False
+        assert goal_needs_download("dont download the pdf") is False
+        assert goal_needs_download("without downloading the pdf") is False
+        assert goal_needs_download("there is no download button") is False
+        assert goal_needs_download("download nothing") is False
+        assert goal_needs_download("download no files") is False
 
 
 class TestRunLoopErrorDisplay:
