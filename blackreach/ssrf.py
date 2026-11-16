@@ -58,13 +58,18 @@ def _is_ssrf_safe(url: str) -> bool:
             raise ValueError("URL has no hostname")
 
         # Block localhost variants before DNS so the message stays stable.
-        if hostname.lower() in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        # ``*.localhost`` is loopback even when the resolver has no record for
+        # it (RFC 6761). Chromium still connects, and a DNS miss used to be
+        # treated as safe, so ``http://foo.localhost:9222/`` read this machine.
+        normalized = hostname.lower().rstrip(".")
+        if normalized in ("localhost", "127.0.0.1", "::1", "0.0.0.0") or normalized.endswith(".localhost"):
             raise ValueError("SSRF blocked: localhost access not allowed")
 
         try:
             addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
         except socket.gaierror:
             # Can't resolve — allow; the request itself will fail.
+            # Names the browser treats as loopback are rejected above.
             return True
 
         for _family, _, _, _, sockaddr in addr_info:

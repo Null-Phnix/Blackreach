@@ -564,6 +564,12 @@ class TestAPISSRFProtection:
         with pytest.raises(ValueError, match="SSRF"):
             api.get_page("http://localhost/admin")
 
+    def test_get_page_blocks_localhost_suffix(self):
+        """A name Chromium maps to loopback must not reach the browser."""
+        api = BlackreachAPI()
+        with pytest.raises(ValueError, match="SSRF"):
+            api.get_page("http://foo.localhost:9222/json/version")
+
     def test_get_page_blocks_127_0_0_1(self):
         """get_page() should reject 127.0.0.1 URLs."""
         api = BlackreachAPI()

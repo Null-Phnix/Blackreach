@@ -63,6 +63,32 @@ class TestNonPublicAddresses:
         with pytest.raises(ValueError, match="SSRF"):
             _is_ssrf_safe("http://0/secret")
 
+    def test_localhost_suffix_is_blocked_without_dns(self, monkeypatch):
+        """``*.localhost`` is loopback even when getaddrinfo has no record.
+
+        Chromium connects to 127.0.0.1 for these names. A DNS miss must not
+        count as safe, or a page fetch reads services on this machine.
+        """
+        def fail_dns(host, *args, **kwargs):
+            raise AssertionError(f"DNS should not be consulted for {host}")
+
+        monkeypatch.setattr("blackreach.ssrf.socket.getaddrinfo", fail_dns)
+        for url in (
+            "http://foo.localhost/secret",
+            "http://foo.localhost.:8765/json/version",
+            "http://Foo.LocalHost/admin",
+        ):
+            with pytest.raises(ValueError, match="SSRF"):
+                _is_ssrf_safe(url)
+
+    def test_localhost_substring_is_not_a_loopback_name(self, monkeypatch):
+        def fail_dns(host, *args, **kwargs):
+            raise socket.gaierror(socket.EAI_NONAME, "not found")
+
+        monkeypatch.setattr("blackreach.ssrf.socket.getaddrinfo", fail_dns)
+        assert _is_ssrf_safe("https://notlocalhost.example/") is True
+        assert _is_ssrf_safe("https://foo.localhost.example.com/") is True
+
     def test_unspecified_addresses_are_blocked(self):
         with pytest.raises(ValueError, match="SSRF"):
             _is_ssrf_safe("http://0.0.0.0/secret")
