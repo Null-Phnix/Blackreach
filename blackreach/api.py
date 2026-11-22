@@ -410,7 +410,9 @@ class BlackreachAPI:
         Raises:
             ValueError: If URL targets internal/private networks (SSRF protection)
         """
-        # P0-SEC: SSRF protection - validate URL before fetching
+        # P0-SEC: SSRF protection - validate URL before fetching.
+        # The browser follows redirects, so the document it lands on is checked
+        # again before any of that document is read or returned.
         from blackreach.browser import _is_ssrf_safe
         _is_ssrf_safe(url)  # Raises ValueError if unsafe
 
@@ -421,6 +423,15 @@ class BlackreachAPI:
             agent.hand = agent._create_browser()
 
         agent.hand.goto(url)
+        final_url = agent.hand.get_url()
+        try:
+            if not isinstance(final_url, str) or not final_url.strip():
+                raise ValueError("SSRF blocked: navigation produced no URL")
+            _is_ssrf_safe(final_url)
+        except ValueError:
+            _abandon_loaded_document(agent.hand)
+            raise
+
         agent.hand.get_html()
         from blackreach.dom_walker import walk_dom
         dom = walk_dom(agent.hand.page)
@@ -472,6 +483,23 @@ def search(query: str, **kwargs) -> SearchResult:
     """Quick search function."""
     with BlackreachAPI() as api:
         return api.search(query, **kwargs)
+
+
+def _abandon_loaded_document(hand: Any) -> None:
+    """Drop a document that failed the post-navigation SSRF check.
+
+    ``goto`` has already followed the redirect, so the private response is the
+    current page. Leaving it there would let a later read of this browser
+    return the body ``get_page`` just refused to.
+    """
+    page = getattr(hand, "page", None)
+    goto = getattr(page, "goto", None)
+    if not callable(goto):
+        return
+    try:
+        goto("about:blank", wait_until="commit")
+    except Exception:
+        logger.debug("Could not leave the blocked document", exc_info=True)
 
 
 def get_page(url: str) -> Dict:

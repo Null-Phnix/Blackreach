@@ -5,8 +5,9 @@ Tests the high-level API interface.
 """
 
 import json
+import socket
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -597,3 +598,66 @@ class TestAPISSRFProtection:
         api = BlackreachAPI()
         with pytest.raises(ValueError, match="SSRF"):
             api.get_page("http://[::1]/admin")
+
+    def test_get_page_does_not_return_redirect_to_private_network(self, monkeypatch):
+        """A public URL that lands on a metadata address must not be read back.
+
+        The guard used to run only on the caller's URL. The browser follows the
+        redirect, and the private document was then returned as the page text.
+        """
+        def fake_getaddrinfo(host, *args, **kwargs):
+            try:
+                socket.inet_aton(host)
+            except OSError:
+                if host == "example.com":
+                    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", 0))]
+                raise socket.gaierror("no such host")
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (host, 0))]
+
+        monkeypatch.setattr("blackreach.ssrf.socket.getaddrinfo", fake_getaddrinfo)
+
+        api = BlackreachAPI()
+        hand = MagicMock()
+        hand.get_url.return_value = "http://169.254.169.254/latest/meta-data/"
+        hand.get_html.return_value = "SECRET-CLOUD-CREDENTIAL"
+        agent = MagicMock()
+        agent.hand = hand
+        api._agent = agent
+        api._initialized = True
+
+        with pytest.raises(ValueError, match="SSRF"):
+            api.get_page("https://example.com/redirect")
+
+        hand.goto.assert_called_once_with("https://example.com/redirect")
+        hand.get_html.assert_not_called()
+        hand.get_title.assert_not_called()
+        hand.page.goto.assert_called_once_with("about:blank", wait_until="commit")
+
+    def test_get_page_allows_redirect_to_another_public_host(self, monkeypatch):
+        """An ordinary redirect to a public host is still returned."""
+        def fake_getaddrinfo(host, *args, **kwargs):
+            if host in {"example.com", "cdn.example.com"}:
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", 0))]
+            raise socket.gaierror("no such host")
+
+        monkeypatch.setattr("blackreach.ssrf.socket.getaddrinfo", fake_getaddrinfo)
+
+        api = BlackreachAPI()
+        hand = MagicMock()
+        hand.get_url.return_value = "https://cdn.example.com/article"
+        hand.get_title.return_value = "Article"
+        hand.get_html.return_value = "<html>ok</html>"
+        agent = MagicMock()
+        agent.hand = hand
+        api._agent = agent
+        api._initialized = True
+
+        with patch(
+            "blackreach.dom_walker.walk_dom",
+            return_value={"text_preview": "public article", "links": [], "images": []},
+        ):
+            result = api.get_page("https://example.com/start")
+
+        assert result["text"] == "public article"
+        assert result["title"] == "Article"
+        hand.page.goto.assert_not_called()
