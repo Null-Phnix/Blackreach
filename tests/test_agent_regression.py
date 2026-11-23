@@ -147,6 +147,33 @@ class TestFlatActionFields:
         assert result["result"] == "Attention is all you need."
         assert result["reason"] == "summarized"
 
+    def test_actions_array_keeps_the_answer_on_the_wrapper(self, agent):
+        agent.llm.generate = MagicMock(
+            return_value=(
+                '{"thought":"I read the page","result":"Attention is all you need.",'
+                '"actions":[{"action":"done","args":{"reason":"summarized"}}]}'
+            )
+        )
+
+        result = agent._step("summarize the paper", step_num=1, quiet=True)
+
+        assert result["done"] is True
+        assert result["result"] == "Attention is all you need."
+        assert result["reason"] == "summarized"
+
+    def test_actions_array_child_result_wins_over_wrapper(self, agent):
+        agent.llm.generate = MagicMock(
+            return_value=(
+                '{"result":"ignored","actions":[{"action":"done",'
+                '"args":{"reason":"ok","result":"kept"}}]}'
+            )
+        )
+
+        result = agent._step("summarize the paper", step_num=1, quiet=True)
+
+        assert result["result"] == "kept"
+        assert result["reason"] == "ok"
+
     def test_nested_result_wins_over_a_flat_one(self, agent):
         agent.llm.generate = MagicMock(
             return_value=(

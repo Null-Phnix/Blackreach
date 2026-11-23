@@ -1599,7 +1599,10 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
             except (ValueError, TypeError):
                 pass
 
-        # Format 0: {"actions": [{...}, {...}]} - array of actions, take first one
+        # Format 0: {"actions": [{...}, {...}]} - array of actions, take first one.
+        # The wrapper often holds the answer ("result") beside the array.
+        # Replacing data with the first action must not discard that text.
+        envelope = data
         actions_array = data.get("actions")
         if isinstance(actions_array, list) and len(actions_array) > 0:
             first_action = actions_array[0]
@@ -1654,6 +1657,8 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
         # Click/type examples are flat, while navigate/download/done nest fields
         # under args. Models mix the two. Leaving url or result only at the top
         # level navigates nowhere and reports a successful run with an empty answer.
+        # An actions array has the same shape one level up: the answer stays on
+        # the wrapper, and the selected action often carries only a reason.
         if isinstance(args, dict):
             for field in (
                 "text",
@@ -1668,8 +1673,16 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
                 "seconds",
                 "key",
             ):
-                if field in data and field not in args:
+                if field in args:
+                    continue
+                if field in data:
                     args[field] = data[field]
+                elif (
+                    envelope is not data
+                    and field in ("result", "reason")
+                    and field in envelope
+                ):
+                    args[field] = envelope[field]
 
         # Inject element_id into args for _execute_action
         if element_id is not None:
