@@ -1746,10 +1746,17 @@ Example 4 - Research complete: {"thought":"I read all 3 HN discussions and can n
             reason = args.get("reason", thought or "Goal complete")
             download_count = len(self.session_memory.downloaded_files)
 
-            # Don't allow "done" if the goal still needs a file and we have 0.
-            # Word boundaries: "notes" and "find and download" must not slip through.
-            if goal_needs_download(goal) and download_count == 0:
-                log("  [BLOCKED: Goal needs downloads but have 0 - continuing search]")
+            # An explicit count is a quota: "download 3 files" must not finish at 1.
+            # Zero files still blocks a download goal. A year or a chapter range is
+            # not a quota, so one saved file can finish those.
+            needs_file = goal_needs_download(goal)
+            target = download_quota(goal) if needs_file else None
+            shortfall = needs_file and (
+                download_count < target if target is not None else download_count == 0
+            )
+            if shortfall:
+                have = f"{download_count}/{target}" if target is not None else "0"
+                log(f"  [BLOCKED: Goal needs downloads but have {have} - continuing search]")
                 self._record_failure(url, "premature_done", f"LLM tried to quit: {reason}")
                 # Return a non-done result to force loop to continue
                 return {"done": False, "blocked": True, "reason": "Premature done blocked"}
