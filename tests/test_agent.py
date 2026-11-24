@@ -1651,6 +1651,82 @@ class TestStepMethod:
         assert result["done"] is False
         assert result.get("blocked") is True
 
+    def test_step_blocks_done_before_download_quota(self, tmp_path):
+        """An explicit file count must not succeed while files are still missing."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        agent.session_memory.add_download("one.pdf", "https://example.com/one.pdf")
+
+        mock_hand = MagicMock()
+        mock_hand.get_url.return_value = "https://example.com"
+        mock_hand.get_title.return_value = "Test"
+        mock_hand.get_html.return_value = "<html><body>Test</body></html>"
+        mock_hand.is_healthy.return_value = True
+        agent.hand = mock_hand
+
+        llm_response = '{"thought": "Done", "action": "done", "args": {"reason": "got them", "result": "one file"}}'
+        goal = "download 3 files"
+
+        with patch.object(agent, 'check_browser_health', return_value=True):
+            with patch.object(agent.llm, 'generate', return_value=llm_response):
+                with patch.object(agent.detector, 'detect_challenge', return_value=MagicMock(detected=False)):
+                    with patch.object(agent.detector, 'detect_download_landing', return_value=MagicMock(detected=False)):
+                        result = agent._step(goal, 1, quiet=True)
+
+        assert result["done"] is False
+        assert result.get("blocked") is True
+        assert result.get("result") != "one file"
+
+    def test_step_allows_done_once_download_quota_is_met(self, tmp_path):
+        """Done is accepted once the explicit count is on disk."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        for name in ("one.pdf", "two.pdf", "three.pdf"):
+            agent.session_memory.add_download(name, f"https://example.com/{name}")
+
+        mock_hand = MagicMock()
+        mock_hand.get_url.return_value = "https://example.com"
+        mock_hand.get_title.return_value = "Test"
+        mock_hand.get_html.return_value = "<html><body>Test</body></html>"
+        mock_hand.is_healthy.return_value = True
+        agent.hand = mock_hand
+
+        llm_response = '{"thought": "Done", "action": "done", "args": {"reason": "got them", "result": "three files"}}'
+
+        with patch.object(agent, 'check_browser_health', return_value=True):
+            with patch.object(agent.llm, 'generate', return_value=llm_response):
+                with patch.object(agent.detector, 'detect_challenge', return_value=MagicMock(detected=False)):
+                    with patch.object(agent.detector, 'detect_download_landing', return_value=MagicMock(detected=False)):
+                        result = agent._step("download 3 files", 1, quiet=True)
+
+        assert result["done"] is True
+        assert result.get("result") == "three files"
+
+    def test_step_allows_done_when_number_is_not_a_quota(self, tmp_path):
+        """A year in the goal is not a file count, so one saved file can finish."""
+        config = AgentConfig(memory_db=tmp_path / "test.db")
+        agent = Agent(agent_config=config)
+        agent.session_memory.add_download("report.pdf", "https://example.com/report.pdf")
+
+        mock_hand = MagicMock()
+        mock_hand.get_url.return_value = "https://example.com"
+        mock_hand.get_title.return_value = "Test"
+        mock_hand.get_html.return_value = "<html><body>Test</body></html>"
+        mock_hand.is_healthy.return_value = True
+        agent.hand = mock_hand
+
+        llm_response = '{"thought": "Done", "action": "done", "args": {"reason": "saved the report", "result": "2024 report"}}'
+        goal = "download the 2024 annual report"
+
+        with patch.object(agent, 'check_browser_health', return_value=True):
+            with patch.object(agent.llm, 'generate', return_value=llm_response):
+                with patch.object(agent.detector, 'detect_challenge', return_value=MagicMock(detected=False)):
+                    with patch.object(agent.detector, 'detect_download_landing', return_value=MagicMock(detected=False)):
+                        result = agent._step(goal, 1, quiet=True)
+
+        assert result["done"] is True
+        assert result.get("result") == "2024 report"
+
 
 # =============================================================================
 # Tests for _execute_action()
