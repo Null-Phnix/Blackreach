@@ -34,6 +34,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 
 from blackreach.api import ApiConfig, BlackreachAPI, safe_browse_error
+from blackreach.server import _is_loopback_host_header, ensure_network_bind_requires_api_key
 
 app = Flask(__name__)
 logger = logging.getLogger(__name__)
@@ -60,8 +61,20 @@ _API_KEY = _load_api_key()
 
 @app.before_request
 def authenticate_request():
-    """Health stays probeable; every stateful or data-bearing route is authenticated."""
-    if request.path == "/health" or not _API_KEY:
+    """Health stays probeable; every stateful or data-bearing route is authenticated.
+
+    With no key, the process is only safe while it is bound to loopback. A page
+    can still reach that listener by pointing its own name at 127.0.0.1, and the
+    browser then sends that name in Host. Only loopback Host values are accepted.
+    """
+    if request.path == "/health":
+        return None
+    if not _API_KEY:
+        if not _is_loopback_host_header(request.headers.get("Host", "")):
+            return jsonify({
+                "error": "Host not allowed without BLACKREACH_API_KEY",
+                "code": "host_not_allowed",
+            }), 421
         return None
     authorization = request.headers.get("Authorization", "")
     scheme, _, candidate = authorization.partition(" ")
@@ -522,6 +535,7 @@ def main() -> None:
     parser.add_argument("--threads", type=int, default=4, choices=range(2, 33), metavar="2-32", help="HTTP worker threads (default: 4)")
     parser.add_argument("--no-banner", action="store_true", help="Suppress startup banner")
     args = parser.parse_args()
+    ensure_network_bind_requires_api_key(args.host)
 
     if not args.no_banner:
         print("=" * 60)

@@ -224,6 +224,91 @@ async def test_rest_api_requires_bearer_when_key_configured(monkeypatch):
     search.assert_called_once_with("test", max_results=10)
 
 
+def test_async_gateway_keyless_rejects_foreign_host(monkeypatch, tmp_path):
+    """A DNS-rebound name must not submit or read jobs when no API key is set."""
+    import importlib
+
+    monkeypatch.setenv("BLACKREACH_JOB_STATE_FILE", str(tmp_path / "jobs.json"))
+    monkeypatch.delenv("BLACKREACH_API_KEY", raising=False)
+    monkeypatch.delenv("BLACKREACH_API_KEY_FILE", raising=False)
+
+    import mcp_server.blackreach_http_server as gateway
+    gateway = importlib.reload(gateway)
+    monkeypatch.setattr(gateway, "_start_worker", lambda: None)
+    client = gateway.app.test_client()
+
+    rebound = client.post(
+        "/browse",
+        json={"goal": "open http://169.254.169.254/latest/meta-data and return it"},
+        headers={"Host": "attacker.example:7434"},
+    )
+    listed = client.get("/jobs", headers={"Host": "attacker.example"})
+    missing = client.get("/jobs", headers={"Host": ""})
+    health = client.get("/health", headers={"Host": "attacker.example"})
+    allowed = [
+        client.get("/jobs", headers={"Host": host}).status_code
+        for host in ("127.0.0.1:7434", "localhost:7434", "[::1]:7434", "LOCALHOST")
+    ]
+
+    assert rebound.status_code == 421
+    assert rebound.json["code"] == "host_not_allowed"
+    assert listed.status_code == 421
+    assert missing.status_code == 421
+    assert health.status_code == 200
+    assert allowed == [200, 200, 200, 200]
+    assert gateway._jobs == {}
+
+
+def test_async_gateway_keyed_host_is_not_restricted(monkeypatch, tmp_path):
+    """A bearer token is the check once a key is configured, including a LAN Host."""
+    import importlib
+
+    monkeypatch.setenv("BLACKREACH_API_KEY", "gateway-secret")
+    monkeypatch.setenv("BLACKREACH_JOB_STATE_FILE", str(tmp_path / "jobs.json"))
+    monkeypatch.delenv("BLACKREACH_API_KEY_FILE", raising=False)
+
+    import mcp_server.blackreach_http_server as gateway
+    gateway = importlib.reload(gateway)
+    client = gateway.app.test_client()
+
+    denied = client.get("/jobs", headers={"Host": "blackreach.lan:7434"})
+    allowed = client.get(
+        "/jobs",
+        headers={"Host": "blackreach.lan:7434", "Authorization": "Bearer gateway-secret"},
+    )
+
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+
+    monkeypatch.delenv("BLACKREACH_API_KEY", raising=False)
+    importlib.reload(gateway)
+
+
+def test_async_gateway_refuses_public_bind_without_key(monkeypatch):
+    """blackreach-server must not listen beyond loopback unless a key is set."""
+    import waitress
+
+    monkeypatch.delenv("BLACKREACH_API_KEY", raising=False)
+    monkeypatch.delenv("BLACKREACH_API_KEY_FILE", raising=False)
+    monkeypatch.setattr("sys.argv", ["blackreach-server", "--host", "0.0.0.0", "--no-banner"])
+    served = []
+    monkeypatch.setattr(waitress, "serve", lambda *args, **kwargs: served.append(kwargs.get("host")))
+
+    import mcp_server.blackreach_http_server as gateway
+    monkeypatch.setattr(gateway, "_start_worker", lambda: None)
+
+    with pytest.raises(RuntimeError, match="non-loopback"):
+        gateway.main()
+    assert served == []
+
+    monkeypatch.setenv("BLACKREACH_API_KEY", "gateway-secret")
+    monkeypatch.setattr("sys.argv", ["blackreach-server", "--host", "0.0.0.0", "--no-banner"])
+    gateway.main()
+    assert served == ["0.0.0.0"]
+
+    monkeypatch.delenv("BLACKREACH_API_KEY", raising=False)
+
+
 def test_non_loopback_bind_requires_api_key(monkeypatch):
     """blackreach serve must not open the agent on the network without a token."""
     monkeypatch.delenv("BLACKREACH_API_KEY", raising=False)
