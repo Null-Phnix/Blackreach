@@ -114,6 +114,33 @@ class TestNonPublicAddresses:
             with pytest.raises(ValueError, match="SSRF"):
                 _is_ssrf_safe(url)
 
+    def test_backslash_is_judged_as_the_browser_opens_it(self, monkeypatch):
+        """A backslash that hides a private host from urlparse must still fail.
+
+        Chromium rewrites ``\\`` to ``/`` before parsing the host. Python keeps
+        the backslash, so the raw string can look like example.com or like a
+        name that does not resolve.
+        """
+        real_getaddrinfo = socket.getaddrinfo
+
+        def fake_getaddrinfo(host, *args, **kwargs):
+            if host == "example.com":
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", 0))]
+            if any(char.isalpha() for char in host):
+                raise socket.gaierror(socket.EAI_NONAME, "not found")
+            return real_getaddrinfo(host, *args, **kwargs)
+
+        monkeypatch.setattr("blackreach.ssrf.socket.getaddrinfo", fake_getaddrinfo)
+        for url in (
+            r"http://127.0.0.1\@example.com/",
+            r"http://169.254.169.254\.example.com/latest/meta-data/",
+            r"http://2130706433\@example.com/",
+            r"http://0\example.com/",
+        ):
+            with pytest.raises(ValueError, match="SSRF"):
+                _is_ssrf_safe(url)
+        assert _is_ssrf_safe(r"https://example.com/a\b") is True
+
     def test_public_and_unresolvable_hosts_stay_allowed(self, monkeypatch):
         def fake_getaddrinfo(host, *args, **kwargs):
             if host == "example.com":
