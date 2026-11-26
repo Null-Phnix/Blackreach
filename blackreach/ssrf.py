@@ -50,6 +50,15 @@ def _is_ssrf_safe(url: str) -> bool:
     Raises:
         ValueError: If URL is invalid or targets internal network
     """
+    # Chromium treats "\" as "/" in http(s) URLs. Python does not, so
+    # ``http://127.0.0.1\@example.com/`` and
+    # ``http://169.254.169.254\.example.com/`` parse here as a public or
+    # unresolvable name while the browser opens loopback or link-local.
+    # Judge that rewritten URL too. A backslash in a public path still names
+    # the same host and stays allowed.
+    if "\\" in url:
+        _is_ssrf_safe(url.replace("\\", "/"))
+
     try:
         parsed = urllib.parse.urlparse(url)
         hostname = parsed.hostname
