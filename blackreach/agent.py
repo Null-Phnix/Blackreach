@@ -118,18 +118,31 @@ _GOAL_OBTAIN = re.compile(r"\b(?:download|fetch|save)\b")
 _GOAL_FILE_REQUEST = re.compile(r"\b(?:epubs?|pdfs?|wallpapers?|pictures?|photos?)\b")
 _GOAL_INFO_ONLY = re.compile(r"\bdownloaded\b|\bdownload counts?\b|\bmost downloaded\b")
 _GOAL_INFO_VERB = re.compile(r"\b(?:list|find|search|show)\b|\bget the\b")
+# "fetch the download count" asks for a metric. A ranking used as a modifier
+# ("download the most downloaded PDF") does not, so this stays narrow.
+_GOAL_STAT_REQUEST = re.compile(
+    r"\b(?:download|fetch|save|get|show|list|find)\b(?:\s+\w+){0,3}\s+download counts?\b"
+)
+_GOAL_STAT_PHRASE = re.compile(r"\b(?:most downloaded|downloaded|download counts?)\b")
 
 
 def goal_needs_download(goal: str) -> bool:
     """Return whether finishing with zero files would miss the goal.
 
-    An explicit obtain verb still counts when the goal also says "find" or
-    "search". Queries about download statistics stay informational.
+    An explicit obtain verb still counts when the goal also says "find",
+    "search", or "most downloaded". Queries that only ask for a download
+    count stay informational.
     """
     text = goal.lower().replace("'", "")
     if _GOAL_NEGATION.search(text):
         return False
     if _GOAL_INFO_ONLY.search(text):
+        # Drop the ranking or metric, then see if a real save verb remains.
+        # "Download the most downloaded PDF" still needs a file. "What is
+        # the download count" and "fetch the download count" do not.
+        remaining = _GOAL_STAT_PHRASE.sub(" ", text)
+        if _GOAL_OBTAIN.search(remaining) and not _GOAL_STAT_REQUEST.search(text):
+            return True
         return False
     if _GOAL_OBTAIN.search(text):
         return True
