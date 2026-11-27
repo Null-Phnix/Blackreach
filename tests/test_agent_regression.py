@@ -70,6 +70,18 @@ class TestStepRecordsOnFailure:
         assert result["done"] is False
         assert result.get("blocked") is True
 
+    def test_done_without_files_is_blocked_for_ranked_download(self, agent):
+        """A ranking phrase must not let a download goal succeed with no file."""
+        agent.llm.generate = MagicMock(
+            return_value=(
+                '{"thought":"the top pdf is paper A","action":"done",'
+                '"args":{"reason":"listed it","result":"1. Paper A"}}'
+            )
+        )
+        result = agent._step("Download the most downloaded PDF", step_num=1, quiet=True)
+        assert result["done"] is False
+        assert result.get("blocked") is True
+
     def test_done_is_allowed_when_goal_forbids_downloads(self, agent):
         agent.llm.generate = MagicMock(
             return_value='{"thought":"done","action":"done","args":{"reason":"complete"}}'
@@ -207,6 +219,13 @@ class TestGoalNegationNotDownload:
     def test_list_download_counts_not_blocked(self):
         assert goal_needs_download("list most downloaded programs") is False
 
+    def test_ranked_download_still_requires_a_file(self):
+        """'Downloaded' as a modifier must not cancel an actual save request."""
+        assert goal_needs_download("Download the most downloaded PDF") is True
+        assert goal_needs_download("Save the most downloaded wallpaper") is True
+        assert goal_needs_download("Download papers I haven't downloaded") is True
+        assert goal_needs_download("Save the paper with the highest download count") is True
+
     def test_notes_and_another_are_still_downloads(self):
         """Substring 'not' must not cancel a real file request."""
         assert goal_needs_download("download the lecture notes") is True
@@ -218,6 +237,8 @@ class TestGoalNegationNotDownload:
 
     def test_download_statistics_stay_informational(self):
         assert goal_needs_download("what is the download count") is False
+        assert goal_needs_download("fetch the download count") is False
+        assert goal_needs_download("fetch download counts for these papers") is False
 
 
 class TestRunLoopErrorDisplay:
