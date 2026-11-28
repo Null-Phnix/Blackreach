@@ -18,8 +18,9 @@ Use this for:
 import concurrent.futures
 import re
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, Dict, Iterator, List, Optional, Set
 
 try:
     import httpx
@@ -155,16 +156,29 @@ class BulkFetcher:
             self._client.close()
             self._client = None
 
+    @contextmanager
+    def _borrow_client(self) -> Iterator["httpx.Client"]:
+        """Use the caller's client, or open one for this call and close it after.
+
+        A missing client used to be invoked (``self._client()``), which raises
+        TypeError. Batch calls used ``with self`` even when a client was
+        already open, which replaced that client and closed it before the
+        caller was done.
+        """
+        if self._client is not None:
+            yield self._client
+            return
+        with self:
+            yield self._client
+
     # ------------------------------------------------------------------
     # Public methods
     # ------------------------------------------------------------------
 
     def fetch(self, url: str, retries: int = 0) -> FetchResult:
         """Fetch a single URL synchronously."""
-        if self._client is None:
-            with self._client() as client:
-                return self._do_fetch(client, url, retries)
-        return self._do_fetch(self._client, url, retries)
+        with self._borrow_client() as client:
+            return self._do_fetch(client, url, retries)
 
     def fetch_many(self, urls: List[str], progress_cb: Optional[Callable[[int, int], None]] = None) -> List[FetchResult]:
         """Fetch multiple URLs in parallel with ThreadPoolExecutor."""
@@ -175,7 +189,7 @@ class BulkFetcher:
         total = len(urls)
         done = 0
 
-        with self if self._client else self.__enter__():
+        with self._borrow_client():
             with concurrent.futures.ThreadPoolExecutor(max_workers=min(self.workers, total)) as ex:
                 futures = {ex.submit(self._do_fetch, self._client, url, 0): url for url in urls}
                 for future in concurrent.futures.as_completed(futures):
@@ -189,9 +203,11 @@ class BulkFetcher:
         url_to_result = {r.url: r for r in results}
         return [url_to_result.get(u, FetchResult(url=u, status=0, error="missing")) for u in urls]
 
-    def fetch_generator(self, urls: List[str]) -> FetchResult:
+    def fetch_generator(self, urls: List[str]) -> Iterator[FetchResult]:
         """Yield results as they come in (for streaming progress)."""
-        with self if self._client else self.__enter__():
+        if not urls:
+            return
+        with self._borrow_client():
             with concurrent.futures.ThreadPoolExecutor(max_workers=min(self.workers, len(urls))) as ex:
                 futures = {ex.submit(self._do_fetch, self._client, url, 0): url for url in urls}
                 for future in concurrent.futures.as_completed(futures):
@@ -201,7 +217,7 @@ class BulkFetcher:
     # Internal
     # ------------------------------------------------------------------
 
-    def _do_fetch(self, client: httpx.Client, url: str, retries: int) -> FetchResult:
+    def _do_fetch(self, client: "httpx.Client", url: str, retries: int) -> FetchResult:
         start = time.perf_counter()
         try:
             resp = client.get(url)
